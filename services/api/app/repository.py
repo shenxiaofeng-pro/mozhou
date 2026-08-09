@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from sqlite3 import Connection, IntegrityError, Row
+from typing import cast
 from uuid import uuid4
 
 from app.continuity import enrich_serial_control
@@ -12,6 +13,7 @@ from app.models import (
     ApplyReferencePatternRequest,
     Chapter,
     ChapterStatus,
+    ChapterSummary,
     CreateChapterRequest,
     CreateFutureKnowledgeRequest,
     CreateProjectRequest,
@@ -52,6 +54,7 @@ from app.models import (
     UpdateChapterRequest,
     UpdateStoryEntityRequest,
     Workspace,
+    WorkspaceSummary,
 )
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 
@@ -159,6 +162,20 @@ class ProjectRepository:
         return [self._project(row) for row in rows]
 
     def get_workspace(self, project_id: str) -> Workspace:
+        return cast(Workspace, self._get_workspace(project_id, include_chapter_content=True))
+
+    def get_workspace_summary(self, project_id: str) -> WorkspaceSummary:
+        return cast(
+            WorkspaceSummary,
+            self._get_workspace(project_id, include_chapter_content=False),
+        )
+
+    def _get_workspace(
+        self,
+        project_id: str,
+        *,
+        include_chapter_content: bool,
+    ) -> Workspace | WorkspaceSummary:
         with self.database.connect() as connection:
             project_row = connection.execute(
                 "SELECT * FROM projects WHERE id = ?",
@@ -166,10 +183,25 @@ class ProjectRepository:
             ).fetchone()
             if project_row is None:
                 raise NotFoundError(project_id)
-            chapter_rows = connection.execute(
-                "SELECT * FROM chapters WHERE project_id = ? ORDER BY chapter_number",
-                (project_id,),
-            ).fetchall()
+            if include_chapter_content:
+                chapter_rows = connection.execute(
+                    "SELECT * FROM chapters WHERE project_id = ? ORDER BY chapter_number",
+                    (project_id,),
+                ).fetchall()
+            else:
+                chapter_rows = connection.execute(
+                    """
+                    SELECT id, project_id, volume_number, chapter_number, title,
+                           reader_promise, opening_hook, state_change, emotional_payoff,
+                           ending_cliffhanger, status, revision, updated_at,
+                           CASE WHEN LENGTH(TRIM(content)) > 0 THEN 1 ELSE 0 END AS has_content,
+                           LENGTH(content) AS content_characters
+                    FROM chapters
+                    WHERE project_id = ?
+                    ORDER BY chapter_number
+                    """,
+                    (project_id,),
+                ).fetchall()
             timeline_rows = connection.execute(
                 """
                 SELECT * FROM timeline_events
@@ -284,32 +316,38 @@ class ProjectRepository:
             segments_by_work.setdefault(row["reference_work_id"], []).append(
                 self._reference_segment(row)
             )
-        workspace = Workspace(
-            project=self._project(project_row),
-            chapters=[self._chapter(row) for row in chapter_rows],
-            timeline_events=[self._timeline_event(row) for row in timeline_rows],
-            story_facts=[self._story_fact(row) for row in fact_rows],
-            fact_change_sets=[
+        workspace_payload: dict[str, object] = {
+            "project": self._project(project_row),
+            "chapters": (
+                [self._chapter(row) for row in chapter_rows]
+                if include_chapter_content
+                else [self._chapter_summary(row) for row in chapter_rows]
+            ),
+            "timeline_events": [self._timeline_event(row) for row in timeline_rows],
+            "story_facts": [self._story_fact(row) for row in fact_rows],
+            "fact_change_sets": [
                 self._fact_change_set(row, changes_by_set.get(row["id"], []))
                 for row in change_set_rows
             ],
-            future_knowledge=[self._future_knowledge(row) for row in knowledge_rows],
-            story_entities=[self._story_entity(row) for row in entity_rows],
-            story_threads=[self._story_thread(row) for row in thread_rows],
-            source_cards=[self._source_card(row) for row in source_rows],
-            reference_works=[
+            "future_knowledge": [self._future_knowledge(row) for row in knowledge_rows],
+            "story_entities": [self._story_entity(row) for row in entity_rows],
+            "story_threads": [self._story_thread(row) for row in thread_rows],
+            "source_cards": [self._source_card(row) for row in source_rows],
+            "reference_works": [
                 self._reference_work(row, segments_by_work.get(row["id"], []))
                 for row in reference_work_rows
             ],
-            reference_pattern_cards=[
+            "reference_pattern_cards": [
                 self._reference_pattern_card(row) for row in reference_pattern_rows
             ],
-            reference_pattern_applications=[
+            "reference_pattern_applications": [
                 self._reference_pattern_application(row)
                 for row in reference_application_rows
             ],
-        )
-        return enrich_serial_control(workspace)
+        }
+        if include_chapter_content:
+            return enrich_serial_control(Workspace.model_validate(workspace_payload))
+        return enrich_serial_control(WorkspaceSummary.model_validate(workspace_payload))
 
     def get_workspace_for_chapter(self, chapter_id: str) -> Workspace:
         with self.database.connect() as connection:
@@ -320,6 +358,16 @@ class ProjectRepository:
         if row is None:
             raise NotFoundError(chapter_id)
         return self.get_workspace(row["project_id"])
+
+    def get_chapter(self, chapter_id: str) -> Chapter:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM chapters WHERE id = ?",
+                (chapter_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(chapter_id)
+        return self._chapter(row)
 
     def import_reference_work(
         self,
@@ -1612,6 +1660,10 @@ class ProjectRepository:
     @staticmethod
     def _chapter(row: Row) -> Chapter:
         return Chapter.model_validate(dict(row))
+
+    @staticmethod
+    def _chapter_summary(row: Row) -> ChapterSummary:
+        return ChapterSummary.model_validate(dict(row))
 
     @staticmethod
     def _generation_run(row: Row) -> GenerationRun:

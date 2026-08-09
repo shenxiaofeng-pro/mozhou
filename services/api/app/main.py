@@ -67,6 +67,7 @@ from app.models import (
     UpdateChapterRequest,
     UpdateStoryEntityRequest,
     Workspace,
+    WorkspaceSummary,
 )
 from app.repository import (
     InvalidChapterStateError,
@@ -368,6 +369,19 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
 
+    @application.get(
+        "/api/projects/{project_id}/summary",
+        response_model=WorkspaceSummary,
+    )
+    def get_project_summary(
+        project_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> WorkspaceSummary:
+        try:
+            return repository.get_workspace_summary(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="项目不存在") from error
+
     @application.post(
         "/api/projects/{project_id}/chapters",
         response_model=Chapter,
@@ -502,6 +516,16 @@ def create_app(
             raise HTTPException(status_code=404, detail="资料卡不存在") from error
         except StaleRevisionError as error:
             raise HTTPException(status_code=409, detail="资料卡已有新版本") from error
+
+    @application.get("/api/chapters/{chapter_id}", response_model=Chapter)
+    def get_chapter(
+        chapter_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> Chapter:
+        try:
+            return repository.get_chapter(str(chapter_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
 
     @application.patch("/api/chapters/{chapter_id}", response_model=Chapter)
     def update_chapter(

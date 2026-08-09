@@ -184,6 +184,24 @@ class Chapter(BaseModel):
     updated_at: str
 
 
+class ChapterSummary(BaseModel):
+    id: str
+    project_id: str
+    volume_number: int
+    chapter_number: int
+    title: str
+    reader_promise: str
+    opening_hook: str
+    state_change: str
+    emotional_payoff: str
+    ending_cliffhanger: str
+    status: ChapterStatus
+    revision: int
+    updated_at: str
+    has_content: bool
+    content_characters: int
+
+
 class TimelineEvent(BaseModel):
     id: str
     project_id: str
@@ -560,6 +578,23 @@ class ApplyReferencePatternRequest(BaseModel):
 class Workspace(BaseModel):
     project: Project
     chapters: list[Chapter]
+    timeline_events: list[TimelineEvent] = Field(default_factory=list)
+    story_facts: list[StoryFact] = Field(default_factory=list)
+    fact_change_sets: list[FactChangeSet] = Field(default_factory=list)
+    future_knowledge: list[FutureKnowledge] = Field(default_factory=list)
+    story_entities: list[StoryEntity] = Field(default_factory=list)
+    story_threads: list[StoryThread] = Field(default_factory=list)
+    source_cards: list[SourceCard] = Field(default_factory=list)
+    reference_works: list[ReferenceWork] = Field(default_factory=list)
+    reference_pattern_cards: list[ReferencePatternCard] = Field(default_factory=list)
+    reference_pattern_applications: list[ReferencePatternApplication] = Field(default_factory=list)
+    continuity_issues: list[ContinuityIssue] = Field(default_factory=list)
+    resume_card: ResumeCard | None = None
+
+
+class WorkspaceSummary(BaseModel):
+    project: Project
+    chapters: list[ChapterSummary]
     timeline_events: list[TimelineEvent] = Field(default_factory=list)
     story_facts: list[StoryFact] = Field(default_factory=list)
     fact_change_sets: list[FactChangeSet] = Field(default_factory=list)

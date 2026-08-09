@@ -1,16 +1,21 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from itertools import pairwise
 
 from app.models import (
     Chapter,
     ChapterStatus,
+    ChapterSummary,
     ContinuityIssue,
     ContinuityIssueKind,
     ContinuitySeverity,
     ResumeCard,
     ResumeCardItem,
     Workspace,
+    WorkspaceSummary,
 )
+
+ChapterView = Chapter | ChapterSummary
+WorkspaceView = Workspace | WorkspaceSummary
 
 RHYTHM_FIELDS = (
     ("reader_promise", "读者承诺"),
@@ -20,7 +25,9 @@ RHYTHM_FIELDS = (
 )
 
 
-def enrich_serial_control(workspace: Workspace) -> Workspace:
+def enrich_serial_control[WorkspaceType: (Workspace, WorkspaceSummary)](
+    workspace: WorkspaceType,
+) -> WorkspaceType:
     issues = build_continuity_issues(workspace)
     return workspace.model_copy(
         update={
@@ -30,7 +37,7 @@ def enrich_serial_control(workspace: Workspace) -> Workspace:
     )
 
 
-def build_continuity_issues(workspace: Workspace) -> list[ContinuityIssue]:
+def build_continuity_issues(workspace: WorkspaceView) -> list[ContinuityIssue]:
     issues: list[ContinuityIssue] = []
     last_chapter_number = max(chapter.chapter_number for chapter in workspace.chapters)
 
@@ -130,7 +137,7 @@ def build_continuity_issues(workspace: Workspace) -> list[ContinuityIssue]:
 
 
 def build_resume_card(
-    workspace: Workspace,
+    workspace: WorkspaceView,
     issues: list[ContinuityIssue] | None = None,
 ) -> ResumeCard:
     active_chapter = _active_chapter(workspace.chapters)
@@ -142,9 +149,18 @@ def build_resume_card(
         ),
         None,
     )
+    content_progress = (
+        active_chapter.content.strip()[:160]
+        if isinstance(active_chapter, Chapter)
+        else (
+            f"本章已有 {active_chapter.content_characters} 字正文，打开后可继续。"
+            if active_chapter.has_content
+            else ""
+        )
+    )
     last_progress = (
         active_chapter.state_change.strip()
-        or active_chapter.content.strip()[:160]
+        or content_progress
         or "本章尚未写下正文或状态变化。"
     )
     next_entry = _next_entry(active_chapter, next_chapter)
@@ -187,16 +203,22 @@ def build_resume_card(
     )
 
 
-def _active_chapter(chapters: list[Chapter]) -> Chapter:
+def _active_chapter(chapters: Sequence[ChapterView]) -> ChapterView:
     progressed = [
         chapter
         for chapter in chapters
-        if chapter.content.strip() or chapter.status != ChapterStatus.PLANNED
+        if _has_content(chapter) or chapter.status != ChapterStatus.PLANNED
     ]
     return max(progressed or chapters, key=lambda chapter: chapter.chapter_number)
 
 
-def _next_entry(current: Chapter, next_chapter: Chapter | None) -> str:
+def _has_content(chapter: ChapterView) -> bool:
+    if isinstance(chapter, Chapter):
+        return bool(chapter.content.strip())
+    return chapter.has_content
+
+
+def _next_entry(current: ChapterView, next_chapter: ChapterView | None) -> str:
     if next_chapter is not None:
         return (
             next_chapter.opening_hook.strip()
@@ -208,7 +230,7 @@ def _next_entry(current: Chapter, next_chapter: Chapter | None) -> str:
     return "添加下一章，并先写清开篇钩子与状态变化。"
 
 
-def _adjacent_pairs(chapters: list[Chapter]) -> Iterable[tuple[Chapter, Chapter]]:
+def _adjacent_pairs(chapters: Sequence[ChapterView]) -> Iterable[tuple[ChapterView, ChapterView]]:
     ordered = sorted(chapters, key=lambda chapter: chapter.chapter_number)
     return pairwise(ordered)
 
