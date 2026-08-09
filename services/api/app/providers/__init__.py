@@ -23,7 +23,19 @@ __all__ = [
     "ModelProfile",
     "ModelProfileNotFoundError",
     "ModelProfileRepository",
+    "ProviderAdapter",
+    "ProviderAdapterConfig",
+    "ProviderCallError",
     "ProviderKind",
+    "ProviderResult",
+    "ProviderUsage",
     "StaleModelProfileError",
     "UpdateModelProfileRequest",
 ]
+from app.providers.base import (
+    ProviderAdapter,
+    ProviderAdapterConfig,
+    ProviderCallError,
+    ProviderResult,
+    ProviderUsage,
+)
