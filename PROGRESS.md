@@ -4,7 +4,7 @@
 > 计划状态：已批准，范围冻结  
 > 开始日期：2026-08-09  
 > 当前阶段：M0 工程治理与计划对齐  
-> 总体状态：M0 进行中；GitHub workflow 权限已恢复，首轮远端 CI 正在运行，尚未达到 Definition of Done
+> 总体状态：M0 工程与验证已完成；私有仓库分支保护受 GitHub 免费套餐限制，尚未达到 M0 Definition of Done
 
 ## 已确认产品决策
 
@@ -31,7 +31,7 @@
 
 | 里程碑 | 状态 | 验证摘要 |
 |---|---|---|
-| M0 工程治理与计划对齐 | 进行中 | 已保护用户数据库并建立本地 Git 基线 |
+| M0 工程治理与计划对齐 | 进行中（外部权限） | 数据、基线、双平台 CI、恢复演练已通过；等待私有仓库分支保护权限 |
 | M1 创作可信度与核心可达性热修 | 未开始 | — |
 | M2 可恢复 AI 任务运行时 | 未开始 | — |
 | M3 模型网关、密钥与用量治理 | 未开始 | — |
@@ -60,12 +60,18 @@
 - 暂存内容扫描未发现真实密钥；唯一 Key 模式命中是自动化测试夹具。
 - 创建 GitHub 私有仓库 https://github.com/shenxiaofeng-pro/mozhou，并推送实施前基线。
 - 用 Node 原生进程编排替换 shell 后台符号；macOS/Windows 命令选择测试 2/2 通过。
-- 建立仓库守卫，阻止数据库、构建产物、环境密钥、大文件和生成目录进入版本控制；守卫测试 3/3 通过。
+- 建立仓库守卫，阻止数据库、构建产物、环境密钥、大文件和生成目录进入版本控制；工程脚本测试 5/5 通过。
 - pnpm 高危依赖审计通过：未发现已知漏洞。
 - 本地创建 macOS/Windows 完整 verify 和独立 security CI，以及 npm、uv、Cargo、GitHub Actions 的 Dependabot 配置。
 - GitHub CLI 已获得 workflow scope，CI 和仓库守卫提交已推送到私有远端。
 - 记录本地优先运行时、持久任务与上下文、作者批准门、全局拆书库与清洁实现四项 ADR。
 - 建立真实能力状态矩阵，并将 PRD、早期开发计划和历史任务清单指向冻结的 PLAN.md。
+- 修复 Windows 测试夹具中的 POSIX/macOS 路径假设；本地 API 全量测试 68/68 通过。
+- GitHub Actions 运行 31310974313 全绿：macOS、Windows 原生 sidecar/桌面检查和 security 均通过。
+- JavaScript、Python 与 Rust 依赖审计未发现已知漏洞；Rust 保留 17 条第三方传递依赖维护/不安全告警。
+- 在全新目录按 pnpm/uv 锁文件安装并执行完整 verify，全部通过。
+- 创建并推送 v0.1.0-baseline 标签；从标签创建独立临时分支后再次完成锁文件安装和完整 verify。
+- 冻结 0.1.0 数据、API、归档与测试契约，并建立提交与 Pull Request 约定。
 
 ### 当前基线
 
@@ -80,21 +86,21 @@
 
 ### 当前状态
 
-- 权限阻断已经解除；推送事件触发的 macOS、Windows 和 security 首轮 CI 正在运行。
-- Dependabot 已按配置创建首批 npm、Python 和 GitHub Actions 更新 PR；这些升级不属于当前 M0 基线，需独立验证后再决定是否合并。
-- CI 全绿后配置 main 分支保护。
+- GitHub workflow scope 权限已经解除，远端自动发布门可正常运行。
+- GitHub 对私有仓库的经典分支保护和 Repository Ruleset 均返回 HTTP 403：当前账户必须升级 GitHub Pro 或把仓库设为公开。
+- 公开仓库违反已确认的闭源私测决策，因此没有擅自改变可见性；在获得套餐权限前只能用 PR 和 CI 流程自律执行，不能从服务端阻止绕过。
+- Dependabot 已创建 npm、Python 和 GitHub Actions 更新 PR；CI Actions 的 Node 24 运行时更新已纳入 M0 收尾分支，其余升级保持独立验证。
 
 ### 剩余验证
 
-- 全新目录从锁文件安装并执行完整 verify。
-- macOS 与 Windows CI 验证。
-- 依赖、密钥和大文件扫描。
-- 从基线标签验证可恢复。
+- 推送 `codex/m0-finalize`，由 Pull Request 再次执行三项远端门并合入。
+- 获得私有仓库分支保护权限后，启用严格状态检查、PR、线性历史、禁止强推和禁止删除。
 
 ## 遗留风险
 
 - 远程仓库已经建立，但主分支保护尚未生效。
-- 首轮远端 CI 尚未完成，Windows 原生构建结论待流水线产生。
-- Windows 原生构建证据尚未产生。
+- 当前 GitHub 免费套餐不能在私有仓库强制分支保护；这是 M0 唯一未满足项。
+- Rust 审计有 17 条来自 Tauri Linux/GTK 等传递依赖的维护或不安全告警，当前 0 个已知漏洞；后续随 Tauri 依赖更新复核，不能静默忽略。
+- CI 使用的 rustsec/audit-check@v2 仍声明 Node 20 action runtime，GitHub 会强制以 Node 24 运行；等待上游 action 更新。
 - macOS 安装包仍是 ad-hoc 签名，未公证。
 - 其余风险按 PLAN.md 第 4、13 节持续跟踪。
