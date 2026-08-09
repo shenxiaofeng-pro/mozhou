@@ -340,13 +340,16 @@ def test_chapter_job_api_returns_typed_results(tmp_path: Path) -> None:
             json={"expected_revision": 0, "author_intent": "救下父亲"},
         )
         detail = submitted.json()
-        deadline = monotonic() + 3
+        # Windows CI can spend several seconds opening SQLite connections while
+        # the background worker commits its artifact. Keep this an end-state
+        # assertion, but do not turn ordinary runner I/O contention into a race.
+        deadline = monotonic() + 15
         while detail["state"] not in {"succeeded", "failed", "cancelled"} and monotonic() < deadline:
             sleep(0.01)
             detail = client.get(f"/api/jobs/{detail['id']}").json()
         result = client.get(f"/api/jobs/{detail['id']}/chapter-brief-result")
 
     assert submitted.status_code == 202
-    assert detail["state"] == "succeeded"
+    assert detail["state"] == "succeeded", detail
     assert result.status_code == 200
     assert result.json()["title"] == "第一章 名单之前"
