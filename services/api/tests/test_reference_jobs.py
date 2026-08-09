@@ -366,7 +366,9 @@ def test_reference_analysis_job_api_finishes_in_background(tmp_path: Path) -> No
                 "confirm_external_processing": True,
             },
         )
-        deadline = monotonic() + 3
+        # Windows CI can spend several seconds flushing the SQLite-heavy fake
+        # Map/Reduce plan even though no network is involved.
+        deadline = monotonic() + 15
         detail = submitted.json()
         while detail["state"] not in {"succeeded", "failed", "cancelled"} and monotonic() < deadline:
             sleep(0.01)
