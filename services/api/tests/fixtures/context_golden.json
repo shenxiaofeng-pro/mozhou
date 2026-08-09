@@ -1,0 +1,123 @@
+{
+  "fixture_version": 1,
+  "cases": [
+    {
+      "name": "historical_rebirth_20_chapters",
+      "genre": "historical_rebirth",
+      "rebirth_year": 1980,
+      "rebirth_location": "福建南平",
+      "previous_chapters": 20,
+      "current_title": "赵峥借盐引破局",
+      "current_state_change": "赵峥拿到盐引并保住第一批货",
+      "current_cliffhanger": "税册上出现了赵峥父亲的旧名",
+      "author_intent": "赵峥核对盐引、税册和父亲留下的线索",
+      "entities": [
+        {"id": "entity-zhao", "kind": "character", "name": "赵峥", "current_state": "已拿到临时盐引，欠周掌柜一份人情"},
+        {"id": "entity-license", "kind": "resource", "name": "盐引", "current_state": "只覆盖第一批三百斤货"},
+        {"id": "entity-irrelevant", "kind": "character", "name": "陈木匠", "current_state": "仍在邻县修祠堂"}
+      ],
+      "facts": [
+        {"id": "fact-license-old", "chapter": 3, "content": "赵峥尚未取得盐引。"},
+        {"id": "fact-license-current", "chapter": 20, "content": "赵峥已经取得只覆盖三百斤货的临时盐引。"},
+        {"id": "fact-irrelevant", "chapter": 4, "content": "陈木匠去邻县修祠堂。"}
+      ],
+      "threads": [
+        {"id": "thread-tax-ledger", "status": "open", "title": "赵峥父亲与税册旧名", "summary": "税册旧名可能解释父亲当年的失踪", "planted": 18},
+        {"id": "thread-resolved", "status": "resolved", "title": "已经补齐的货单", "summary": "第十章已回收", "planted": 5}
+      ],
+      "future_knowledge": [
+        {"id": "future-reform", "status": "valid", "future_year": 1983, "content": "赵峥记得一九八三年盐业流通政策会调整。"},
+        {"id": "future-invalid", "status": "candidate_invalid", "future_year": 1984, "content": "原历史里的盐号一定会倒闭。"}
+      ],
+      "timeline": [
+        {"id": "timeline-original", "layer": "original", "event_year": 1984, "title": "原历史盐号倒闭", "summary": "只作对照"},
+        {"id": "timeline-novel", "layer": "novel", "event_year": 1980, "title": "赵峥取得临时盐引", "summary": "小说分歧已形成", "source_chapter": 20}
+      ],
+      "sources": [
+        {"id": "source-salt", "confirmed": true, "title": "一九八零年闽北盐业票证", "excerpt": "盐引需要注明批次、数量和经办人。"},
+        {"id": "source-rumour", "confirmed": false, "title": "未核实的地方传闻", "excerpt": "来源不明。"}
+      ],
+      "token_budget": 8000,
+      "expected_relevant_sources": [
+        "entity:entity-zhao",
+        "entity:entity-license",
+        "fact:fact-license-current",
+        "thread:thread-tax-ledger",
+        "future_knowledge:future-reform",
+        "timeline:timeline-novel",
+        "source_card:source-salt"
+      ],
+      "expected_hard_sources": [
+        "entity:entity-zhao",
+        "entity:entity-license",
+        "fact:fact-license-current",
+        "thread:thread-tax-ledger",
+        "future_knowledge:future-reform"
+      ],
+      "must_exclude_sources": [
+        "thread:thread-resolved",
+        "future_knowledge:future-invalid",
+        "source_card:source-rumour"
+      ]
+    },
+    {
+      "name": "urban_rebirth_30_chapters",
+      "genre": "urban_rebirth",
+      "rebirth_year": 1998,
+      "rebirth_location": "福建南平",
+      "previous_chapters": 30,
+      "current_title": "林川争下纸厂订单",
+      "current_state_change": "林川用现金流方案换到七天试单",
+      "current_cliffhanger": "父亲在订单背面认出旧厂徽",
+      "author_intent": "林川必须核清现金、订单和父亲隐瞒的旧事",
+      "entities": [
+        {"id": "entity-lin", "kind": "character", "name": "林川", "current_state": "已进入纸厂采购会，仍未取得试单"},
+        {"id": "entity-cash", "kind": "resource", "name": "现金", "current_state": "可动用三万元，七天后要发工资"},
+        {"id": "entity-irrelevant-urban", "kind": "character", "name": "老葛", "current_state": "在外地跑运输"}
+      ],
+      "facts": [
+        {"id": "fact-cash-old", "chapter": 6, "content": "林川手里只有五千元现金。"},
+        {"id": "fact-cash-current", "chapter": 30, "content": "林川可动用三万元现金，但七天后必须发工资。"},
+        {"id": "fact-irrelevant-urban", "chapter": 8, "content": "老葛去了外地跑运输。"}
+      ],
+      "threads": [
+        {"id": "thread-factory-badge", "status": "open", "title": "林川父亲认识旧厂徽", "summary": "父亲隐瞒了与纸厂前身的关系", "planted": 29},
+        {"id": "thread-resolved-urban", "status": "resolved", "title": "丢失的提货单", "summary": "第二十章已找回", "planted": 15}
+      ],
+      "future_knowledge": [
+        {"id": "future-pulp", "status": "valid", "future_year": 1999, "content": "林川记得明年纸浆价格会快速上涨。"},
+        {"id": "future-invalid-urban", "status": "invalid", "future_year": 2000, "content": "原历史订单必然取消。"}
+      ],
+      "timeline": [
+        {"id": "timeline-original-urban", "layer": "original", "event_year": 2000, "title": "原历史纸厂停产", "summary": "只作对照"},
+        {"id": "timeline-novel-urban", "layer": "novel", "event_year": 1998, "title": "林川进入采购会", "summary": "小说分歧已形成", "source_chapter": 30}
+      ],
+      "sources": [
+        {"id": "source-payroll", "confirmed": true, "title": "九十年代纸厂工资构成", "excerpt": "工资由基本工资、岗位津贴和计件奖组成。"},
+        {"id": "source-rumour-urban", "confirmed": false, "title": "待核实行业传闻", "excerpt": "来源不明。"}
+      ],
+      "token_budget": 8000,
+      "expected_relevant_sources": [
+        "entity:entity-lin",
+        "entity:entity-cash",
+        "fact:fact-cash-current",
+        "thread:thread-factory-badge",
+        "future_knowledge:future-pulp",
+        "timeline:timeline-novel-urban",
+        "source_card:source-payroll"
+      ],
+      "expected_hard_sources": [
+        "entity:entity-lin",
+        "entity:entity-cash",
+        "fact:fact-cash-current",
+        "thread:thread-factory-badge",
+        "future_knowledge:future-pulp"
+      ],
+      "must_exclude_sources": [
+        "thread:thread-resolved-urban",
+        "future_knowledge:future-invalid-urban",
+        "source_card:source-rumour-urban"
+      ]
+    }
+  ]
+}
