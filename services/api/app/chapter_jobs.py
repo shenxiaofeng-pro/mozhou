@@ -419,13 +419,7 @@ class ChapterJobService:
                 "invalid_chapter_state",
                 "当前章节状态或章纲不允许执行该 AI 任务",
             ) from error
-        try:
-            packet = self.contexts.get_packet(task_input.context_packet_id)
-        except ContextPacketNotFoundError as error:
-            raise JobExecutionError(
-                "context_packet_missing",
-                "任务冻结的上下文包不存在，无法安全重放",
-            ) from error
+        packet = self._load_frozen_context_packet(job.id, task_input)
         if (
             packet.project_id != workspace.project.id
             or packet.chapter_id != chapter.id
@@ -557,6 +551,38 @@ class ChapterJobService:
         self.jobs.update_progress(job.id, current=1, total=1, step="章节候选已生成")
         if expected_kind == JobKind.CHAPTER_DRAFT:
             self._materialize_draft(job, task_input, payload)
+
+    def _load_frozen_context_packet(
+        self,
+        job_id: str,
+        task_input: ChapterJobInput,
+    ) -> ContextPacket:
+        try:
+            return self.contexts.get_packet(task_input.context_packet_id)
+        except ContextPacketNotFoundError:
+            artifact = self.jobs.find_artifact(job_id, "context_packet")
+            if artifact is None:
+                raise JobExecutionError(
+                    "context_packet_missing",
+                    "任务冻结的上下文包不存在，无法安全重放",
+                ) from None
+            if (
+                artifact.kind != "context_packet"
+                or artifact.content_type != "application/json"
+                or sha256(artifact.payload.encode("utf-8")).hexdigest()
+                != artifact.payload_sha256
+            ):
+                raise JobExecutionError(
+                    "context_packet_artifact_invalid",
+                    "任务冻结的上下文产物完整性校验失败，未调用模型",
+                ) from None
+            try:
+                return ContextPacket.model_validate_json(artifact.payload)
+            except ValueError as error:
+                raise JobExecutionError(
+                    "context_packet_artifact_invalid",
+                    "任务冻结的上下文产物无法解析，未调用模型",
+                ) from error
 
     def _call_gateway(
         self,

@@ -687,6 +687,42 @@ def test_openai_adapter_consumes_exact_previewed_context_packet(tmp_path: Path) 
     assert "提交后加入的人物" not in adapter.structured_inputs[0]
 
 
+def test_chapter_job_replays_frozen_context_artifact_after_archive_restore(
+    tmp_path: Path,
+) -> None:
+    adapter = UsageFixtureAdapter()
+    gateway = OpenAiGateway(
+        "unused-archive-context-packet",
+        "context-fixture",
+        "test",
+        adapter=adapter,
+    )
+    repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "restored-context.db",
+        gateway,
+    )
+    request = AiChapterBriefRequest(
+        expected_revision=chapter.revision,
+        author_intent="先救下父亲",
+        context_token_budget=8000,
+    )
+    preview = service.preview_brief(chapter.id, request)
+    job = service.submit_brief(
+        chapter.id,
+        request.model_copy(update={"context_packet_id": preview.context_packet.id}),
+    )
+    with repository.database.connect() as connection:
+        connection.execute(
+            "DELETE FROM context_packets WHERE id = ?",
+            (preview.context_packet.id,),
+        )
+
+    runtime.run_once()
+
+    assert jobs.get_job(job.id).state == JobState.SUCCEEDED
+    assert adapter.structured_inputs == [preview.context_packet.rendered_context]
+
+
 def test_chapter_job_api_returns_typed_results(tmp_path: Path) -> None:
     gateway = RecoverableChapterGateway()
     with TestClient(create_app(
