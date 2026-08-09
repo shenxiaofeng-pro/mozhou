@@ -4,7 +4,7 @@
 > 计划状态：已批准，范围冻结  
 > 开始日期：2026-08-09  
 > 当前阶段：M0 工程治理与计划对齐  
-> 总体状态：进行中，尚未达到 Definition of Done
+> 总体状态：M0 进行中；等待 GitHub workflow 权限，尚未达到 Definition of Done
 
 ## 已确认产品决策
 
@@ -58,6 +58,11 @@
 - 初始化本地 main 分支并建立实施前源码基线提交 86cd5bc。
 - 扩充 .gitignore，排除数据库、密钥、本地数据、构建产物、缓存、Tauri 生成 schema 和 TypeScript 增量缓存。
 - 暂存内容扫描未发现真实密钥；唯一 Key 模式命中是自动化测试夹具。
+- 创建 GitHub 私有仓库 https://github.com/shenxiaofeng-pro/mozhou，并推送实施前基线。
+- 用 Node 原生进程编排替换 shell 后台符号；macOS/Windows 命令选择测试 2/2 通过。
+- 建立仓库守卫，阻止数据库、构建产物、环境密钥、大文件和生成目录进入版本控制；守卫测试 3/3 通过。
+- pnpm 高危依赖审计通过：未发现已知漏洞。
+- 本地创建 macOS/Windows 完整 verify 和独立 security CI，以及 npm、uv、Cargo、GitHub Actions 的 Dependabot 配置。
 
 ### 当前基线
 
@@ -70,10 +75,16 @@
 | 用户数据数量 | 8 个项目、17 个章节、2 本参考作品 |
 | Git 基线 | 86cd5bc |
 
-### 正在实施
+### 当前阻断
 
-- 建立远程私有仓库、CI 和主分支保护。
-- 建立跨平台开发进程编排。
+- 当前 GitHub CLI Token 具有 repo 权限但缺少 workflow 权限。
+- GitHub 拒绝推送本地提交 bdb3c48，原因是该提交新增 .github/workflows/verify.yml。
+- 需要为当前 GitHub 凭据增加 workflow scope 后重试；不会改用其他凭据绕过权限。
+
+### 恢复后继续
+
+- 推送并实际运行 macOS/Windows CI。
+- CI 全绿后配置 main 分支保护。
 - 建立 ADR 和能力状态矩阵。
 
 ### 剩余验证
@@ -85,8 +96,8 @@
 
 ## 遗留风险
 
-- 当前尚无远程仓库和生效的主分支保护。
+- 远程仓库已经建立，但主分支保护尚未生效。
+- 远程私有仓库已建立，但远端目前只有基线；CI 提交因 workflow scope 不足尚未推送。
 - Windows 原生构建证据尚未产生。
 - macOS 安装包仍是 ad-hoc 签名，未公证。
 - 其余风险按 PLAN.md 第 4、13 节持续跟踪。
-
