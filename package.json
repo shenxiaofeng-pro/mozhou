@@ -8,7 +8,7 @@
     "setup:git-hooks": "node scripts/install-git-hooks.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:web": "pnpm --filter @mozhou/web dev",
-    "dev:api": "uv run --project services/api --no-sync uvicorn app.main:app --app-dir services/api --reload --host 127.0.0.1 --port 8765",
+    "dev:api": "node scripts/dev.mjs --api-only",
     "build:sidecar": "node scripts/build-sidecar.mjs",
     "desktop:dev": "pnpm run build:sidecar && pnpm --filter @mozhou/desktop tauri dev",
     "desktop:build": "pnpm run build:sidecar && node scripts/build-desktop.mjs",

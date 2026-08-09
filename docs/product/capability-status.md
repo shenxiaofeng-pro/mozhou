@@ -21,7 +21,7 @@
 | schema 版本、升级备份、损坏拒绝 | 已交付 | migrations v1→v2→v3、暂存副本、失败注入测试 | 后续结构变更继续追加迁移 |
 | 导航前保存与项目书架 | 已交付 | autosave hook、书架和交互测试 | 长篇性能与桌面 E2E |
 | 项目归档与恢复点 | 已交付 | 完整 JSON 归档、校验和、恢复副本 | M5 适配全局参考资产 |
-| Tauri sidecar 与动态端口 | 已交付 | Rust 生命周期、PyInstaller、macOS DMG | M1 会话令牌；M10 签名、公证与 Windows |
+| Tauri sidecar、动态端口与会话令牌 | 已交付 | 256-bit 启动令牌、统一请求头、PyInstaller、macOS DMG | M10 签名、公证与 Windows |
 | Git、CI 与分支保护 | 部分交付 | 私有仓库、仓库守卫、双平台 CI、本地 pre-push 门 | 免费私有仓库无法服务端强制保护，外部协作前复议 |
 
 ## 写作工作台
@@ -90,8 +90,8 @@
 | 层 | 数量 | 状态 |
 |---|---:|---|
 | Web Vitest | 28 | 全部通过 |
-| FastAPI pytest | 74 | 全部通过 |
-| Tauri Rust | 2 | 全部通过 |
-| Node 工程脚本 | 8 | 全部通过 |
+| FastAPI pytest | 81 | 全部通过 |
+| Tauri Rust | 4 | 全部通过 |
+| Node 工程脚本 | 9 | 全部通过 |
 
 该数量只表示当前测试基线，不等同于 MVP 完成。真实浏览器、30 万字性能、故障注入、原创性对抗和双平台安装仍必须按 PLAN.md 验证。

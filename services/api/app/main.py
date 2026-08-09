@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from re import fullmatch
+from secrets import compare_digest
 from typing import Annotated
 from uuid import UUID
 
@@ -8,6 +10,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response
 
 from app.ai import (
     AiGatewayManager,
@@ -88,7 +92,10 @@ from app.repository import (
 def create_app(
     database_path: Path | None = None,
     ai_manager: AiGatewayManager | None = None,
+    session_token: str | None = None,
 ) -> FastAPI:
+    if session_token is not None and fullmatch(r"[0-9a-f]{64}", session_token) is None:
+        raise ValueError("session token must be 64 lowercase hexadecimal characters")
     database = Database(database_path or default_database_path())
 
     @asynccontextmanager
@@ -126,8 +133,26 @@ def create_app(
         ],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", "X-Mozhou-Session-Token"],
     )
+
+    @application.middleware("http")
+    async def require_session_token(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        if (
+            session_token is not None
+            and request.method != "OPTIONS"
+            and request.url.path.startswith("/api/")
+        ):
+            supplied_token = request.headers.get("x-mozhou-session-token", "")
+            if not compare_digest(supplied_token, session_token):
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "本地会话无效，请重启墨舟"},
+                )
+        return await call_next(request)
 
     @application.get("/health")
     def health() -> dict[str, str]:
@@ -711,6 +736,3 @@ def get_ai_writing_service(request: Request) -> AiWritingService:
 
 def get_reference_analysis_service(request: Request) -> ReferenceAnalysisService:
     return ReferenceAnalysisService(get_repository(request), get_ai_manager(request))
-
-
-app = create_app()

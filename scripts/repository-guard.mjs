@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 const MAX_TRACKED_FILE_BYTES = 10 * 1024 * 1024
-const ALLOWED_ENV_FILES = new Set(['.env.example', 'apps/web/.env.tauri'])
+const ALLOWED_ENV_FILES = new Set(['.env.example'])
 const SAFE_TEST_SECRETS = ['sk-test-abcdefghijklmnopqrstuvwxyz']
 
 export function isForbiddenTrackedPath(filePath) {
@@ -47,11 +47,12 @@ export function inspectRepository(root = process.cwd()) {
   const findings = []
 
   for (const filePath of tracked) {
+    const absolutePath = new URL(filePath, pathToFileURL(root + '/'))
+    if (!existsSync(absolutePath)) continue
     if (isForbiddenTrackedPath(filePath)) {
       findings.push(filePath + ': forbidden tracked path')
       continue
     }
-    const absolutePath = new URL(filePath, pathToFileURL(root + '/'))
     const size = statSync(absolutePath).size
     if (size > MAX_TRACKED_FILE_BYTES) {
       findings.push(filePath + ': tracked file exceeds 10 MiB')

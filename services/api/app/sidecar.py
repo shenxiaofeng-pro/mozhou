@@ -56,10 +56,10 @@ def start_parent_disconnect_watchdog() -> None:
 def main(argv: Sequence[str] | None = None) -> None:
     arguments = parse_args(argv)
     start_parent_disconnect_watchdog()
-    from app.main import app
+    from app.runtime import create_runtime_app
 
     uvicorn.run(
-        app,
+        create_runtime_app(),
         host=arguments.host,
         port=arguments.port,
         access_log=False,

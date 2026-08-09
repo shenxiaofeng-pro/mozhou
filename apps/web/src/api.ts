@@ -49,8 +49,16 @@ export class ApiError extends Error {
   }
 }
 
-const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
-let tauriApiBaseUrl: Promise<string> | null = null
+let tauriApiConnection: Promise<ApiConnection> | null = null
+
+interface ApiConnection {
+  baseUrl: string
+  sessionToken: string | null
+}
+
+function configuredApiBaseUrl(): string {
+  return (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+}
 
 function assertLoopbackApiBaseUrl(value: string): string {
   const url = new URL(value)
@@ -60,22 +68,42 @@ function assertLoopbackApiBaseUrl(value: string): string {
   return url.origin
 }
 
-async function resolveApiBaseUrl(): Promise<string> {
-  if (configuredApiBaseUrl) {
-    return configuredApiBaseUrl
+function assertTauriApiConnection(value: unknown): ApiConnection {
+  if (
+    !value
+    || typeof value !== 'object'
+    || !('baseUrl' in value)
+    || typeof value.baseUrl !== 'string'
+    || !('sessionToken' in value)
+    || typeof value.sessionToken !== 'string'
+    || !/^[0-9a-f]{64}$/.test(value.sessionToken)
+  ) {
+    throw new Error('桌面本地服务返回了无效会话')
   }
-  if (!isTauri()) {
-    return ''
+  return {
+    baseUrl: assertLoopbackApiBaseUrl(value.baseUrl),
+    sessionToken: value.sessionToken,
   }
-  tauriApiBaseUrl ??= invoke<string>('api_base_url').then(assertLoopbackApiBaseUrl)
-  return tauriApiBaseUrl
+}
+
+async function resolveApiConnection(): Promise<ApiConnection> {
+  if (isTauri()) {
+    tauriApiConnection ??= invoke<unknown>('api_connection').then(assertTauriApiConnection)
+    return tauriApiConnection
+  }
+  return { baseUrl: configuredApiBaseUrl(), sessionToken: null }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const apiBaseUrl = await resolveApiBaseUrl()
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const connection = await resolveApiConnection()
+  const headers = new Headers(init?.headers)
+  if (init?.body) headers.set('Content-Type', 'application/json')
+  if (connection.sessionToken) {
+    headers.set('X-Mozhou-Session-Token', connection.sessionToken)
+  }
+  const response = await fetch(`${connection.baseUrl}${path}`, {
     ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json', ...init.headers } : init?.headers,
+    headers,
   })
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null)
