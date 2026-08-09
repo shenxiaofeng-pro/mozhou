@@ -245,4 +245,12 @@ def test_outbound_preview_uses_task_default_without_calling_provider(tmp_path: P
     assert preview.json()["estimated_input_tokens"] >= preview.json()["character_count"]
     assert preview.json()["estimated_output_tokens"] == 1_200
     assert preview.json()["estimated_cost_microusd"] > 0
-    assert "先救下父亲" not in preview.text
+    packet = preview.json()["context_packet"]
+    assert packet["task_type"] == "chapter_brief"
+    assert packet["used_tokens"] == preview.json()["estimated_input_tokens"]
+    assert any(
+        item["kind"] == "author_intent"
+        and item["included"]
+        and item["content"] == "先救下父亲"
+        for item in packet["items"]
+    )

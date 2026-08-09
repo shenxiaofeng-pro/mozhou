@@ -17,6 +17,7 @@ from app.context.repository import (
     ContextPacketNotFoundError,
     ContextRepository,
     InvalidContextDirectiveError,
+    InvalidContextPacketError,
     StaleContextDirectiveError,
 )
 
@@ -38,6 +39,7 @@ __all__ = [
     "ContextTier",
     "ContextTierUsage",
     "InvalidContextDirectiveError",
+    "InvalidContextPacketError",
     "StaleContextDirectiveError",
     "estimate_tokens",
 ]

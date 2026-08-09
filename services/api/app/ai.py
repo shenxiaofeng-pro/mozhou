@@ -4,6 +4,14 @@ from collections.abc import Callable
 from threading import Lock, local
 from typing import Protocol, runtime_checkable
 
+from app.context import (
+    ContextCompiler,
+    ContextPacket,
+    ContextPacketNotFoundError,
+    ContextRepository,
+    ContextTaskType,
+    InvalidContextPacketError,
+)
 from app.models import (
     AiChapterBriefProposal,
     AiChapterBriefRequest,
@@ -124,6 +132,22 @@ class StreamingDraftGateway(Protocol):
         workspace: Workspace,
         chapter: Chapter,
         author_intent: str,
+        on_delta: Callable[[str], None],
+    ) -> str: ...
+
+
+@runtime_checkable
+class CompiledContextGateway(Protocol):
+    def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal: ...
+
+    def draft_chapter_from_context(self, context_text: str) -> str: ...
+
+
+@runtime_checkable
+class StreamingCompiledContextGateway(Protocol):
+    def draft_chapter_streaming_from_context(
+        self,
+        context_text: str,
         on_delta: Callable[[str], None],
     ) -> str: ...
 
@@ -251,11 +275,16 @@ class OpenAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> AiChapterBriefProposal:
+        return self.propose_brief_from_context(
+            build_chapter_context(workspace, chapter, author_intent)
+        )
+
+    def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal:
         self._clear_call_metrics()
         try:
             proposal = self._remember_result(self.adapter.generate_structured(
                 instructions=BRIEF_INSTRUCTIONS,
-                input_text=build_chapter_context(workspace, chapter, author_intent),
+                input_text=context_text,
                 output_model=AiChapterBriefProposal,
             ))
         except ProviderCallError as error:
@@ -272,11 +301,16 @@ class OpenAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> str:
+        return self.draft_chapter_from_context(
+            build_chapter_context(workspace, chapter, author_intent)
+        )
+
+    def draft_chapter_from_context(self, context_text: str) -> str:
         self._clear_call_metrics()
         try:
             candidate = self._remember_result(self.adapter.generate_text(
                 instructions=DRAFT_INSTRUCTIONS,
-                input_text=build_chapter_context(workspace, chapter, author_intent),
+                input_text=context_text,
                 max_output_tokens=12_000,
             ))
         except ProviderCallError as error:
@@ -295,19 +329,29 @@ class OpenAiGateway:
         author_intent: str,
         on_delta: Callable[[str], None],
     ) -> str:
+        return self.draft_chapter_streaming_from_context(
+            build_chapter_context(workspace, chapter, author_intent),
+            on_delta,
+        )
+
+    def draft_chapter_streaming_from_context(
+        self,
+        context_text: str,
+        on_delta: Callable[[str], None],
+    ) -> str:
         self._clear_call_metrics()
         try:
             if isinstance(self.adapter, StreamingProviderAdapter):
                 result = self.adapter.generate_text_stream(
                     instructions=DRAFT_INSTRUCTIONS,
-                    input_text=build_chapter_context(workspace, chapter, author_intent),
+                    input_text=context_text,
                     max_output_tokens=12_000,
                     on_delta=on_delta,
                 )
             else:
                 result = self.adapter.generate_text(
                     instructions=DRAFT_INSTRUCTIONS,
-                    input_text=build_chapter_context(workspace, chapter, author_intent),
+                    input_text=context_text,
                     max_output_tokens=12_000,
                 )
                 on_delta(result.output)
@@ -543,9 +587,17 @@ class AiGatewayManager:
 
 
 class AiWritingService:
-    def __init__(self, repository: ProjectRepository, manager: AiGatewayManager) -> None:
+    def __init__(
+        self,
+        repository: ProjectRepository,
+        manager: AiGatewayManager,
+        contexts: ContextRepository | None = None,
+        compiler: ContextCompiler | None = None,
+    ) -> None:
         self.repository = repository
         self.manager = manager
+        self.contexts = contexts or ContextRepository(repository.database)
+        self.compiler = compiler or ContextCompiler()
 
     def propose_brief(
         self,
@@ -553,7 +605,18 @@ class AiWritingService:
         request: AiChapterBriefRequest,
     ) -> AiChapterBriefProposal:
         workspace, chapter = self._load_chapter(chapter_id, request.expected_revision)
-        return self.manager.gateway().propose_brief(workspace, chapter, request.author_intent)
+        packet = self._resolve_context_packet(
+            workspace,
+            chapter,
+            request,
+            ContextTaskType.CHAPTER_BRIEF,
+        )
+        gateway = self.manager.gateway()
+        return (
+            gateway.propose_brief_from_context(packet.rendered_context)
+            if isinstance(gateway, CompiledContextGateway)
+            else gateway.propose_brief(workspace, chapter, request.author_intent)
+        )
 
     def generate_draft(self, chapter_id: str, request: AiDraftRequest) -> GenerationRun:
         workspace, chapter = self._load_chapter(chapter_id, request.expected_revision)
@@ -562,6 +625,12 @@ class AiWritingService:
             for field in ("opening_hook", "state_change", "ending_cliffhanger")
         ):
             raise InvalidChapterStateError("incomplete_brief")
+        packet = self._resolve_context_packet(
+            workspace,
+            chapter,
+            request,
+            ContextTaskType.CHAPTER_DRAFT,
+        )
         gateway = self.manager.gateway()
         status = gateway.status()
         if not status.configured:
@@ -578,7 +647,11 @@ class AiWritingService:
             GenerationState.GENERATING,
         )
         try:
-            candidate = gateway.draft_chapter(workspace, chapter, request.author_intent)
+            candidate = (
+                gateway.draft_chapter_from_context(packet.rendered_context)
+                if isinstance(gateway, CompiledContextGateway)
+                else gateway.draft_chapter(workspace, chapter, request.author_intent)
+            )
         except (AiNotConfiguredError, AiProviderError):
             self.repository.transition_generation(
                 run.id,
@@ -593,6 +666,31 @@ class AiWritingService:
             GenerationState.DRAFTED,
             candidate_content=candidate,
         )
+
+    def _resolve_context_packet(
+        self,
+        workspace: Workspace,
+        chapter: Chapter,
+        request: AiChapterBriefRequest,
+        task_type: ContextTaskType,
+    ) -> ContextPacket:
+        compiled = self.compiler.compile(
+            workspace,
+            chapter,
+            author_intent=request.author_intent,
+            task_type=task_type,
+            token_budget=request.context_token_budget,
+            directives=self.contexts.list_directives(chapter.id),
+        )
+        if request.context_packet_id is None:
+            return self.contexts.put_packet(compiled)
+        try:
+            previewed = self.contexts.get_packet(request.context_packet_id)
+        except ContextPacketNotFoundError as error:
+            raise InvalidContextPacketError("context_packet_not_found") from error
+        if previewed.id != compiled.id or previewed.packet_sha256 != compiled.packet_sha256:
+            raise InvalidContextPacketError("context_packet_changed")
+        return previewed
 
     def _load_chapter(self, chapter_id: str, expected_revision: int) -> tuple[Workspace, Chapter]:
         workspace = self.repository.get_workspace_for_chapter(chapter_id)

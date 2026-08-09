@@ -374,12 +374,25 @@ class AiChapterBriefRequest(BaseModel):
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
+    context_packet_id: str | None = Field(default=None, min_length=36, max_length=36)
+    context_token_budget: int = Field(default=24_000, ge=1000, le=200_000)
 
     @field_validator("author_intent")
     @classmethod
     def reject_null_bytes(cls, value: str) -> str:
         if "\x00" in value:
             raise ValueError("创作意图不能包含空字节")
+        return value
+
+    @field_validator("context_packet_id")
+    @classmethod
+    def validate_context_packet_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            UUID(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("上下文包标识无效") from error
         return value
 
 
