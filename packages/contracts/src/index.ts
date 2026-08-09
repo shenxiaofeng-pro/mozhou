@@ -355,6 +355,95 @@ export interface UpdateAiTaskDefaultInput {
   expected_revision: number | null
 }
 
+export type ContextTaskType = 'chapter_brief' | 'chapter_draft'
+
+export type ContextTier =
+  | 'hard_constraint'
+  | 'canon'
+  | 'current_state'
+  | 'recent_chapter'
+  | 'distant_chapter'
+  | 'timeline'
+  | 'reality_source'
+  | 'blueprint'
+
+export type ContextDirectiveAction = 'pin' | 'exclude'
+
+export interface ContextSourceRef {
+  kind: string
+  source_id: string
+  label: string
+  chapter_id: string | null
+  chapter_number: number | null
+  character_start: number | null
+  character_end: number | null
+  updated_at: string | null
+}
+
+export interface ContextItem {
+  id: string
+  kind: string
+  tier: ContextTier
+  label: string
+  content: string
+  token_estimate: number
+  priority: number
+  required: boolean
+  included: boolean
+  directive: ContextDirectiveAction | null
+  selection_reason: string
+  exclusion_reason: string | null
+  source_refs: ContextSourceRef[]
+  conflict_notes: string[]
+  content_sha256: string
+}
+
+export interface ContextTierUsage {
+  tier: ContextTier
+  budget_tokens: number
+  used_tokens: number
+  included_count: number
+  excluded_count: number
+}
+
+export interface ContextPacket {
+  id: string
+  project_id: string
+  chapter_id: string
+  chapter_revision: number
+  task_type: ContextTaskType
+  compiler_version: string
+  token_budget: number
+  used_tokens: number
+  overflow_tokens: number
+  packet_sha256: string
+  source_fingerprint_sha256: string
+  rendered_context: string
+  items: ContextItem[]
+  tier_usage: ContextTierUsage[]
+  conflict_notes: string[]
+  created_at: string
+}
+
+export interface ContextDirective {
+  id: string
+  project_id: string
+  chapter_id: string
+  source_kind: string
+  source_id: string
+  action: ContextDirectiveAction
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ContextDirectiveInput {
+  source_kind: string
+  source_id: string
+  action: ContextDirectiveAction
+  expected_revision: number | null
+}
+
 export interface AiOutboundPreview {
   task_type: AiTaskType
   profile_id: string | null
@@ -367,11 +456,14 @@ export interface AiOutboundPreview {
   estimated_input_tokens: number
   estimated_output_tokens: number
   estimated_cost_microusd: number | null
+  context_packet: ContextPacket
 }
 
 export interface AiChapterBriefInput {
   expected_revision: number
   author_intent: string
+  context_packet_id?: string | null
+  context_token_budget?: number
 }
 
 export interface AiChapterBriefProposal {
