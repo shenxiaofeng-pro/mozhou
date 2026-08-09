@@ -1,14 +1,17 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.ai import AiGatewayManager, AiProviderError
+from app.ai import AiGatewayManager, AiProviderError, build_chapter_context
 from app.main import create_app
 from app.models import (
     AiChapterBriefProposal,
     AiProvider,
     AiStatus,
     Chapter,
+    StoryEntity,
+    StoryFact,
     Workspace,
 )
 
@@ -68,6 +71,76 @@ def create_project(client: TestClient) -> dict[str, object]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+def test_chapter_context_keeps_latest_facts_after_the_first_fifty(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        workspace = Workspace.model_validate(create_project(client))
+
+    template = workspace.chapters[0]
+    historical_chapters = [
+        template.model_copy(
+            update={
+                "id": f"chapter-{chapter_number}",
+                "chapter_number": chapter_number,
+                "title": f"第{chapter_number}章",
+            }
+        )
+        for chapter_number in range(1, 61)
+    ]
+    current_chapter = template.model_copy(
+        update={"id": "chapter-100", "chapter_number": 100, "title": "第一百章"}
+    )
+    facts = [
+        StoryFact(
+            id=f"fact-{chapter_number}",
+            project_id=workspace.project.id,
+            source_chapter_id=f"chapter-{chapter_number}",
+            kind="state_change",
+            content=(
+                "林川仍在遵守第一章确认的承诺"
+                if chapter_number == 1
+                else f"第{chapter_number}章确认的最新状态"
+            ),
+            created_at=(
+                f"2026-01-{chapter_number // 24 + 1:02d}"
+                f"T{chapter_number % 24:02d}:00:00+00:00"
+            ),
+        )
+        for chapter_number in range(1, 61)
+    ]
+    protagonist = StoryEntity(
+        id="entity-protagonist",
+        project_id=workspace.project.id,
+        kind="character",
+        name="林川",
+        role="主角",
+        goal="改变家庭命运",
+        current_state="正在推进新计划",
+        relationship_notes="",
+        revision=0,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    populated = workspace.model_copy(
+        update={
+            "chapters": [*historical_chapters, current_chapter],
+            "story_facts": facts,
+            "story_entities": [protagonist],
+        }
+    )
+
+    context = json.loads(build_chapter_context(populated, current_chapter, "让林川承接最新局势"))
+    selected_ids = {fact["id"] for fact in context["canonical_facts"]}
+    selected_by_id = {fact["id"]: fact for fact in context["canonical_facts"]}
+
+    assert len(context["canonical_facts"]) == 50
+    assert "fact-60" in selected_ids
+    assert "fact-1" in selected_ids
+    assert "fact-2" not in selected_ids
+    assert selected_by_id["fact-60"]["source_chapter_number"] == 60
+    assert selected_by_id["fact-60"]["selection_reason"] == "source_chapter_recency"
+    assert selected_by_id["fact-1"]["selection_reason"] == "entity_relevance"
 
 
 def test_ai_requires_configuration_and_never_echoes_session_key(tmp_path: Path) -> None:
