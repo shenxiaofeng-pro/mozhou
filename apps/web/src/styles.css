@@ -910,7 +910,12 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
-.reference-library-bar > button {
+.reference-library-actions {
+  display: flex;
+  align-items: stretch;
+}
+
+.reference-library-actions > button {
   border: 0;
   border-left: 1px solid #496066;
   padding: 0 1.6rem;
@@ -3085,6 +3090,282 @@ textarea:focus-visible {
   font-weight: 800;
 }
 
+.task-center-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  border: 0;
+  background: rgb(12 25 31 / 46%);
+}
+
+.task-center {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 81;
+  width: min(46rem, calc(100vw - 2rem));
+  overflow: auto;
+  border-left: 1px solid #71868a;
+  color: #17272d;
+  background: #e6ebe7;
+  box-shadow: -1.2rem 0 3rem rgb(10 26 32 / 24%);
+}
+
+.task-center > header {
+  min-height: 4.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  color: #eef2ef;
+  background: #172a32;
+}
+
+.task-center > header > div {
+  display: grid;
+  align-content: center;
+  gap: 0.12rem;
+  padding: 0.8rem 1.1rem;
+}
+
+.task-center > header small {
+  color: #91aaac;
+  font-size: 0.48rem;
+  letter-spacing: 0.16em;
+}
+
+.task-center > header h2 {
+  margin: 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.2rem;
+}
+
+.task-center > header > button {
+  width: 4rem;
+  border: 0;
+  border-left: 1px solid #40565d;
+  color: #eef2ef;
+  background: transparent;
+  font-size: 1.4rem;
+}
+
+.task-center-summary,
+.task-center-error {
+  margin: 0;
+  border-bottom: 1px solid #aebbb8;
+  padding: 0.7rem 1rem;
+  color: #5b6d70;
+  background: #dbe2de;
+  font-size: 0.56rem;
+}
+
+.task-center-error {
+  border-left: 3px solid var(--rust);
+  color: #7c392f;
+  background: #f1dfd8;
+}
+
+.task-center-body {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.9fr) minmax(18rem, 1.1fr);
+  min-height: calc(100vh - 7rem);
+}
+
+.task-list {
+  border-right: 1px solid #aab7b4;
+  padding: 0.75rem;
+}
+
+.task-list article {
+  margin-bottom: 0.55rem;
+  border: 1px solid #aab6b3;
+  background: #f4f5f0;
+}
+
+.task-list article[data-selected="true"] {
+  border-color: #6f8587;
+  box-shadow: inset 3px 0 #294b58;
+}
+
+.task-list article[data-state="failed"],
+.task-list article[data-state="interrupted"] {
+  box-shadow: inset 3px 0 var(--rust);
+}
+
+.task-main {
+  width: 100%;
+  display: grid;
+  gap: 0.16rem;
+  border: 0;
+  padding: 0.65rem;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+}
+
+.task-main span,
+.task-main small {
+  color: #647477;
+  font-size: 0.49rem;
+}
+
+.task-main strong {
+  font-size: 0.59rem;
+}
+
+.task-main progress {
+  width: 100%;
+  margin-top: 0.2rem;
+  accent-color: #365f6d;
+}
+
+.task-list article > div {
+  display: flex;
+  gap: 1px;
+  border-top: 1px solid #c4cdca;
+  background: #c4cdca;
+}
+
+.task-list article > div button {
+  flex: 1;
+  border: 0;
+  padding: 0.45rem;
+  color: #29434c;
+  background: #edf0eb;
+  font-size: 0.5rem;
+  font-weight: 800;
+}
+
+.task-list-empty {
+  margin: 0;
+  padding: 1rem;
+  color: #68787a;
+  font-size: 0.58rem;
+}
+
+.task-detail {
+  padding: 1rem;
+}
+
+.task-detail > header {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid #aab7b4;
+  padding-bottom: 0.55rem;
+  font-size: 0.62rem;
+}
+
+.task-detail dl {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin: 0.65rem 0;
+  background: #b8c3bf;
+}
+
+.task-detail dl div {
+  min-width: 0;
+  padding: 0.5rem;
+  background: #f2f4ef;
+}
+
+.task-detail dt {
+  color: #68787a;
+  font-size: 0.46rem;
+}
+
+.task-detail dd {
+  overflow-wrap: anywhere;
+  margin: 0.16rem 0 0;
+  font-size: 0.52rem;
+}
+
+.task-detail-error {
+  border-left: 3px solid var(--rust);
+  padding: 0.45rem 0.55rem;
+  color: #7b392e;
+  background: #f2dfd7;
+  font-size: 0.54rem;
+}
+
+.task-artifacts {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.8rem;
+}
+
+.task-artifacts > strong,
+.task-artifacts > span {
+  font-size: 0.52rem;
+}
+
+.task-artifacts > button {
+  border: 1px solid #a8b5b2;
+  padding: 0.42rem 0.5rem;
+  text-align: left;
+  color: #29434c;
+  background: #f7f7f2;
+  font: 0.48rem ui-monospace, monospace;
+}
+
+.task-artifact-preview,
+.task-result-preview {
+  margin-top: 0.75rem;
+  border: 1px solid #aab7b4;
+  padding: 0.6rem;
+  background: #f8f7f1;
+}
+
+.task-artifact-preview summary,
+.task-result-preview > span {
+  color: #66777a;
+  font-size: 0.5rem;
+  font-weight: 800;
+}
+
+.task-artifact-preview pre,
+.task-result-preview > p {
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.52rem;
+  line-height: 1.65;
+}
+
+.task-result-preview h3 {
+  margin: 0.45rem 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.85rem;
+}
+
+.task-result-preview > button {
+  width: 100%;
+  border: 0;
+  padding: 0.55rem;
+  color: #f5f2ea;
+  background: #294b58;
+  font-size: 0.55rem;
+  font-weight: 850;
+}
+
+@media (max-width: 760px) {
+  .task-center {
+    width: 100vw;
+  }
+
+  .task-center-body {
+    grid-template-columns: 1fr;
+  }
+
+  .task-list {
+    border-right: 0;
+    border-bottom: 1px solid #aab7b4;
+  }
+
+  .task-detail dl {
+    grid-template-columns: 1fr;
+  }
+}
+
 .reference-pattern-archive {
   margin-top: 1rem;
   border-top: 1px solid #9eafae;
@@ -3735,7 +4016,7 @@ textarea:focus-visible {
     display: none;
   }
 
-  .reference-library-bar > button {
+  .reference-library-actions > button {
     padding: 0 0.9rem;
   }
 
@@ -3837,6 +4118,10 @@ textarea:focus-visible {
   .library-action::after {
     content: "拆书";
     font-size: 0.7rem;
+  }
+
+  .library-action.task-action::after {
+    content: "任务";
   }
 
   .editor-heading,

@@ -17,6 +17,7 @@ interface WorkspaceShellProps {
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
+  onOpenTaskCenter: () => void
   onClose: () => void
 }
 
@@ -57,15 +58,32 @@ export function WorkspaceShell({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenTaskCenter,
   onClose,
 }: WorkspaceShellProps) {
   const [activeChapter, setActiveChapter] = useState(initialChapter)
   const [isCreatingChapter, setIsCreatingChapter] = useState(false)
   const [createChapterError, setCreateChapterError] = useState<string | null>(null)
   const [chapterLoadError, setChapterLoadError] = useState<string | null>(null)
+  const activeChapterSummary = workspace.chapters.find((item) => item.id === activeChapter.id)
   const futureChapters = workspace.chapters
     .filter((item) => item.chapter_number > activeChapter.chapter_number)
     .slice(0, 3)
+
+  useEffect(() => {
+    if (!activeChapterSummary || activeChapterSummary.revision <= activeChapter.revision) return
+    let active = true
+    api.getChapter(activeChapter.id).then((updated) => {
+      if (active) setActiveChapter(updated)
+    }).catch((caught: unknown) => {
+      if (active) {
+        setChapterLoadError(caught instanceof Error ? caught.message : '章节更新同步失败')
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [activeChapter.id, activeChapter.revision, activeChapterSummary])
 
   async function selectChapter(chapterId: string) {
     if (chapterId === activeChapter.id) return
@@ -110,6 +128,7 @@ export function WorkspaceShell({
       onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={onWorkspaceChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
+      onOpenTaskCenter={onOpenTaskCenter}
       onSelectChapter={selectChapter}
       onCreateChapter={createNextChapter}
       onClose={onClose}
@@ -127,6 +146,7 @@ function ActiveChapterWorkspace({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenTaskCenter,
   onSelectChapter,
   onCreateChapter,
   onClose,
@@ -203,6 +223,13 @@ function ActiveChapterWorkspace({
         <div className="header-metrics" aria-label="连载状态">
           <span><small>本章</small>{wordCount.toLocaleString()} / {workspace.project.chapter_target_words.toLocaleString()}</span>
           <span><small>当前状态</small>{chapterStatusLabels[chapter.status]}</span>
+          <button
+            className="library-action task-action"
+            type="button"
+            aria-label="打开任务中心"
+            disabled={isNavigating}
+            onClick={() => { void navigateAfterSave(onOpenTaskCenter) }}
+          >任务中心</button>
           <button
             className="library-action"
             type="button"

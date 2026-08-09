@@ -5,6 +5,7 @@ import { api } from './api'
 import { CreateProjectForm } from './components/CreateProjectForm'
 import { ProjectLibraryPage } from './components/ProjectLibraryPage'
 import { ReferenceLibraryPage } from './components/ReferenceLibraryPage'
+import { TaskCenter } from './components/TaskCenter'
 import { WorkspaceShell } from './components/WorkspaceShell'
 import { clearActiveProjectId, loadActiveProjectId, saveActiveProjectId } from './storage'
 
@@ -54,6 +55,7 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<'writing' | 'reference-library'>('writing')
+  const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false)
 
   useEffect(() => {
     const projectId = loadActiveProjectId()
@@ -96,6 +98,7 @@ export function App() {
     setLibraryNotice(null)
     setIsCreatingProject(false)
     setActiveView('writing')
+    setIsTaskCenterOpen(false)
   }, [])
 
   const handleProjectAdded = useCallback((added: Workspace) => {
@@ -120,6 +123,7 @@ export function App() {
         ...current.filter((project) => project.id !== projectId),
       ])
       setActiveView('writing')
+      setIsTaskCenterOpen(false)
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : '无法打开作品')
     } finally {
@@ -151,6 +155,7 @@ export function App() {
     setInitialChapter(null)
     setIsCreatingProject(false)
     setActiveView('writing')
+    setIsTaskCenterOpen(false)
   }, [])
 
   const handleWorkspaceChanged = useCallback((updated: Workspace | WorkspaceSummary) => {
@@ -202,24 +207,38 @@ export function App() {
     )
   }
 
-  if (activeView === 'reference-library') {
-    return (
+  const activePage = activeView === 'reference-library'
+    ? (
       <ReferenceLibraryPage
         workspace={workspace}
         onWorkspaceChanged={handleWorkspaceChanged}
         onBack={() => setActiveView('writing')}
+        onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
+      />
+    ) : (
+      <WorkspaceShell
+        workspace={workspace}
+        initialChapter={initialChapter}
+        onChapterChanged={handleChapterChanged}
+        onWorkspaceChanged={handleWorkspaceChanged}
+        onOpenReferenceLibrary={() => setActiveView('reference-library')}
+        onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
+        onClose={handleClose}
       />
     )
-  }
 
   return (
-    <WorkspaceShell
-      workspace={workspace}
-      initialChapter={initialChapter}
-      onChapterChanged={handleChapterChanged}
-      onWorkspaceChanged={handleWorkspaceChanged}
-      onOpenReferenceLibrary={() => setActiveView('reference-library')}
-      onClose={handleClose}
-    />
+    <>
+      {activePage}
+      <TaskCenter
+        key={workspace.project.id}
+        projectId={workspace.project.id}
+        chapters={workspace.chapters}
+        open={isTaskCenterOpen}
+        onClose={() => setIsTaskCenterOpen(false)}
+        onChapterChanged={handleChapterChanged}
+        onWorkspaceChanged={handleWorkspaceChanged}
+      />
+    </>
   )
 }

@@ -1,5 +1,5 @@
-import type { GenerationRun, Job, JobKind, Workspace, WorkspaceSummary } from '@mozhou/contracts'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import type { GenerationRun, Job, JobDetail, JobKind, Workspace, WorkspaceSummary } from '@mozhou/contracts'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -84,6 +84,16 @@ function queuedJob(kind: JobKind, chapterId: string | null = null): Job {
     updated_at: '2026-08-09T00:00:00Z',
     started_at: null,
     completed_at: null,
+  }
+}
+
+function jobDetail(job: Job): JobDetail {
+  return {
+    ...job,
+    chunks: [],
+    attempts: [],
+    artifacts: [],
+    events: [],
   }
 }
 
@@ -996,6 +1006,113 @@ describe('App', () => {
     expect(screen.getByText('承接本章悬念：厂长认出了主角')).toBeVisible()
     expect(screen.getByText('第 1 章节奏记录不完整')).toBeVisible()
     expect(screen.getByText('依据：第一章 未命名')).toBeVisible()
+  })
+
+  it('retries a failed AI task from the task center', async () => {
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    const failedJob: Job = {
+      ...queuedJob('chapter_draft', workspace.chapters[0].id),
+      state: 'failed',
+      current_step: 'AI 正在写完整章节候选',
+      error_code: 'provider_error',
+      error_message: '模型服务未完成当前章节任务，可安全重试',
+    }
+    vi.mocked(api.listJobs).mockResolvedValue([failedJob])
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobDetail(failedJob))
+    const retryJob = vi.spyOn(api, 'retryJob').mockResolvedValue({
+      ...failedJob,
+      state: 'queued',
+      error_code: null,
+      error_message: null,
+    })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    await user.click(screen.getByRole('button', { name: '打开任务中心' }))
+    expect(await screen.findByRole('heading', { name: '任务中心' })).toBeVisible()
+    expect(await screen.findByText('模型服务未完成当前章节任务，可安全重试')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '从断点继续' }))
+
+    expect(retryJob).toHaveBeenCalledWith(failedJob.id)
+    expect(screen.getByText(/排队中 · 0\/1/)).toBeVisible()
+  })
+
+  it('views an immutable artifact and adopts a brief from the task center', async () => {
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    const completedJob: Job = {
+      ...queuedJob('chapter_brief', workspace.chapters[0].id),
+      state: 'succeeded',
+      progress_current: 1,
+      completed_calls: 1,
+      current_step: '章节候选已生成',
+    }
+    const artifact = {
+      id: 'brief-artifact-1',
+      job_id: completedJob.id,
+      chunk_id: null,
+      kind: 'chapter_brief',
+      artifact_key: 'brief',
+      content_type: 'application/json' as const,
+      payload_sha256: 'a'.repeat(64),
+      metadata: {},
+      provider: 'openai',
+      model: 'gpt-5.6',
+      created_at: '2026-08-09T00:00:01Z',
+    }
+    vi.mocked(api.listJobs).mockResolvedValue([completedJob])
+    vi.spyOn(api, 'getJob').mockResolvedValue({
+      ...jobDetail(completedJob),
+      artifacts: [artifact],
+    })
+    vi.spyOn(api, 'getJobArtifact').mockResolvedValue({
+      ...artifact,
+      payload: '{"title":"第一章 名单之前"}',
+    })
+    const proposal = {
+      title: '第一章 名单之前',
+      reader_promise: '主角第一次改变家庭命运',
+      opening_hook: '停产名单比记忆中提前贴出',
+      state_change: '主角让父亲避开首轮裁员',
+      emotional_payoff: '父亲保住岗位却开始怀疑儿子',
+      ending_cliffhanger: '厂长拿出一张不该存在的旧照片',
+      why_this_works: '信息差立即转化为行动和家庭回报。',
+      risk_notes: [],
+    }
+    vi.spyOn(api, 'getAiChapterBriefJobResult').mockResolvedValue(proposal)
+    const adoptedChapter = {
+      ...workspace.chapters[0],
+      ...proposal,
+      revision: 1,
+    }
+    const updateBrief = vi.spyOn(api, 'updateChapterBrief').mockResolvedValue(adoptedChapter)
+    vi.mocked(api.getChapter).mockResolvedValue(adoptedChapter)
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    await user.click(screen.getByRole('button', { name: '打开任务中心' }))
+    await user.click(await screen.findByText('章节候选已生成'))
+    await user.click(await screen.findByRole('button', { name: 'chapter_brief · aaaaaaaa' }))
+    expect(await screen.findByText('{"title":"第一章 名单之前"}')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '继续采用' }))
+    expect(await screen.findByRole('heading', { name: proposal.title })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '确认并保存为章纲' }))
+
+    expect(updateBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
+      title: proposal.title,
+      reader_promise: proposal.reader_promise,
+      opening_hook: proposal.opening_hook,
+      state_change: proposal.state_change,
+      emotional_payoff: proposal.emotional_payoff,
+      ending_cliffhanger: proposal.ending_cliffhanger,
+      expected_revision: workspace.chapters[0].revision,
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: proposal.title })).toBeVisible()
+    })
   })
 
   it('imports another reference work and selects segments across books', async () => {

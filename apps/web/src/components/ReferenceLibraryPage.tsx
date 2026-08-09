@@ -6,12 +6,14 @@ interface ReferenceLibraryPageProps {
   workspace: WorkspaceSummary
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onBack: () => void
+  onOpenTaskCenter: () => void
 }
 
 export function ReferenceLibraryPage({
   workspace,
   onWorkspaceChanged,
   onBack,
+  onOpenTaskCenter,
 }: ReferenceLibraryPageProps) {
   const segmentCount = workspace.reference_works.reduce(
     (total, work) => total + work.segments.length,
@@ -25,7 +27,10 @@ export function ReferenceLibraryPage({
           <span aria-hidden="true">墨</span>
           <div><small>墨舟 · 拆书库</small><strong>{workspace.project.title}</strong></div>
         </div>
-        <button type="button" onClick={onBack}>返回创作台</button>
+        <div className="reference-library-actions">
+          <button type="button" onClick={onOpenTaskCenter}>任务中心</button>
+          <button type="button" onClick={onBack}>返回创作台</button>
+        </div>
       </header>
 
       <section className="reference-library-hero" aria-labelledby="reference-library-title">
