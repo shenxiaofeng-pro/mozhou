@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
+from time import monotonic, sleep
 
 import pytest
 from fastapi.testclient import TestClient
@@ -277,6 +279,106 @@ def test_lease_prevents_two_workers_from_running_the_same_job(
 
     assert first is not None
     assert second is None
+
+
+def test_runtime_renews_lease_during_a_slow_provider_call(
+    job_setup: tuple[Database, JobRepository, str, str],
+) -> None:
+    database, jobs, project_id, _ = job_setup
+    job, _ = jobs.create_job(
+        project_id=project_id,
+        kind=JobKind.REVIEW,
+        idempotency_key="slow-provider-heartbeat",
+        input_payload={},
+        provider="demo",
+        model="replay-v1",
+    )
+    entered = Event()
+    release = Event()
+
+    def slow_handler(context: JobExecutionContext, leased_job: object) -> None:
+        del context, leased_job
+        entered.set()
+        assert release.wait(2)
+
+    runtime = JobRuntime(
+        jobs,
+        {JobKind.REVIEW: slow_handler},
+        lease_duration=timedelta(milliseconds=180),
+    )
+    worker = Thread(target=runtime.run_once)
+    worker.start()
+    assert entered.wait(1)
+    initial = jobs.get_job(job.id)
+    initial_heartbeat = initial.heartbeat_at
+    assert initial.lease_expires_at is not None
+    deadline = monotonic() + 2
+    renewed = jobs.get_job(job.id)
+    while renewed.heartbeat_at == initial_heartbeat and monotonic() < deadline:
+        sleep(0.01)
+        renewed = jobs.get_job(job.id)
+
+    assert renewed.heartbeat_at != initial_heartbeat
+    after_original_expiry = datetime.fromisoformat(initial.lease_expires_at) + timedelta(
+        milliseconds=1,
+    )
+    assert JobRepository(database).recover_expired(
+        now=after_original_expiry,
+        requeue=False,
+    ) == []
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert jobs.get_job(job.id).state == JobState.SUCCEEDED
+
+
+def test_started_runtime_recovers_a_lease_that_expires_after_startup(
+    job_setup: tuple[Database, JobRepository, str, str],
+) -> None:
+    _, jobs, project_id, _ = job_setup
+    job, _ = jobs.create_job(
+        project_id=project_id,
+        kind=JobKind.REVIEW,
+        idempotency_key="restart-before-expiry",
+        input_payload={},
+        provider="demo",
+        model="replay-v1",
+    )
+    assert jobs.lease_next(
+        "worker-killed-before-restart",
+        {JobKind.REVIEW},
+        lease_duration=timedelta(milliseconds=180),
+    ) is not None
+    handled = Event()
+
+    def resumed_handler(context: JobExecutionContext, leased_job: object) -> None:
+        del context, leased_job
+        handled.set()
+
+    runtime = JobRuntime(
+        jobs,
+        {JobKind.REVIEW: resumed_handler},
+        lease_duration=timedelta(milliseconds=300),
+        recovery_interval=0.05,
+    )
+    runtime.start()
+    try:
+        deadline = monotonic() + 5
+        while monotonic() < deadline and jobs.get_job(job.id).state != JobState.SUCCEEDED:
+            sleep(0.02)
+    finally:
+        runtime.stop()
+
+    detail = jobs.get_job_detail(job.id)
+    assert handled.is_set()
+    assert detail.state == JobState.SUCCEEDED
+    assert [event.event_type for event in detail.events][-4:] == [
+        "lease_expired",
+        "recovered",
+        "leased",
+        "completed",
+    ]
 
 
 def test_runtime_persists_sanitized_failure_and_closes_open_attempt(

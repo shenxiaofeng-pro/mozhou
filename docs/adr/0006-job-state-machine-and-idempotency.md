@@ -44,8 +44,8 @@ Job 使用以下状态：
 
 1. 每次真实外部调用创建一个 Attempt；本地准备步骤不伪装成模型调用。
 2. 单机 worker 以 `BEGIN IMMEDIATE` 原子领取一个 `queued` Job，写入随机 owner、租约截止时间与心跳。
-3. worker 不在数据库事务内等待模型；调用前后和每个 Chunk 检查取消状态并刷新心跳。
-4. 启动时把租约已过期的 `running` / `pause_requested` Job 标为 `interrupted`，再只把可安全重放的任务放回 `queued`。
+3. worker 不在数据库事务内等待模型；调用前后和每个 Chunk 检查取消状态，同时由独立心跳在线程阻塞等待模型期间续租。默认租约 15 秒，心跳与回收扫描间隔不超过 5 秒。
+4. 启动时立即扫描一次，运行期间继续周期扫描；租约在新 sidecar 启动后才过期的 `running` / `pause_requested` Job 也会被标为 `interrupted`，再只把可安全重放的任务放回 `queued`。
 5. 已成功 Chunk 和 Artifact 永不因任务重试而删除；恢复时跳过它们。无法确认结果是否到达的 Attempt 标为 `interrupted`，可产生新 Attempt，但 Artifact 唯一键阻止重复副作用。
 
 ### 并发边界
