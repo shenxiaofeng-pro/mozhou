@@ -723,6 +723,43 @@ def test_chapter_job_replays_frozen_context_artifact_after_archive_restore(
     assert adapter.structured_inputs == [preview.context_packet.rendered_context]
 
 
+def test_chapter_worker_repairs_a_job_leased_before_its_plan_was_persisted(
+    tmp_path: Path,
+) -> None:
+    adapter = UsageFixtureAdapter()
+    gateway = OpenAiGateway(
+        "unused-incomplete-plan",
+        "context-fixture",
+        "test",
+        adapter=adapter,
+    )
+    repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "incomplete-plan.db",
+        gateway,
+    )
+    request = AiChapterBriefRequest(
+        expected_revision=chapter.revision,
+        author_intent="先救下父亲",
+        context_token_budget=8000,
+    )
+    preview = service.preview_brief(chapter.id, request)
+    job = service.submit_brief(
+        chapter.id,
+        request.model_copy(update={"context_packet_id": preview.context_packet.id}),
+    )
+    with repository.database.connect() as connection:
+        connection.execute("DELETE FROM job_artifacts WHERE job_id = ?", (job.id,))
+        connection.execute("DELETE FROM job_chunks WHERE job_id = ?", (job.id,))
+
+    runtime.run_once()
+
+    detail = jobs.get_job_detail(job.id)
+    assert detail.state == JobState.SUCCEEDED
+    assert len(detail.chunks) == 1
+    assert {item.kind for item in detail.artifacts} == {"context_packet", "chapter_brief"}
+    assert adapter.structured_inputs == [preview.context_packet.rendered_context]
+
+
 def test_chapter_job_api_returns_typed_results(tmp_path: Path) -> None:
     gateway = RecoverableChapterGateway()
     with TestClient(create_app(
