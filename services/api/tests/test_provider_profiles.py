@@ -40,7 +40,7 @@ def test_profile_crud_persists_only_non_secret_metadata(tmp_path: Path) -> None:
     assert profile["capabilities"] == {
         "structured_output": True,
         "streaming": True,
-        "server_cancellation": True,
+        "server_cancellation": False,
         "usage": True,
     }
     assert "api_key" not in created.text

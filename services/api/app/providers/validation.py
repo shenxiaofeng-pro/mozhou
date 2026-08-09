@@ -49,7 +49,7 @@ def default_capabilities(provider: ProviderKind) -> dict[str, bool]:
         return {
             "structured_output": True,
             "streaming": True,
-            "server_cancellation": True,
+            "server_cancellation": False,
             "usage": True,
         }
     return {
