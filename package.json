@@ -16,8 +16,9 @@
     "typecheck": "pnpm --filter @mozhou/web typecheck && uv run --project services/api --no-sync mypy services/api/app",
     "test": "pnpm --filter @mozhou/web test",
     "test:scripts": "node --test scripts/*.test.mjs",
+    "guard:repository": "node scripts/repository-guard.mjs",
     "test:backend": "uv run --project services/api --no-sync pytest services/api/tests",
     "build": "pnpm --filter @mozhou/web build",
-    "verify": "pnpm run lint && pnpm run typecheck && pnpm run test:scripts && pnpm run test && pnpm run test:backend && pnpm run build && pnpm run desktop:check"
+    "verify": "pnpm run guard:repository && pnpm run lint && pnpm run typecheck && pnpm run test:scripts && pnpm run test && pnpm run test:backend && pnpm run build && pnpm run desktop:check"
   }
 }
