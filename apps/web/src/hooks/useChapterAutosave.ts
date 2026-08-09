@@ -105,5 +105,16 @@ export function useChapterAutosave(
     setSaveError(null)
   }, [])
 
+  useEffect(() => {
+    if (
+      chapter.id === chapterIdRef.current
+      && chapter.revision > revisionRef.current
+      && draftRef.current === savedContentRef.current
+      && savingPromiseRef.current === null
+    ) {
+      adoptServerVersion(chapter)
+    }
+  }, [adoptServerVersion, chapter])
+
   return { draft, saveStatus, saveError, setDraft, flushNow, retry, adoptServerVersion }
 }
