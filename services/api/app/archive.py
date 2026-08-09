@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from app.database import CURRENT_SCHEMA_VERSION, Database
+from app.jobs.models import Job, JobArtifact, JobAttempt, JobChunk, JobEvent
 from app.models import (
     Chapter,
     ChapterStatus,
@@ -115,6 +116,124 @@ ARCHIVE_TABLES = (
         "JOIN chapters c ON c.id = r.chapter_id WHERE c.project_id = ?"
         ")",
         (("run_id", "generation_runs", False),),
+    ),
+    ArchiveTable(
+        "jobs",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "parent_job_id",
+            "kind",
+            "state",
+            "idempotency_key",
+            "input_json",
+            "progress_current",
+            "progress_total",
+            "current_step",
+            "estimated_calls",
+            "completed_calls",
+            "provider",
+            "model",
+            "lease_owner",
+            "lease_expires_at",
+            "heartbeat_at",
+            "error_code",
+            "error_message",
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", True),
+            ("parent_job_id", "jobs", True),
+        ),
+        ("input_json",),
+    ),
+    ArchiveTable(
+        "job_chunks",
+        (
+            "id",
+            "job_id",
+            "kind",
+            "ordinal",
+            "state",
+            "idempotency_key",
+            "input_json",
+            "attempt_count",
+            "error_code",
+            "error_message",
+            "created_at",
+            "updated_at",
+        ),
+        "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
+        (("job_id", "jobs", False),),
+        ("input_json",),
+    ),
+    ArchiveTable(
+        "job_attempts",
+        (
+            "id",
+            "job_id",
+            "chunk_id",
+            "ordinal",
+            "state",
+            "provider",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "error_code",
+            "error_message",
+            "started_at",
+            "completed_at",
+        ),
+        "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
+        (
+            ("job_id", "jobs", False),
+            ("chunk_id", "job_chunks", True),
+        ),
+    ),
+    ArchiveTable(
+        "job_artifacts",
+        (
+            "id",
+            "job_id",
+            "chunk_id",
+            "kind",
+            "artifact_key",
+            "content_type",
+            "payload",
+            "payload_sha256",
+            "metadata_json",
+            "provider",
+            "model",
+            "created_at",
+        ),
+        "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
+        (
+            ("job_id", "jobs", False),
+            ("chunk_id", "job_chunks", True),
+        ),
+        ("metadata_json",),
+    ),
+    ArchiveTable(
+        "job_events",
+        (
+            "id",
+            "job_id",
+            "sequence",
+            "event_type",
+            "from_state",
+            "to_state",
+            "detail_json",
+            "created_at",
+        ),
+        "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
+        (("job_id", "jobs", False),),
+        ("detail_json",),
     ),
     ArchiveTable(
         "timeline_events",
@@ -468,11 +587,46 @@ def _validate_business_rows(
             if not isinstance(row["sequence"], int) or row["sequence"] < 1:
                 raise InvalidProjectArchiveError("invalid_run_event_sequence")
 
+        for row in tables["jobs"]:
+            Job.model_validate(row)
+            if not isinstance(_parse_json(row["input_json"]), dict):
+                raise InvalidProjectArchiveError("invalid_job_input")
+        for row in tables["job_chunks"]:
+            JobChunk.model_validate(row)
+            if not isinstance(_parse_json(row["input_json"]), dict):
+                raise InvalidProjectArchiveError("invalid_job_chunk_input")
+        for row in tables["job_attempts"]:
+            JobAttempt.model_validate(row)
+        for row in tables["job_artifacts"]:
+            metadata = _parse_json(row["metadata_json"])
+            if not isinstance(metadata, dict):
+                raise InvalidProjectArchiveError("invalid_job_artifact_metadata")
+            JobArtifact.model_validate({**row, "metadata": metadata})
+            payload = row["payload"]
+            if not isinstance(payload, str) or not compare_digest(
+                hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                row["payload_sha256"],
+            ):
+                raise InvalidProjectArchiveError("invalid_job_artifact_hash")
+        for row in tables["job_events"]:
+            detail = _parse_json(row["detail_json"])
+            if not isinstance(detail, dict):
+                raise InvalidProjectArchiveError("invalid_job_event_detail")
+            JobEvent.model_validate({**row, "detail": detail})
+
+        nullable_timestamps = {
+            "lease_expires_at",
+            "heartbeat_at",
+            "started_at",
+            "completed_at",
+        }
         for table in ARCHIVE_TABLES:
             for row in tables[table.name]:
                 for column in table.columns:
                     if column.endswith("_at"):
                         timestamp = row[column]
+                        if timestamp is None and column in nullable_timestamps:
+                            continue
                         if not isinstance(timestamp, str):
                             raise InvalidProjectArchiveError("invalid_timestamp")
                         datetime.fromisoformat(timestamp)
@@ -576,6 +730,22 @@ class ProjectArchiveService:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
+                if table.name == "job_artifacts" and row["content_type"] == "application/json":
+                    embedded_payload = (
+                        _parse_json(row["payload"])
+                        if isinstance(row["payload"], str)
+                        else None
+                    )
+                    if embedded_payload is None:
+                        raise InvalidProjectArchiveError("invalid_job_artifact_json")
+                    row["payload"] = json.dumps(
+                        _remap_json(embedded_payload, id_map),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    row["payload_sha256"] = hashlib.sha256(
+                        row["payload"].encode("utf-8")
+                    ).hexdigest()
                 remapped_rows.append(row)
             remapped[table.name] = remapped_rows
 

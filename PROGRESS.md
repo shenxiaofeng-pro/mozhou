@@ -140,6 +140,22 @@
 
 - 进入 M2：先建立持久任务、任务分块与事件模型，再把真实写章和长篇拆书迁移到可恢复运行时。
 
+## M2：可恢复 AI 任务运行时
+
+### 已完成
+
+- 新增 ADR 0006，冻结 `queued`、`running`、`pause_requested`、`cancelled`、`succeeded`、`failed`、`interrupted` 状态及合法转换，明确 Job/Chunk/Artifact 幂等键、不可变产物和租约恢复语义。
+- 新增 schema v4，持久化 Job、Attempt、Chunk、Artifact、Event；顶层任务、任务块和产物分别具备数据库唯一约束，避免重复提交、重复块和重复副作用。
+- 实现单机短事务租约、心跳、取消检查点、失败重试和过期租约恢复；恢复会把开放 Attempt 标为 interrupted、保留成功 Artifact，并仅重排未完成块。
+- worker 边界只持久化错误类型与安全文案，不写入 provider 原始异常，回归验证模拟密钥片段不会进入任务详情。
+- 提供项目任务列表、任务详情、产物内容、取消和重试 API；项目归档已覆盖全部任务表，恢复副本会重映射任务引用并验证 Artifact SHA-256。
+- M2 核心切片专项验证：状态机全组合、双 worker 互斥租约、幂等提交、不可变 Artifact 冲突、取消检查点、过期恢复、运行成功/失败、API 和归档往返均通过；后端当前 91 项测试。
+- M2 核心切片完整 `pnpm run verify` 通过：仓库守卫、lint、类型检查、工程脚本 9/9、Web 28/28、API 91/91、Web 构建、sidecar 构建和 Rust 桌面检查全部成功。
+
+### 下一切片
+
+- 将拆书 5 万字 Map、单书 Reduce 和跨书 Fusion 接入 JobRuntime，以块 Artifact 作为恢复与费用复用边界。
+
 ## 遗留风险
 
 - 当前 GitHub 免费套餐不能在私有仓库强制分支保护；本地 hook 可被刻意绕过，外部协作前必须升级或迁移。

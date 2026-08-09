@@ -17,6 +17,9 @@ import type {
   FactChangeSet,
   FutureKnowledge,
   ImportReferenceWorkInput,
+  Job,
+  JobArtifactContent,
+  JobDetail,
   KnowledgeReviewAction,
   Project,
   ProjectArchive,
@@ -119,6 +122,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   listProjects() {
     return request<Project[]>('/api/projects')
+  },
+  listJobs(projectId: string) {
+    return request<Job[]>(`/api/projects/${encodeURIComponent(projectId)}/jobs`)
+  },
+  getJob(jobId: string) {
+    return request<JobDetail>(`/api/jobs/${encodeURIComponent(jobId)}`)
+  },
+  getJobArtifact(artifactId: string) {
+    return request<JobArtifactContent>(`/api/job-artifacts/${encodeURIComponent(artifactId)}`)
+  },
+  cancelJob(jobId: string) {
+    return request<Job>(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' })
+  },
+  retryJob(jobId: string) {
+    return request<Job>(`/api/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST' })
   },
   getAiStatus() {
     return request<AiStatus>('/api/ai/status')
