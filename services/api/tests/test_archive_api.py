@@ -124,8 +124,17 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
                 "segment_target_characters": 500_000,
             },
         ).json()
-        archive = client.get(f"/api/projects/{project_id}/export").json()
         source_segment_id = imported_reference["segments"][0]["id"]
+        jobs: JobRepository = client.app.state.job_repository
+        source_job, _ = jobs.create_job(
+            project_id=project_id,
+            kind=JobKind.REVIEW,
+            idempotency_key="pattern-source-job",
+            input_payload={"selected_segment_ids": [source_segment_id]},
+            provider="openai",
+            model="gpt-5.6",
+        )
+        archive = client.get(f"/api/projects/{project_id}/export").json()
         pattern_card_id = str(uuid4())
         dimension = {
             "summary": "现实秩序发生松动",
@@ -152,6 +161,7 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             }, ensure_ascii=False),
             "provider": "openai",
             "model": "gpt-5.6",
+            "source_job_id": source_job.id,
             "created_at": archive["exported_at"],
         })
         archive["tables"]["reference_pattern_applications"].append({
@@ -181,6 +191,9 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
 
         original_after = client.get(f"/api/projects/{project_id}").json()
         projects = client.get("/api/projects").json()
+        restored_jobs = client.get(
+            f"/api/projects/{restored_response.json()['project']['id']}/jobs"
+        ).json()
 
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -196,6 +209,8 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
     assert restored_card["id"] != pattern_card_id
     assert restored_card["selected_segment_ids"] == [restored_segment_id]
     assert restored_card["era"]["source_segment_ids"] == [restored_segment_id]
+    assert restored_card["source_job_id"] == restored_jobs[0]["id"]
+    assert restored_card["source_job_id"] != source_job.id
     assert restored["reference_pattern_applications"][0]["pattern_card_id"] == restored_card["id"]
     assert original_after["project"]["title"] == "回到九八年的南平"
     assert original_after["chapters"][0]["id"] == chapter_id

@@ -33,6 +33,7 @@ from app.jobs import (
     Job,
     JobArtifactContent,
     JobDetail,
+    JobKind,
     JobNotFoundError,
     JobRepository,
     JobRuntime,
@@ -81,6 +82,7 @@ from app.models import (
     Workspace,
     WorkspaceSummary,
 )
+from app.reference_jobs import ReferenceJobService
 from app.repository import (
     InvalidChapterStateError,
     InvalidFactChangeSetStateError,
@@ -112,7 +114,17 @@ def create_app(
         application.state.repository = ProjectRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
-        application.state.job_runtime = JobRuntime(application.state.job_repository)
+        application.state.reference_job_service = ReferenceJobService(
+            application.state.repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+        )
+        application.state.job_runtime = JobRuntime(
+            application.state.job_repository,
+            {
+                JobKind.REFERENCE_FUSION: application.state.reference_job_service.handle,
+            },
+        )
         application.state.job_runtime.start()
         try:
             yield
@@ -413,6 +425,36 @@ def create_app(
                 status_code=415,
                 detail="当前只支持 UTF-8 TXT 或 Markdown 参考作品",
             ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/reference-analysis-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_reference_analysis_job(
+        project_id: UUID,
+        body: ReferenceSynthesisRequest,
+    ) -> Job:
+        service: ReferenceJobService = application.state.reference_job_service
+        try:
+            job = service.submit(str(project_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
+        except InvalidReferenceSelectionError as error:
+            messages = {
+                "external_processing_not_confirmed": "必须确认允许把选中区段发送给当前 AI",
+                "multiple_works_required": "至少选择两本不同作品的区段",
+                "selection_too_large": "单次最多处理 200 万字参考内容",
+                "missing_or_cross_project_segment": "选择中包含无效参考区段",
+            }
+            raise HTTPException(
+                status_code=400,
+                detail=messages.get(str(error), "参考区段选择无效"),
+            ) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
 
     @application.post(
         "/api/projects/{project_id}/reference-synthesis-proposals",

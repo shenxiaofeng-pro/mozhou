@@ -409,10 +409,14 @@ ARCHIVE_TABLES = (
             "proposal_json",
             "provider",
             "model",
+            "source_job_id",
             "created_at",
         ),
         "project_id = ?",
-        (("project_id", "projects", False),),
+        (
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", True),
+        ),
         ("selected_segment_ids_json", "proposal_json"),
     ),
     ArchiveTable(

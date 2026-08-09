@@ -430,6 +430,7 @@ export interface ReferenceSynthesisProposal {
 export interface ReferencePatternCard extends ReferenceSynthesisProposal {
   id: string
   project_id: string
+  source_job_id: string | null
   selected_segment_ids: string[]
   author_focus: string
   provider: AiProvider

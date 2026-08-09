@@ -878,6 +878,18 @@ class JobRepository:
             raise JobNotFoundError(artifact_id)
         return self._artifact_content(row)
 
+    def find_artifact(
+        self,
+        job_id: str,
+        artifact_key: str,
+    ) -> JobArtifactContent | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM job_artifacts WHERE job_id = ? AND artifact_key = ?",
+                (job_id, artifact_key),
+            ).fetchone()
+        return self._artifact_content(row) if row is not None else None
+
     @staticmethod
     def _append_event(
         connection: Connection,

@@ -1,11 +1,12 @@
 import type {
+  Job,
   ReferencePatternCard,
   ReferencePatternDimension,
   ReferenceRightsBasis,
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { api } from '../api'
 
@@ -45,8 +46,64 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
   const [isImporting, setIsImporting] = useState(false)
   const [authorFocus, setAuthorFocus] = useState('')
   const [confirmedExternalProcessing, setConfirmedExternalProcessing] = useState(false)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisJob, setAnalysisJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const analysisJobId = analysisJob?.id
+  const analysisJobState = analysisJob?.state
+  const isAnalyzing = analysisJob !== null
+    && ['queued', 'running', 'pause_requested'].includes(analysisJob.state)
+
+  useEffect(() => {
+    let ignored = false
+    void api.listJobs(workspace.project.id).then((jobs) => {
+      if (ignored) return
+      const recoverable = jobs.find((job) => (
+        job.kind === 'reference_fusion' && job.state !== 'succeeded'
+      ))
+      if (recoverable) {
+        setAnalysisJob(recoverable)
+        if (recoverable.error_message) setError(recoverable.error_message)
+      }
+    }).catch(() => undefined)
+    return () => {
+      ignored = true
+    }
+  }, [workspace.project.id])
+
+  useEffect(() => {
+    if (!analysisJobId || !analysisJobState || !['queued', 'running', 'pause_requested'].includes(analysisJobState)) {
+      return undefined
+    }
+    let stopped = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const detail = await api.getJob(analysisJobId)
+        if (stopped) return
+        setAnalysisJob(detail)
+        if (detail.state === 'succeeded') {
+          const refreshed = await api.getProjectSummary(workspace.project.id)
+          if (!stopped) onWorkspaceChanged(refreshed)
+          return
+        }
+        if (detail.state === 'failed' || detail.state === 'interrupted') {
+          setError(detail.error_message ?? '拆书任务中断，可从失败块继续。')
+          return
+        }
+        if (detail.state === 'cancelled') return
+        timer = window.setTimeout(poll, 700)
+      } catch (caught) {
+        if (!stopped) {
+          setError(caught instanceof Error ? caught.message : '读取拆书任务进度失败')
+        }
+      }
+    }
+    void poll()
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [analysisJobId, analysisJobState, onWorkspaceChanged, workspace.project.id])
 
   const selection = useMemo(() => {
     const segmentIds: string[] = []
@@ -128,25 +185,35 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
 
   async function synthesizePatterns() {
     if (!analysisReady || !confirmedExternalProcessing) return
-    setIsAnalyzing(true)
     setError(null)
     try {
-      const card = await api.synthesizeReferencePatterns(workspace.project.id, {
+      const job = await api.startReferenceAnalysisJob(workspace.project.id, {
         selected_segment_ids: selection.segmentIds,
         author_focus: authorFocus.trim(),
         confirm_external_processing: true,
       })
-      onWorkspaceChanged({
-        ...workspace,
-        reference_pattern_cards: [
-          card,
-          ...workspace.reference_pattern_cards.filter((item) => item.id !== card.id),
-        ],
-      })
+      setAnalysisJob(job)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '多书结构萃取失败')
-    } finally {
-      setIsAnalyzing(false)
+    }
+  }
+
+  async function cancelAnalysis() {
+    if (!analysisJob || !isAnalyzing) return
+    try {
+      setAnalysisJob(await api.cancelJob(analysisJob.id))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '取消拆书任务失败')
+    }
+  }
+
+  async function retryAnalysis() {
+    if (!analysisJob || !['failed', 'interrupted', 'cancelled'].includes(analysisJob.state)) return
+    setError(null)
+    try {
+      setAnalysisJob(await api.retryJob(analysisJob.id))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '重试拆书任务失败')
     }
   }
 
@@ -285,6 +352,27 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
         >
           {isAnalyzing ? '正在分块萃取…' : 'AI 萃取六维结构'}
         </button>
+        {analysisJob ? (
+          <div className="reference-job-status" role="status" aria-live="polite">
+            <div>
+              <strong>{analysisJob.current_step || '拆书任务已进入本地队列'}</strong>
+              <span>
+                {analysisJob.progress_current} / {analysisJob.progress_total} 块 ·
+                已完成 {analysisJob.completed_calls} 次模型调用
+              </span>
+            </div>
+            <progress
+              aria-label="拆书任务进度"
+              value={analysisJob.progress_current}
+              max={Math.max(analysisJob.progress_total, 1)}
+            />
+            {isAnalyzing ? (
+              <button type="button" onClick={cancelAnalysis}>停止后续调用</button>
+            ) : ['failed', 'interrupted', 'cancelled'].includes(analysisJob.state) ? (
+              <button type="button" onClick={retryAnalysis}>从失败块继续</button>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {workspace.reference_pattern_cards.length > 0 ? (

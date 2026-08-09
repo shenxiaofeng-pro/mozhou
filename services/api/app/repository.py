@@ -508,6 +508,7 @@ class ProjectRepository:
         proposal: ReferenceSynthesisProposal,
         provider: str,
         model: str,
+        source_job_id: str | None = None,
     ) -> ReferencePatternCard:
         card_id = str(uuid4())
         timestamp = now_iso()
@@ -517,12 +518,19 @@ class ProjectRepository:
                 (project_id,),
             ).fetchone() is None:
                 raise NotFoundError(project_id)
+            if source_job_id is not None:
+                existing = connection.execute(
+                    "SELECT * FROM reference_pattern_cards WHERE source_job_id = ?",
+                    (source_job_id,),
+                ).fetchone()
+                if existing is not None:
+                    return self._reference_pattern_card(existing)
             connection.execute(
                 """
                 INSERT INTO reference_pattern_cards (
                     id, project_id, selected_segment_ids_json, author_focus,
-                    proposal_json, provider, model, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    proposal_json, provider, model, source_job_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     card_id,
@@ -532,6 +540,7 @@ class ProjectRepository:
                     proposal.model_dump_json(),
                     provider,
                     model,
+                    source_job_id,
                     timestamp,
                 ),
             )
