@@ -1,0 +1,73 @@
+# 当前任务
+
+- [x] 稳定数据目录
+  - Acceptance：默认数据库位于 OS 用户应用数据目录，且不依赖启动目录；显式环境变量仍可覆盖。
+  - Verify：配置单元测试。
+  - Files：`config.py`、`test_config.py`。
+
+- [x] 旧库无损迁移
+  - Acceptance：目标不存在时通过 SQLite 一致性备份复制旧库，旧文件保留，目标已存在不覆盖。
+  - Verify：迁移单元测试和现有开发库核验。
+  - Files：`config.py`、`test_config.py`。
+
+- [x] 数据库升级保护
+  - Acceptance：schema version 可追踪；升级前创建备份；重复启动不重复备份；损坏或未来版本数据库拒绝写入。
+  - Verify：数据库单元测试。
+  - Files：`database.py`、`test_database.py`。
+
+- [x] R2.1 发布门验证
+  - Acceptance：lint、类型、全量测试、Web build、Rust check 全通过，现有作品迁移后数量一致。
+  - Verify：`pnpm run verify` 和只读数据核验。
+
+- [x] 桌面 API sidecar
+  - Acceptance：桌面进程自行启动 FastAPI，动态选择仅监听 127.0.0.1 的端口，健康检查成功后再开放工作台，退出时回收子进程。
+  - Verify：Rust 单元测试、`cargo check`、桌面开发运行。
+  - Files：`lib.rs`、`Cargo.toml`、`sidecar.py`、Tauri 配置与构建脚本。
+
+- [x] 前端动态 API 地址
+  - Acceptance：Tauri 中通过 invoke 获取 sidecar 地址，Web 开发仍支持 `VITE_API_URL`/8765，所有 API 调用共享同一解析入口。
+  - Verify：前端单元测试和真实桌面验收。
+  - Files：`api.ts` 及测试。
+
+- [x] 桌面安装包配置
+  - Acceptance：Tauri bundle 启用，sidecar 作为外部二进制纳入产物；本机 release 构建可验证。
+  - Verify：sidecar 构建、`desktop:build`。
+
+- [x] 项目列表 API
+  - Acceptance：`GET /api/projects` 返回按更新时间倒序的 `Project[]`，不含正文。
+  - Verify：后端 API 测试。
+  - Files：`repository.py`、`main.py`、`api.ts`、`test_api.py`。
+
+- [x] 作品书架
+  - Acceptance：启动可看到已有作品，打开后恢复工作区；退出回到书架且能再次打开。
+  - Verify：前端交互测试、真实浏览器。
+  - Files：`ProjectLibraryPage.tsx`、`App.tsx`、`CreateProjectForm.tsx`、`styles.css`、`App.test.tsx`。
+
+- [x] 导航前立即保存
+  - Acceptance：输入后立即切章、进拆书库或退出，保存成功后才导航；失败不导航。
+  - Verify：前端交互测试。
+  - Files：`useChapterAutosave.ts`、`WorkspaceShell.tsx`、`App.test.tsx`。
+
+- [x] 发布门验证
+  - Acceptance：lint、类型、前后端测试、Web build、Rust check 全通过；浏览器控制台无错误。
+  - Verify：`pnpm run verify` 和真实浏览器走查。
+
+- [x] 完整项目归档
+  - Acceptance：导出覆盖项目全部业务数据与参考原文，协议有版本和 SHA-256，恢复点不递归进入归档。
+  - Verify：导出范围与校验和 API 测试。
+  - Files：`archive.py`、`main.py`、后端测试。
+
+- [x] 安全恢复为副本
+  - Acceptance：只接受 256 MiB 内、固定白名单和精确列结构的合法归档；所有 ID/引用重映射；绝不覆盖原作品。
+  - Verify：完整往返、篡改拒绝、事务回滚测试。
+  - Files：`archive.py`、`main.py`、后端测试。
+
+- [x] 项目恢复点
+  - Acceptance：可创建、列表并从压缩快照恢复新副本；列表不加载正文。
+  - Verify：数据库迁移和恢复点 API 测试。
+  - Files：`database.py`、`models.py`、`archive.py`、后端测试。
+
+- [x] 书架归档与恢复体验
+  - Acceptance：书架可下载归档、导入作品副本、创建与恢复快照，过程有禁用、成功与失败反馈。
+  - Verify：前端交互测试和真实浏览器走查。
+  - Files：`ProjectLibraryPage.tsx`、`App.tsx`、`api.ts`、契约、样式与测试。

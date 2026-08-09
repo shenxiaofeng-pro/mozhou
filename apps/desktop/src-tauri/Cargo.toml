@@ -1,0 +1,17 @@
+[package]
+name = "mozhou"
+version = "0.1.0"
+description = "墨舟本地优先中文长篇小说工作台"
+authors = ["Lingjing"]
+edition = "2024"
+
+[lib]
+name = "mozhou_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"

@@ -1,0 +1,473 @@
+export type Genre = 'historical_rebirth' | 'urban_rebirth'
+
+export type ChapterStatus = 'planned' | 'drafted' | 'reviewing' | 'approved'
+
+export type GenerationState = 'context_ready' | 'generating' | 'drafted' | 'applied' | 'interrupted'
+
+export type TimelineLayer = 'original' | 'novel'
+
+export type FactKind = 'state_change' | 'open_thread'
+
+export type FactChangeSetState = 'candidate' | 'applied' | 'rejected'
+
+export type KnowledgeConfidence = 'certain' | 'likely' | 'uncertain'
+
+export type KnowledgeStatus = 'valid' | 'candidate_invalid' | 'invalid'
+
+export type KnowledgeReviewAction = 'keep_valid' | 'confirm_invalid'
+
+export type StoryEntityKind = 'character' | 'resource'
+
+export type StoryThreadStatus = 'open' | 'resolved' | 'abandoned'
+
+export type SourceKind = 'historical_record' | 'news' | 'industry' | 'personal_note'
+
+export type SourceConfidence = 'high' | 'medium' | 'low'
+
+export type ReferenceFormat = 'txt' | 'markdown'
+
+export type ReferenceRightsBasis = 'self_owned' | 'authorized' | 'public_domain'
+
+export type ReferencePatternDimension =
+  | 'era'
+  | 'core_desire'
+  | 'conflict_causality'
+  | 'resource_system'
+  | 'key_scene_sequence'
+  | 'ending'
+
+export type AiProvider = 'unavailable' | 'openai'
+
+export type ContinuitySeverity = 'warning' | 'info'
+
+export type ContinuityIssueKind =
+  | 'future_knowledge_review'
+  | 'overdue_thread'
+  | 'rhythm_gap'
+  | 'repeated_beat'
+  | 'entity_state_gap'
+  | 'source_year_mismatch'
+
+export interface CreateProjectInput {
+  title: string
+  genre: Genre
+  rebirth_year: number
+  rebirth_location: string
+  chapter_target_words: number
+  safety_buffer_chapters: number
+}
+
+export interface Project {
+  id: string
+  title: string
+  genre: Genre
+  rebirth_year: number
+  rebirth_location: string
+  chapter_target_words: number
+  safety_buffer_chapters: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectArchive {
+  format: 'mozhou-project'
+  format_version: 1
+  exported_at: string
+  source_project_id: string
+  source_project_title: string
+  schema_version: number
+  tables: Record<string, Array<Record<string, unknown>>>
+  checksum_sha256: string
+}
+
+export interface CreateRecoveryPointInput {
+  label: string
+}
+
+export interface RecoveryPointSummary {
+  id: string
+  project_id: string
+  label: string
+  kind: 'manual'
+  archive_sha256: string
+  uncompressed_bytes: number
+  compressed_bytes: number
+  created_at: string
+}
+
+export interface Chapter {
+  id: string
+  project_id: string
+  volume_number: number
+  chapter_number: number
+  title: string
+  content: string
+  reader_promise: string
+  opening_hook: string
+  state_change: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  status: ChapterStatus
+  revision: number
+  updated_at: string
+}
+
+export interface TimelineEvent {
+  id: string
+  project_id: string
+  layer: TimelineLayer
+  event_year: number
+  title: string
+  summary: string
+  source_chapter_id: string | null
+  created_at: string
+}
+
+export interface StoryFact {
+  id: string
+  project_id: string
+  source_chapter_id: string
+  kind: FactKind
+  content: string
+  created_at: string
+}
+
+export interface FactChange {
+  id: string
+  change_set_id: string
+  kind: FactKind
+  content: string
+  event_year: number | null
+}
+
+export interface FactChangeSet {
+  id: string
+  chapter_id: string
+  chapter_revision: number
+  state: FactChangeSetState
+  revision: number
+  changes: FactChange[]
+  created_at: string
+  updated_at: string
+}
+
+export interface FutureKnowledge {
+  id: string
+  project_id: string
+  future_year: number
+  content: string
+  source_note: string
+  confidence: KnowledgeConfidence
+  status: KnowledgeStatus
+  divergence_event_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface StoryEntity {
+  id: string
+  project_id: string
+  kind: StoryEntityKind
+  name: string
+  role: string
+  goal: string
+  current_state: string
+  relationship_notes: string
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface StoryThread {
+  id: string
+  project_id: string
+  source_chapter_id: string | null
+  title: string
+  summary: string
+  status: StoryThreadStatus
+  planted_chapter_number: number | null
+  resolved_chapter_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SourceCard {
+  id: string
+  project_id: string
+  source_kind: SourceKind
+  title: string
+  source_reference: string
+  applicable_year_start: number
+  applicable_year_end: number
+  confidence: SourceConfidence
+  excerpt: string
+  confirmed: boolean
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ReferenceSegment {
+  id: string
+  reference_work_id: string
+  ordinal: number
+  start_char: number
+  end_char: number
+  character_count: number
+  chapter_start: string | null
+  chapter_end: string | null
+  created_at: string
+}
+
+export interface ReferenceWork {
+  id: string
+  project_id: string
+  title: string
+  source_filename: string
+  source_format: ReferenceFormat
+  rights_basis: ReferenceRightsBasis
+  total_characters: number
+  segment_target_characters: number
+  segments: ReferenceSegment[]
+  created_at: string
+}
+
+export interface ContinuityIssue {
+  id: string
+  kind: ContinuityIssueKind
+  severity: ContinuitySeverity
+  title: string
+  detail: string
+  source_labels: string[]
+}
+
+export interface ResumeCardItem {
+  label: string
+  detail: string
+  source: string
+}
+
+export interface ResumeCard {
+  chapter_id: string
+  chapter_number: number
+  chapter_title: string
+  chapter_status: ChapterStatus
+  last_progress: string
+  next_entry: string
+  open_threads: ResumeCardItem[]
+  active_entities: ResumeCardItem[]
+  pending_reviews: number
+  warning_count: number
+}
+
+export interface AiStatus {
+  configured: boolean
+  provider: AiProvider
+  model: string
+  key_source: string | null
+}
+
+export interface ConfigureAiInput {
+  api_key: string
+  model: string
+}
+
+export interface AiChapterBriefInput {
+  expected_revision: number
+  author_intent: string
+}
+
+export interface AiChapterBriefProposal {
+  title: string
+  reader_promise: string
+  opening_hook: string
+  state_change: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  why_this_works: string
+  risk_notes: string[]
+}
+
+export interface Workspace {
+  project: Project
+  chapters: Chapter[]
+  timeline_events: TimelineEvent[]
+  story_facts: StoryFact[]
+  fact_change_sets: FactChangeSet[]
+  future_knowledge: FutureKnowledge[]
+  story_entities: StoryEntity[]
+  story_threads: StoryThread[]
+  source_cards: SourceCard[]
+  reference_works: ReferenceWork[]
+  reference_pattern_cards: ReferencePatternCard[]
+  reference_pattern_applications: ReferencePatternApplication[]
+  continuity_issues: ContinuityIssue[]
+  resume_card: ResumeCard | null
+}
+
+export interface CreateTimelineEventInput {
+  event_year: number
+  title: string
+  summary?: string
+}
+
+export interface ApplyFactChangeSetInput {
+  selected_change_ids: string[]
+  expected_revision: number
+}
+
+export interface CreateFutureKnowledgeInput {
+  future_year: number
+  content: string
+  source_note?: string
+  confidence: KnowledgeConfidence
+}
+
+export interface StoryEntityFields {
+  name: string
+  role: string
+  goal: string
+  current_state: string
+  relationship_notes: string
+}
+
+export interface CreateStoryEntityInput extends StoryEntityFields {
+  kind: StoryEntityKind
+}
+
+export interface UpdateStoryEntityInput extends StoryEntityFields {
+  expected_revision: number
+}
+
+export interface CreateStoryThreadInput {
+  title: string
+  summary?: string
+  planted_chapter_number?: number
+}
+
+export interface TransitionStoryThreadInput {
+  target_status: StoryThreadStatus
+  resolved_chapter_id?: string
+  expected_revision: number
+}
+
+export interface CreateSourceCardInput {
+  source_kind: SourceKind
+  title: string
+  source_reference: string
+  applicable_year_start: number
+  applicable_year_end: number
+  confidence: SourceConfidence
+  excerpt?: string
+}
+
+export interface ImportReferenceWorkInput {
+  title: string
+  source_filename: string
+  rights_basis: ReferenceRightsBasis
+  segment_target_characters: number
+  content: string
+}
+
+export interface ReferenceSynthesisInput {
+  selected_segment_ids: string[]
+  author_focus: string
+  confirm_external_processing: boolean
+}
+
+export interface ReferenceDimensionSynthesis {
+  summary: string
+  source_segment_ids: string[]
+  transferable_logic: string
+  adaptation_risk: string
+}
+
+export interface ReferenceSynthesisProposal {
+  era: ReferenceDimensionSynthesis
+  core_desire: ReferenceDimensionSynthesis
+  conflict_causality: ReferenceDimensionSynthesis
+  resource_system: ReferenceDimensionSynthesis
+  key_scene_sequence: ReferenceDimensionSynthesis
+  ending: ReferenceDimensionSynthesis
+  shared_patterns: string[]
+  differences: string[]
+  relationship_recomposition: string
+  originality_risks: string[]
+}
+
+export interface ReferencePatternCard extends ReferenceSynthesisProposal {
+  id: string
+  project_id: string
+  selected_segment_ids: string[]
+  author_focus: string
+  provider: AiProvider
+  model: string
+  created_at: string
+}
+
+export interface AppliedReferenceDimension {
+  summary: string
+  transferable_logic: string
+}
+
+export interface ReferencePatternApplication {
+  id: string
+  project_id: string
+  pattern_card_id: string
+  selected_dimensions: ReferencePatternDimension[]
+  dimensions: Partial<Record<ReferencePatternDimension, AppliedReferenceDimension>>
+  relationship_recomposition: string
+  application_note: string
+  created_at: string
+}
+
+export interface ApplyReferencePatternInput {
+  selected_dimensions: ReferencePatternDimension[]
+  application_note: string
+  confirm_original_adaptation: boolean
+}
+
+export interface UpdateChapterInput {
+  content: string
+  expected_revision: number
+}
+
+export interface UpdateChapterBriefInput {
+  title?: string
+  reader_promise: string
+  opening_hook: string
+  state_change: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  expected_revision: number
+}
+
+export interface CreateChapterInput {
+  expected_last_chapter_number: number
+  title?: string
+  reader_promise?: string
+  opening_hook?: string
+  state_change?: string
+  emotional_payoff?: string
+  ending_cliffhanger?: string
+}
+
+export interface TransitionChapterInput {
+  target_status: ChapterStatus
+  expected_revision: number
+}
+
+export interface GenerationRun {
+  id: string
+  chapter_id: string
+  state: GenerationState
+  expected_chapter_revision: number
+  candidate_content: string | null
+  error_message: string | null
+  provider: string
+  model: string
+  created_at: string
+  updated_at: string
+}
