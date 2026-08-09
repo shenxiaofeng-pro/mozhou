@@ -65,6 +65,53 @@ def test_create_load_and_update_project(tmp_path: Path) -> None:
     assert stale.json() == {"detail": "章节已在其他位置更新，请重新载入"}
 
 
+def test_loads_workspace_summary_without_manuscript_and_fetches_chapter_on_demand(
+    tmp_path: Path,
+) -> None:
+    manuscript = "这段正文只能由单章接口按需返回。" * 200
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "长篇按需加载",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        chapter_id = workspace["chapters"][0]["id"]
+        saved = client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": manuscript, "expected_revision": 0},
+        )
+
+        summary = client.get(f"/api/projects/{project_id}/summary")
+        chapter = client.get(f"/api/chapters/{chapter_id}")
+        legacy_workspace = client.get(f"/api/projects/{project_id}")
+
+    assert saved.status_code == 200
+    assert summary.status_code == 200
+    assert "content" not in summary.json()["chapters"][0]
+    assert manuscript not in summary.text
+    assert chapter.status_code == 200
+    assert chapter.json()["content"] == manuscript
+    assert legacy_workspace.status_code == 200
+    assert legacy_workspace.json()["chapters"][0]["content"] == manuscript
+
+
+def test_summary_and_chapter_reads_return_not_found(tmp_path: Path) -> None:
+    missing_id = "00000000-0000-4000-8000-000000000001"
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        summary = client.get(f"/api/projects/{missing_id}/summary")
+        chapter = client.get(f"/api/chapters/{missing_id}")
+
+    assert summary.status_code == 404
+    assert summary.json() == {"detail": "项目不存在"}
+    assert chapter.status_code == 404
+    assert chapter.json() == {"detail": "章节不存在"}
+
+
 def test_lists_projects_without_loading_manuscript_content(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
         first = client.post(

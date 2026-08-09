@@ -112,6 +112,11 @@ export interface Chapter {
   updated_at: string
 }
 
+export type ChapterSummary = Omit<Chapter, 'content'> & {
+  has_content: boolean
+  content_characters: number
+}
+
 export interface TimelineEvent {
   id: string
   project_id: string
@@ -305,6 +310,10 @@ export interface Workspace {
   reference_pattern_applications: ReferencePatternApplication[]
   continuity_issues: ContinuityIssue[]
   resume_card: ResumeCard | null
+}
+
+export type WorkspaceSummary = Omit<Workspace, 'chapters'> & {
+  chapters: ChapterSummary[]
 }
 
 export interface CreateTimelineEventInput {
