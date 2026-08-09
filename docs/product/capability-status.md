@@ -18,8 +18,8 @@
 |---|---|---|---|
 | pnpm monorepo 与统一 verify | 已交付 | 根脚本、锁文件、Web/API/Rust 检查、双平台 CI | 持续维护发布门 |
 | 稳定数据目录与旧库复制 | 已交付 | config.py、数据库配置测试 | 保持迁移回归 |
-| schema 版本、升级备份、损坏拒绝 | 已交付 | migrations v1→v2→v3→v4、暂存副本、失败注入测试 | 后续结构变更继续追加迁移 |
-| 持久任务基础设施 | 已交付 | Job/Attempt/Chunk/Artifact/Event、状态机、幂等键、心跳租约、周期恢复；拆书、写章、任务中心与真实 DMG 强杀恢复已验收 | M3 补用量与成本治理 |
+| schema 版本、升级备份、损坏拒绝 | 已交付 | migrations v1→v2→v3→v4→v5→v6→v7、暂存副本、失败注入测试 | 后续结构变更继续追加迁移 |
+| 持久任务基础设施 | 已交付 | Job/Attempt/Chunk/Artifact/Event、状态机、幂等键、心跳租约、周期恢复；拆书、写章、任务中心与真实 DMG 强杀恢复已验收 | M4 接入版本化 ContextPacket |
 | 导航前保存与项目书架 | 已交付 | autosave hook、书架和交互测试 | 长篇性能与桌面 E2E |
 | 项目归档与恢复点 | 已交付 | 完整 JSON 归档、校验和、恢复副本 | M5 适配全局参考资产 |
 | Tauri sidecar、动态端口与会话令牌 | 已交付 | 256-bit 启动令牌、统一请求头、PyInstaller、macOS DMG | M10 签名、公证与 Windows |
@@ -42,12 +42,12 @@
 
 | 能力 | 状态 | 当前证据 | 剩余工作 |
 |---|---|---|---|
-| OpenAI 章纲候选 | 已交付 | Responses 结构化输出与候选采用 | M3 统一 provider 契约 |
+| OpenAI 章纲候选 | 已交付 | Responses 结构化输出、任务分流、外发预览与候选采用 | M7 一键单章编排 |
 | OpenAI 完整章节候选 | 已交付 | 正文生成、revision 与采用门 | M2 后台恢复；M7 一键单章编排 |
 | 假模型与运行事件 | 已交付 | demo 状态机和离线测试 | M2 统一 Job/Artifact |
-| 可恢复真实模型任务 | 已交付 | 长篇拆书、AI 章纲和完整正文候选均支持持久任务、取消、重试与 artifact 复用 | M3 增加流式取消和用量治理 |
-| 多 OpenAI-compatible 配置 | 未开始 | 只有单 OpenAI Key/Model | M3 |
-| 系统密钥库与成本记录 | 未开始 | Key 仅在环境或进程内存 | M3 |
+| 可恢复真实模型任务 | 已交付 | 长篇拆书、AI 章纲和完整正文候选支持持久任务、流式增量、取消、重试、artifact 复用及安全错误归一 | M4 绑定 ContextPacket |
+| 多 OpenAI-compatible 配置 | 已交付 | 多 profile、自定义安全 base URL、任务级默认线路、保守能力降级与脱敏回放契约 | Ollama 原生体验放 P1 |
+| 系统密钥库与成本记录 | 已交付 | macOS Keychain、启动前恢复全部线路、Attempt Token/耗时/费用、外发前估算；浏览器仅会话内存降级 | M10 Windows 凭据与安装包原生验收 |
 | 长篇 ContextPacket | 部分交付 | 近期三章、相关/最新事实选择与入选原因 | M4 预算、来源与重放 |
 | 整书总导演和单章流水线 | 未开始 | 只有单章 AI 按钮 | M7 |
 
@@ -90,9 +90,9 @@
 
 | 层 | 数量 | 状态 |
 |---|---:|---|
-| Web Vitest | 30 | 全部通过 |
-| FastAPI pytest | 112 | 全部通过 |
-| Tauri Rust | 4 | 全部通过 |
+| Web Vitest | 33 | 全部通过 |
+| FastAPI pytest | 137 | 全部通过 |
+| Tauri Rust | 7 + 1 个按需 Keychain 测试 | 全部通过 |
 | Node 工程脚本 | 10 | 全部通过 |
 
 该数量只表示当前测试基线，不等同于 MVP 完成。真实浏览器、30 万字性能、故障注入、原创性对抗和双平台安装仍必须按 PLAN.md 验证。
