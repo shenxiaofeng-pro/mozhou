@@ -14,6 +14,7 @@ from app.models import (
     StoryFact,
     Workspace,
 )
+from app.providers import ModelCapabilities, ModelProfile, ProviderKind
 
 
 class StubAiGateway:
@@ -57,6 +58,39 @@ class StubAiGateway:
             raise AiProviderError("provider failed")
         assert chapter.opening_hook == "停产名单比记忆中提前贴出"
         return "一九九八年的梅山坡还没有后来那排高楼。" * 30
+
+
+def model_profile(profile_id: str, name: str, model: str) -> ModelProfile:
+    return ModelProfile(
+        id=profile_id,
+        name=name,
+        provider=ProviderKind.OPENAI_COMPATIBLE,
+        base_url="https://provider.test/v1",
+        model=model,
+        capabilities=ModelCapabilities(),
+        input_cost_microusd_per_million=None,
+        output_cost_microusd_per_million=None,
+        revision=0,
+        created_at="2026-08-10T00:00:00Z",
+        updated_at="2026-08-10T00:00:00Z",
+    )
+
+
+def test_gateway_manager_keeps_loaded_profiles_isolated_when_active_route_changes() -> None:
+    manager = AiGatewayManager()
+    first = model_profile("profile-first", "章纲模型", "brief-model")
+    second = model_profile("profile-second", "正文模型", "draft-model")
+
+    manager.activate_profile(first, "unused-first", key_source="test")
+    first_gateway = manager.gateway_for(first.id)
+    manager.activate_profile(second, "unused-second", key_source="test")
+
+    assert manager.status().profile_id == second.id
+    assert manager.gateway_for(first.id) is first_gateway
+    assert manager.gateway_for(first.id).status().model == first.model
+    assert manager.gateway_for(second.id).status().model == second.model
+    manager.unload_profile(first.id)
+    assert not manager.gateway_for(first.id).status().configured
 
 
 def create_project(client: TestClient) -> dict[str, object]:

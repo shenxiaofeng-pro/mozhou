@@ -160,7 +160,8 @@ class ReferenceJobService:
 
     def handle(self, context: JobExecutionContext, job: Job) -> None:
         request = ReferenceSynthesisRequest.model_validate(self.jobs.load_input(job.id))
-        status = self.manager.status()
+        gateway = self.manager.gateway_for(job.provider_profile_id)
+        status = gateway.status()
         if (
             not status.configured
             or status.provider.value != job.provider
@@ -178,8 +179,6 @@ class ReferenceJobService:
         plan = plan_reference_chunks(segments)
         chunks = self._ensure_chunks(job.id, plan)
         segment_by_id = {segment.segment_id: segment for segment in segments}
-        gateway = self.manager.gateway()
-
         completed = 0
         self.jobs.update_progress(
             job.id,

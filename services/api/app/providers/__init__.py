@@ -5,6 +5,7 @@ from app.providers.base import (
     ProviderCallMetrics,
     ProviderResult,
     ProviderUsage,
+    StreamingProviderAdapter,
 )
 from app.providers.models import (
     ActivateModelProfileRequest,
@@ -41,5 +42,6 @@ __all__ = [
     "ProviderResult",
     "ProviderUsage",
     "StaleModelProfileError",
+    "StreamingProviderAdapter",
     "UpdateModelProfileRequest",
 ]

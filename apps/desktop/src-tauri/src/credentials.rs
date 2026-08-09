@@ -138,8 +138,12 @@ pub(crate) fn delete_credential(
 ) -> Result<CredentialStatus, String> {
     validate_profile_id(profile_id)?;
     let is_active = store.get(ACTIVE_PROFILE_ACCOUNT)?.as_deref() == Some(profile_id);
+    post_api_json(
+        connection,
+        &format!("/api/ai/profiles/{profile_id}/deactivate"),
+        "{}",
+    )?;
     if is_active {
-        post_api_json(connection, "/api/ai/deactivate", "{}")?;
         store.delete(ACTIVE_PROFILE_ACCOUNT)?;
     }
     store.delete(&profile_account(profile_id))?;
@@ -162,7 +166,7 @@ fn activate_runtime_profile(
     api_key: &str,
 ) -> Result<(), String> {
     let path = format!("/api/ai/profiles/{profile_id}/activate");
-    let mut body = serde_json::json!({ "api_key": api_key }).to_string();
+    let mut body = serde_json::json!({ "api_key": api_key, "make_active": true }).to_string();
     let result = post_api_json(connection, &path, &body);
     body.zeroize();
     result

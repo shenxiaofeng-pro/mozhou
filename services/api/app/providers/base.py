@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -71,3 +72,15 @@ class ProviderAdapter(Protocol):
         input_text: str,
         output_model: type[StructuredOutput],
     ) -> ProviderResult[StructuredOutput]: ...
+
+
+@runtime_checkable
+class StreamingProviderAdapter(Protocol):
+    def generate_text_stream(
+        self,
+        *,
+        instructions: str,
+        input_text: str,
+        on_delta: Callable[[str], None],
+        max_output_tokens: int | None = None,
+    ) -> ProviderResult[str]: ...

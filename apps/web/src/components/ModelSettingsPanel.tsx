@@ -200,6 +200,7 @@ export function ModelSettingsPanel({
     setError(null)
     try {
       await saveProfile()
+      if (isActive) onStatusChanged(await api.getAiStatus())
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '保存模型配置失败')
     } finally {

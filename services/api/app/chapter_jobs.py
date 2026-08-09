@@ -9,12 +9,13 @@ from app.ai import (
     AiGatewayManager,
     AiNotConfiguredError,
     AiProviderError,
+    StreamingDraftGateway,
     build_chapter_context,
     consume_ai_call_metrics,
 )
 from app.jobs.models import AttemptState, ChunkState, Job, JobKind
 from app.jobs.repository import JobRepository
-from app.jobs.runtime import JobExecutionContext, JobExecutionError
+from app.jobs.runtime import JobCancellationRequested, JobExecutionContext, JobExecutionError
 from app.models import (
     AiChapterBriefProposal,
     AiChapterBriefRequest,
@@ -24,6 +25,7 @@ from app.models import (
     GenerationRun,
     Workspace,
 )
+from app.providers import AiErrorCategory, ProviderCallError
 from app.repository import (
     InvalidChapterStateError,
     NotFoundError,
@@ -156,7 +158,8 @@ class ChapterJobService:
         if job.kind != expected_kind:
             raise JobExecutionError("invalid_job_kind", "章节任务类型无效")
         task_input = ChapterJobInput.model_validate(self.jobs.load_input(job.id))
-        status = self.manager.status()
+        gateway = self.manager.gateway_for(job.provider_profile_id)
+        status = gateway.status()
         if (
             not status.configured
             or status.provider.value != job.provider
@@ -229,10 +232,10 @@ class ChapterJobService:
             provider_profile_id=job.provider_profile_id,
             model=job.model,
         )
-        gateway = self.manager.gateway()
         try:
             payload, metadata = self._call_gateway(
                 gateway,
+                context,
                 expected_kind,
                 workspace,
                 chapter,
@@ -315,6 +318,7 @@ class ChapterJobService:
     def _call_gateway(
         self,
         gateway: AiGateway,
+        context: JobExecutionContext,
         kind: JobKind,
         workspace: Workspace,
         chapter: Chapter,
@@ -336,11 +340,43 @@ class ChapterJobService:
             if not isinstance(proposal, AiChapterBriefProposal):
                 raise AiProviderError("AI 未返回可用章纲")
             return proposal.model_dump_json(), metadata
-        candidate = gateway.draft_chapter(
-            workspace,
-            chapter,
-            task_input.author_intent,
-        )
+        if isinstance(gateway, StreamingDraftGateway):
+            generated_characters = 0
+            checkpoint_characters = 0
+
+            def on_delta(delta: str) -> None:
+                nonlocal generated_characters, checkpoint_characters
+                generated_characters += len(delta)
+                if generated_characters - checkpoint_characters < 256:
+                    return
+                checkpoint_characters = generated_characters
+                try:
+                    context.checkpoint()
+                except JobCancellationRequested as error:
+                    raise ProviderCallError(
+                        AiErrorCategory.CANCELLED,
+                        "模型生成已按请求停止，可从任务中心重试",
+                        retryable=True,
+                    ) from error
+                self.jobs.update_progress(
+                    job.id,
+                    current=0,
+                    total=1,
+                    step=f"AI 已流式生成 {generated_characters:,} 字",
+                )
+
+            candidate = gateway.draft_chapter_streaming(
+                workspace,
+                chapter,
+                task_input.author_intent,
+                on_delta,
+            )
+        else:
+            candidate = gateway.draft_chapter(
+                workspace,
+                chapter,
+                task_input.author_intent,
+            )
         if not 300 <= len(candidate) <= 100_000:
             raise AiProviderError("AI 返回的正文长度不符合要求")
         metadata["generation_run_id"] = str(uuid5(

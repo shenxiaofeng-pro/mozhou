@@ -287,7 +287,9 @@ def create_app(
         body: UpdateModelProfileRequest,
     ) -> ModelProfile:
         try:
-            return application.state.model_profiles.update_profile(str(profile_id), body)
+            profile = application.state.model_profiles.update_profile(str(profile_id), body)
+            application.state.ai_manager.unload_profile(str(profile_id))
+            return profile
         except ModelProfileNotFoundError as error:
             raise HTTPException(status_code=404, detail="模型配置不存在") from error
         except StaleModelProfileError as error:
@@ -309,6 +311,7 @@ def create_app(
                 profile,
                 body.api_key.get_secret_value(),
                 key_source="runtime",
+                make_active=body.make_active,
             )
         except ModelProfileNotFoundError as error:
             raise HTTPException(status_code=404, detail="模型配置不存在") from error
@@ -318,6 +321,13 @@ def create_app(
     @application.post("/api/ai/deactivate", response_model=AiStatus)
     def deactivate_ai_profile() -> AiStatus:
         return application.state.ai_manager.deactivate()
+
+    @application.post(
+        "/api/ai/profiles/{profile_id}/deactivate",
+        response_model=AiStatus,
+    )
+    def deactivate_one_ai_profile(profile_id: UUID) -> AiStatus:
+        return application.state.ai_manager.unload_profile(str(profile_id))
 
     @application.delete("/api/ai/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_ai_profile(profile_id: UUID, expected_revision: int) -> Response:
@@ -330,6 +340,7 @@ def create_app(
                 str(profile_id),
                 expected_revision,
             )
+            application.state.ai_manager.unload_profile(str(profile_id))
         except ModelProfileNotFoundError as error:
             raise HTTPException(status_code=404, detail="模型配置不存在") from error
         except StaleModelProfileError as error:

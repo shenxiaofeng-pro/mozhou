@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from time import perf_counter
 from typing import Any
 
@@ -7,6 +8,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from app.providers.base import (
     ProviderAdapterConfig,
+    ProviderCallError,
     ProviderResult,
     ProviderUsage,
     StructuredOutput,
@@ -100,6 +102,40 @@ class OpenAiResponsesAdapter:
         except Exception as error:
             raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
 
+    def generate_text_stream(
+        self,
+        *,
+        instructions: str,
+        input_text: str,
+        on_delta: Callable[[str], None],
+        max_output_tokens: int | None = None,
+    ) -> ProviderResult[str]:
+        started = perf_counter()
+        try:
+            with self.client.responses.stream(
+                model=self.config.model,
+                instructions=instructions,
+                input=input_text,
+                max_output_tokens=max_output_tokens,
+                store=False,
+            ) as stream:
+                for event in stream:
+                    if event.type == "response.output_text.delta" and event.delta:
+                        on_delta(event.delta)
+                response = stream.get_final_response()
+            output = response.output_text.strip()
+            if not output:
+                raise ValueError("empty provider response")
+            return ProviderResult(
+                output=output,
+                usage=_responses_usage(response.usage),
+                duration_ms=_duration_ms(started),
+            )
+        except ProviderCallError:
+            raise
+        except Exception as error:
+            raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
+
 
 class OpenAiCompatibleChatAdapter:
     def __init__(
@@ -182,6 +218,57 @@ class OpenAiCompatibleChatAdapter:
                 usage=_chat_usage(completion.usage),
                 duration_ms=_duration_ms(started),
             )
+        except Exception as error:
+            raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
+
+    def generate_text_stream(
+        self,
+        *,
+        instructions: str,
+        input_text: str,
+        on_delta: Callable[[str], None],
+        max_output_tokens: int | None = None,
+    ) -> ProviderResult[str]:
+        if not self.config.capabilities.streaming:
+            result = self.generate_text(
+                instructions=instructions,
+                input_text=input_text,
+                max_output_tokens=max_output_tokens,
+            )
+            on_delta(result.output)
+            return result
+        started = perf_counter()
+        chunks: list[str] = []
+        usage = ProviderUsage()
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.config.model,
+                messages=_messages(instructions, input_text),
+                max_completion_tokens=max_output_tokens,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+            try:
+                for chunk in stream:
+                    if chunk.usage is not None:
+                        usage = _chat_usage(chunk.usage)
+                    for choice in chunk.choices:
+                        delta = choice.delta.content
+                        if isinstance(delta, str) and delta:
+                            chunks.append(delta)
+                            on_delta(delta)
+            finally:
+                stream.close()
+            output = "".join(chunks).strip()
+            if not output:
+                raise ValueError("empty provider response")
+            return ProviderResult(
+                output=output,
+                usage=usage,
+                duration_ms=_duration_ms(started),
+            )
+        except ProviderCallError:
+            raise
         except Exception as error:
             raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
 
