@@ -325,6 +325,12 @@ export const api = {
       body: JSON.stringify(input),
     })
   },
+  startReferenceAnalysisJob(projectId: string, input: ReferenceSynthesisInput) {
+    return request<Job>(`/api/projects/${encodeURIComponent(projectId)}/reference-analysis-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
   applyReferencePattern(projectId: string, cardId: string, input: ApplyReferencePatternInput) {
     return request<ReferencePatternApplication>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-cards/${encodeURIComponent(cardId)}/applications`,

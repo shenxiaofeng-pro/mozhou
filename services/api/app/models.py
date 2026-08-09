@@ -486,6 +486,12 @@ class ReferenceChunkAnalysis(BaseModel):
         return value
 
 
+class ReferenceBookAnalysis(ReferenceChunkAnalysis):
+    work_id: str = Field(min_length=1, max_length=100)
+    work_title: str = Field(min_length=1, max_length=200)
+    source_segment_ids: list[str] = Field(min_length=1, max_length=12)
+
+
 class ReferenceDimensionSynthesis(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -520,6 +526,7 @@ class ReferenceSynthesisProposal(BaseModel):
 class ReferencePatternCard(ReferenceSynthesisProposal):
     id: str
     project_id: str
+    source_job_id: str | None = None
     selected_segment_ids: list[str]
     author_focus: str
     provider: AiProvider

@@ -3009,6 +3009,46 @@ textarea:focus-visible {
   background: #ced2ce;
 }
 
+.reference-job-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem 0.7rem;
+  align-items: center;
+  border-left: 3px solid var(--rust);
+  padding: 0.55rem 0.65rem;
+  background: #f7f3ea;
+}
+
+.reference-job-status > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.reference-job-status strong {
+  color: var(--ink);
+  font-size: 0.56rem;
+}
+
+.reference-job-status span {
+  color: var(--slate);
+  font-size: 0.5rem;
+}
+
+.reference-job-status progress {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--rust);
+}
+
+.reference-job-status > button {
+  border: 1px solid #9caaa7;
+  padding: 0.35rem 0.5rem;
+  color: var(--ink-soft);
+  background: #fffefa;
+  font-size: 0.52rem;
+  font-weight: 800;
+}
+
 .reference-pattern-archive {
   margin-top: 1rem;
   border-top: 1px solid #9eafae;

@@ -113,21 +113,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v4-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v5-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v4-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v5-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v4_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v5_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -183,7 +183,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v4_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (4,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (5,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -192,8 +192,9 @@ def test_database_runs_v1_and_v2_fixtures_to_v4_without_losing_data(
         (2, "chapter_brief_and_ai_provenance"),
         (3, "migration_history"),
         (4, "durable_ai_jobs"),
+        (5, "reference_job_provenance"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v4-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v5-*.db"))) == 1
 
 
 def test_failed_migration_keeps_original_database_and_readable_backup(
@@ -237,7 +238,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
         ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v4-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v5-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

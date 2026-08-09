@@ -63,6 +63,7 @@ beforeEach(() => {
   window.localStorage.clear()
   vi.spyOn(api, 'listProjects').mockResolvedValue([])
   vi.spyOn(api, 'getProjectSummary').mockResolvedValue(summarizeWorkspace(workspace))
+  vi.spyOn(api, 'listJobs').mockResolvedValue([])
   vi.spyOn(api, 'getChapter').mockResolvedValue(workspace.chapters[0])
   vi.spyOn(api, 'getAiStatus').mockResolvedValue({
     configured: false,
@@ -998,6 +999,7 @@ describe('App', () => {
     const patternCard = {
       id: 'pattern-card-1',
       project_id: workspace.project.id,
+      source_job_id: 'reference-job-1',
       selected_segment_ids: sourceSegmentIds,
       author_focus: '重点比较资源增长',
       provider: 'openai' as const,
@@ -1014,7 +1016,48 @@ describe('App', () => {
       relationship_recomposition: '新作改为师徒与竞争者的三角制衡。',
       originality_risks: ['不能复用产业、专名和相同场景顺序'],
     }
-    const synthesize = vi.spyOn(api, 'synthesizeReferencePatterns').mockResolvedValue(patternCard)
+    const referenceJob = {
+      id: patternCard.source_job_id,
+      project_id: workspace.project.id,
+      chapter_id: null,
+      parent_job_id: null,
+      kind: 'reference_fusion' as const,
+      state: 'queued' as const,
+      idempotency_key: 'reference-test',
+      progress_current: 0,
+      progress_total: 5,
+      current_step: '',
+      estimated_calls: 5,
+      completed_calls: 0,
+      provider: 'openai',
+      model: 'test-reference-model',
+      lease_owner: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      error_code: null,
+      error_message: null,
+      created_at: '2026-08-09T01:00:00Z',
+      updated_at: '2026-08-09T01:00:00Z',
+      started_at: null,
+      completed_at: null,
+    }
+    const startAnalysis = vi.spyOn(api, 'startReferenceAnalysisJob').mockResolvedValue(referenceJob)
+    vi.spyOn(api, 'getJob').mockResolvedValue({
+      ...referenceJob,
+      state: 'succeeded',
+      progress_current: 5,
+      completed_calls: 5,
+      current_step: '跨书合成六维结构',
+      chunks: [],
+      attempts: [],
+      artifacts: [],
+      events: [],
+    })
+    vi.mocked(api.getProjectSummary).mockResolvedValue(summarizeWorkspace({
+      ...workspace,
+      reference_works: [existingWork, importedWork],
+      reference_pattern_cards: [patternCard],
+    }))
     const applyPattern = vi.spyOn(api, 'applyReferencePattern').mockResolvedValue({
       id: 'pattern-application-1',
       project_id: workspace.project.id,
@@ -1055,7 +1098,7 @@ describe('App', () => {
     await user.type(screen.getByLabelText('多书分析重点'), '重点比较资源增长')
     await user.click(screen.getByRole('button', { name: 'AI 萃取六维结构' }))
 
-    expect(synthesize).toHaveBeenCalledWith(workspace.project.id, {
+    expect(startAnalysis).toHaveBeenCalledWith(workspace.project.id, {
       selected_segment_ids: sourceSegmentIds,
       author_focus: '重点比较资源增长',
       confirm_external_processing: true,
