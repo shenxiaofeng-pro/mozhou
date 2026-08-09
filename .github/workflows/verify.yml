@@ -1,0 +1,76 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install locked toolchains and dependencies
+        shell: bash
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          uv python install 3.14
+          uv sync --project services/api --frozen
+      - name: Run complete verification gate
+        shell: bash
+        run: pnpm run verify
+
+  security:
+    name: security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          uv python install 3.14
+          uv sync --project services/api --frozen
+      - name: Guard repository and audit JavaScript dependencies
+        run: |
+          pnpm run guard:repository
+          pnpm audit --audit-level high
+      - name: Audit Python dependencies
+        run: |
+          uv export --project services/api --frozen --no-dev --format requirements-txt --output-file python-requirements.txt
+          uvx pip-audit --requirement python-requirements.txt
+      - name: Audit Rust dependencies
+        uses: rustsec/audit-check@v2
+        with:
+          working-directory: apps/desktop/src-tauri
+          token: ${{ secrets.GITHUB_TOKEN }}
