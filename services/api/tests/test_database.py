@@ -31,6 +31,8 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "ai_task_defaults",
         "chapter_events",
         "chapters",
+        "context_directives",
+        "context_packets",
         "fact_change_sets",
         "fact_changes",
         "future_knowledge",
@@ -115,21 +117,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v7-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v8-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v7-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v8-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v6_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v8_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -185,7 +187,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v6_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (7,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -197,8 +199,9 @@ def test_database_runs_v1_and_v2_fixtures_to_v6_without_losing_data(
         (5, "reference_job_provenance"),
         (6, "ai_provider_profiles"),
         (7, "ai_task_defaults"),
+        (8, "context_packets"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v7-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v8-*.db"))) == 1
 
 
 def test_failed_migration_keeps_original_database_and_readable_backup(
@@ -242,7 +245,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
         ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v7-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v8-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

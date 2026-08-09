@@ -291,6 +291,43 @@ CREATE TABLE IF NOT EXISTS ai_task_defaults (
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS context_packets (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    chapter_revision INTEGER NOT NULL CHECK(chapter_revision >= 0),
+    task_type TEXT NOT NULL CHECK(task_type IN ('chapter_brief', 'chapter_draft')),
+    compiler_version TEXT NOT NULL CHECK(length(compiler_version) BETWEEN 1 AND 80),
+    token_budget INTEGER NOT NULL CHECK(token_budget BETWEEN 1000 AND 200000),
+    used_tokens INTEGER NOT NULL CHECK(used_tokens > 0),
+    overflow_tokens INTEGER NOT NULL CHECK(overflow_tokens >= 0),
+    packet_sha256 TEXT NOT NULL CHECK(length(packet_sha256) = 64),
+    source_fingerprint_sha256 TEXT NOT NULL CHECK(length(source_fingerprint_sha256) = 64),
+    packet_json TEXT NOT NULL CHECK(length(packet_json) BETWEEN 2 AND 5000000),
+    rendered_context TEXT NOT NULL CHECK(length(rendered_context) BETWEEN 2 AND 5000000),
+    created_at TEXT NOT NULL,
+    UNIQUE(chapter_id, task_type, packet_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_packets_chapter_created
+ON context_packets(chapter_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS context_directives (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    source_kind TEXT NOT NULL CHECK(length(source_kind) BETWEEN 1 AND 40),
+    source_id TEXT NOT NULL CHECK(length(source_id) BETWEEN 1 AND 200),
+    action TEXT NOT NULL CHECK(action IN ('pin', 'exclude')),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(chapter_id, source_kind, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_directives_chapter
+ON context_directives(chapter_id, source_kind, source_id);
 """
 
 class DatabaseIntegrityError(RuntimeError):
