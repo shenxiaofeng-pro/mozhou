@@ -213,21 +213,7 @@ class ChapterJobService:
             progress_total=1,
             estimated_calls=1,
         )
-        self.jobs.put_artifact(
-            job.id,
-            kind="context_packet",
-            artifact_key="context_packet",
-            payload=packet.model_dump_json(),
-            content_type="application/json",
-            provider="local",
-            model=packet.compiler_version,
-            metadata={
-                "context_packet_id": packet.id,
-                "packet_sha256": packet.packet_sha256,
-                "used_tokens": packet.used_tokens,
-                "token_budget": packet.token_budget,
-            },
-        )
+        self._ensure_context_artifact(job.id, packet)
         artifact_key = "brief" if kind == JobKind.CHAPTER_BRIEF else "draft"
         self.jobs.ensure_chunk(
             job.id,
@@ -434,8 +420,21 @@ class ChapterJobService:
             )
 
         artifact_key = "brief" if expected_kind == JobKind.CHAPTER_BRIEF else "draft"
+        self._ensure_context_artifact(job.id, packet)
+        planned_chunk, _created = self.jobs.ensure_chunk(
+            job.id,
+            kind=expected_kind,
+            ordinal=0,
+            idempotency_key=artifact_key,
+            input_payload={
+                "chapter_id": chapter.id,
+                "expected_revision": task_input.expected_revision,
+                "context_packet_id": packet.id,
+                "context_sha256": packet.packet_sha256,
+            },
+        )
         chunks = self.jobs.list_chunks(job.id)
-        if len(chunks) != 1:
+        if len(chunks) != 1 or chunks[0].id != planned_chunk.id:
             raise JobExecutionError("invalid_plan", "章节任务计划不完整")
         chunk = chunks[0]
         artifact = self.jobs.find_artifact(job.id, artifact_key)
@@ -583,6 +582,23 @@ class ChapterJobService:
                     "context_packet_artifact_invalid",
                     "任务冻结的上下文产物无法解析，未调用模型",
                 ) from error
+
+    def _ensure_context_artifact(self, job_id: str, packet: ContextPacket) -> None:
+        self.jobs.put_artifact(
+            job_id,
+            kind="context_packet",
+            artifact_key="context_packet",
+            payload=packet.model_dump_json(),
+            content_type="application/json",
+            provider="local",
+            model=packet.compiler_version,
+            metadata={
+                "context_packet_id": packet.id,
+                "packet_sha256": packet.packet_sha256,
+                "used_tokens": packet.used_tokens,
+                "token_budget": packet.token_budget,
+            },
+        )
 
     def _call_gateway(
         self,
