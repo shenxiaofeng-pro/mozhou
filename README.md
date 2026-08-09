@@ -2,7 +2,7 @@
 
 墨舟是一个本地优先的中文长篇小说工作台，首发聚焦历史重生与都市重生。当前仓库已经跑通安全写作与连载控制闭环：创建作品、编辑章节、自动保存、生成隔离候选稿、审校定稿、候选事实审核，以及由作者明确确认后写入正式事实、小说时间线和伏笔账本。
 
-> 当前实施以 [PLAN.md](PLAN.md) 为冻结范围，以 [PROGRESS.md](PROGRESS.md) 记录验证进度。目标、真实能力和历史规划分别见 [PRD](docs/product/prd.md)、[能力状态矩阵](docs/product/capability-status.md) 和 [早期开发计划](docs/product/development-plan.md)。
+> 当前实施以 [PLAN.md](PLAN.md) 为冻结范围，以 [PROGRESS.md](PROGRESS.md) 记录验证进度。目标、真实能力和历史规划分别见 [PRD](docs/product/prd.md)、[能力状态矩阵](docs/product/capability-status.md) 和 [早期开发计划](docs/product/development-plan.md)；协作与协议冻结规则见 [贡献约定](CONTRIBUTING.md) 和 [0.1.0 基线契约](docs/product/v0.1.0-baseline.md)。
 
 ## 当前能力
 
