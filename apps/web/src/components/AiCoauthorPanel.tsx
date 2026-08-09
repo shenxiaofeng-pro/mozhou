@@ -3,6 +3,7 @@ import type {
   AiStatus,
   Chapter,
   GenerationRun,
+  Job,
 } from '@mozhou/contracts'
 import { useEffect, useState } from 'react'
 
@@ -29,7 +30,10 @@ export function AiCoauthorPanel({
   const [authorIntent, setAuthorIntent] = useState('')
   const [proposal, setProposal] = useState<AiChapterBriefProposal | null>(null)
   const [activity, setActivity] = useState<'configuring' | 'brief' | 'draft' | null>(null)
+  const [activeJob, setActiveJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const activeJobId = activeJob?.id
+  const activeJobState = activeJob?.state
 
   useEffect(() => {
     let active = true
@@ -47,6 +51,54 @@ export function AiCoauthorPanel({
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!activeJobId || !activeJobState) return undefined
+    let stopped = false
+    let timer: number | undefined
+    const finish = async (job: Job) => {
+      if (job.kind === 'chapter_brief') {
+        const result = await api.getAiChapterBriefJobResult(job.id)
+        if (stopped) return
+        setProposal(result)
+      } else if (job.kind === 'chapter_draft') {
+        const result = await api.getAiChapterDraftJobResult(job.id)
+        if (stopped) return
+        onDraftGenerated(result)
+      }
+      if (!stopped) {
+        setActiveJob(null)
+        setActivity(null)
+      }
+    }
+    const poll = async () => {
+      try {
+        const job = await api.getJob(activeJobId)
+        if (stopped || !job) return
+        setActiveJob(job)
+        if (job.state === 'succeeded') {
+          await finish(job)
+          return
+        }
+        if (job.state === 'failed' || job.state === 'interrupted' || job.state === 'cancelled') {
+          setActivity(null)
+          setError(job.error_message ?? 'AI 任务已中断，可从现有任务继续。')
+          return
+        }
+        timer = window.setTimeout(poll, 700)
+      } catch (caught) {
+        if (!stopped) {
+          setActivity(null)
+          setError(caught instanceof Error ? caught.message : '读取 AI 任务进度失败')
+        }
+      }
+    }
+    void poll()
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [activeJobId, activeJobState, onDraftGenerated])
 
   async function configureAi() {
     if (!apiKey.trim() || activity) return
@@ -67,13 +119,12 @@ export function AiCoauthorPanel({
     setActivity('brief')
     setError(null)
     try {
-      setProposal(await api.proposeAiChapterBrief(chapter.id, {
+      setActiveJob(await api.startAiChapterBriefJob(chapter.id, {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
       }))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'AI 章纲生成失败')
-    } finally {
       setActivity(null)
     }
   }
@@ -83,14 +134,34 @@ export function AiCoauthorPanel({
     setActivity('draft')
     setError(null)
     try {
-      onDraftGenerated(await api.generateAiDraft(chapter.id, {
+      setActiveJob(await api.startAiChapterDraftJob(chapter.id, {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
       }))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'AI 正文生成失败')
-    } finally {
       setActivity(null)
+    }
+  }
+
+  async function cancelActiveJob() {
+    if (!activeJob || !['queued', 'running', 'pause_requested'].includes(activeJob.state)) return
+    try {
+      setActiveJob(await api.cancelJob(activeJob.id))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '取消 AI 任务失败')
+    }
+  }
+
+  async function retryActiveJob() {
+    if (!activeJob || !['failed', 'interrupted', 'cancelled'].includes(activeJob.state)) return
+    setError(null)
+    setActivity(activeJob.kind === 'chapter_brief' ? 'brief' : 'draft')
+    try {
+      setActiveJob(await api.retryJob(activeJob.id))
+    } catch (caught) {
+      setActivity(null)
+      setError(caught instanceof Error ? caught.message : '重试 AI 任务失败')
     }
   }
 
@@ -173,6 +244,24 @@ export function AiCoauthorPanel({
             点击生成会把本章章纲、近期正文、正式事实及已确认资料发送给 OpenAI；未确认资料和 API Key 不会进入提示词。
           </p>
           {!canGenerateDraft ? <p>先采用并保存完整章纲，即可让 AI 写整章。</p> : null}
+          {activeJob ? (
+            <div className="ai-job-progress" role="status" aria-live="polite">
+              <div>
+                <strong>{activeJob.current_step || '任务已进入本地队列'}</strong>
+                <span>{activeJob.progress_current} / {activeJob.progress_total}</span>
+              </div>
+              <progress
+                aria-label="AI 章节任务进度"
+                value={activeJob.progress_current}
+                max={Math.max(activeJob.progress_total, 1)}
+              />
+              {['queued', 'running', 'pause_requested'].includes(activeJob.state) ? (
+                <button type="button" onClick={cancelActiveJob}>停止任务</button>
+              ) : (
+                <button type="button" onClick={retryActiveJob}>从任务断点继续</button>
+              )}
+            </div>
+          ) : null}
         </div>
       )}
 

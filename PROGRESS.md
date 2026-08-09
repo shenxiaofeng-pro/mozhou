@@ -162,10 +162,18 @@
 - 拆书产品入口改为 `202 Accepted` 任务提交与 700ms 轮询；完成后重新载入项目摘要并展示模式卡，重新进入页面可发现未完成或失败任务。
 - 本切片专项验证：Web lint、类型检查与 28/28 交互测试通过；API ruff、mypy 与 101/101 测试通过，其中可恢复拆书与迁移/归档专项 35/35 通过。
 - 本切片完整 `pnpm run verify` 通过：仓库守卫、lint、类型检查、工程脚本 10/10、Web 28/28、API 101/101、Web 生产构建、独立 sidecar 构建和 Rust 桌面检查全部成功。
+- 拆书任务 PR #14 的 macOS、Windows 与 security 三项检查全部通过，并已 rebase 合入 main。
+- AI 章纲和完整章节候选新增独立 `chapter_brief` / `chapter_draft` 后台处理器；提交幂等键包含章节 revision、作者意图、provider/model、prompt version 与上下文 SHA-256。
+- 排队后若章节 revision 或作品上下文变化，worker 会在调用模型前以 `stale_revision` / `context_changed` 安全失败，避免用过期资料付费生成。
+- 章纲写入不可变 JSON artifact，只在作者点击“采用到章纲”后进入编辑表单；正文写入 text artifact 并幂等物化为 GenerationRun，仍须作者点击“采用并写入编辑器”才更新正文。
+- GenerationRun 标识由 Job 稳定派生并写入 artifact metadata；候选物化瞬间崩溃后重试只重新物化，不重复模型调用，也不创建第二个候选。
+- AI 共创面板已迁移到 `202 Accepted` 任务提交、进度轮询、取消和断点重试；旧同步章纲/正文接口继续保留一版作为开发兼容回滚路径。
+- 章节任务专项验证 6 项：重复提交、候选批准门、provider 失败重试、物化崩溃、上下文变化阻断和后台 API 类型化结果均通过；API 全量增至 107/107，Web 仍为 28/28。
+- 章节任务切片完整 `pnpm run verify` 通过：仓库守卫、lint、类型检查、工程脚本 10/10、Web 28/28、API 107/107、Web 生产构建、sidecar 构建与 Rust 桌面检查全部成功。
 
 ### 下一切片
 
-- 将 AI 章纲与完整章节候选迁移到 JobRuntime，保证同一幂等键不会重复生成或覆盖正文。
+- 实现全局任务中心，集中展示拆书与章节任务的进度、失败原因、取消、重试、产物查看和结果继续采用。
 
 ## 遗留风险
 
