@@ -1,12 +1,19 @@
-import type { Chapter, FactChangeSet, FactKind, TimelineEvent, Workspace } from '@mozhou/contracts'
+import type {
+  Chapter,
+  FactChangeSet,
+  FactKind,
+  TimelineEvent,
+  Workspace,
+  WorkspaceSummary,
+} from '@mozhou/contracts'
 import { useMemo, useState } from 'react'
 
 import { api } from '../api'
 
 interface FactTimelinePanelProps {
-  workspace: Workspace
+  workspace: WorkspaceSummary
   chapter: Chapter
-  onWorkspaceChanged: (workspace: Workspace) => void
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 const factKindLabels: Record<FactKind, string> = {

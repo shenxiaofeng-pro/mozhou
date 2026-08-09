@@ -5,6 +5,7 @@ import type {
   GenerationRun,
   Project,
   Workspace,
+  WorkspaceSummary,
 } from '@mozhou/contracts'
 import { useState } from 'react'
 
@@ -19,12 +20,12 @@ import { SourceLibraryPanel } from './SourceLibraryPanel'
 
 interface DirectorPanelProps {
   project: Project
-  workspace: Workspace
+  workspace: WorkspaceSummary
   chapter: Chapter
   wordCount: number
   canUpdateChapter: boolean
   onChapterUpdated: (chapter: Chapter) => void
-  onWorkspaceChanged: (workspace: Workspace) => void
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 type BriefField = 'title' | 'reader_promise' | 'opening_hook' | 'state_change' | 'emotional_payoff' | 'ending_cliffhanger'

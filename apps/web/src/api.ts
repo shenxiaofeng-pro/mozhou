@@ -36,6 +36,7 @@ import type {
   UpdateChapterInput,
   UpdateStoryEntityInput,
   Workspace,
+  WorkspaceSummary,
 } from '@mozhou/contracts'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -143,6 +144,12 @@ export const api = {
   },
   getProject(projectId: string) {
     return request<Workspace>(`/api/projects/${encodeURIComponent(projectId)}`)
+  },
+  getProjectSummary(projectId: string) {
+    return request<WorkspaceSummary>(`/api/projects/${encodeURIComponent(projectId)}/summary`)
+  },
+  getChapter(chapterId: string) {
+    return request<Chapter>(`/api/chapters/${encodeURIComponent(chapterId)}`)
   },
   createChapter(projectId: string, input: CreateChapterInput) {
     return request<Chapter>(`/api/projects/${encodeURIComponent(projectId)}/chapters`, {

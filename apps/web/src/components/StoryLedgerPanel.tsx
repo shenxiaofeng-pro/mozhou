@@ -6,15 +6,16 @@ import type {
   StoryThread,
   StoryThreadStatus,
   Workspace,
+  WorkspaceSummary,
 } from '@mozhou/contracts'
 import { useState } from 'react'
 
 import { api } from '../api'
 
 interface StoryLedgerPanelProps {
-  workspace: Workspace
+  workspace: WorkspaceSummary
   chapter: Chapter
-  onWorkspaceChanged: (workspace: Workspace) => void
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 const entityKindLabels = {

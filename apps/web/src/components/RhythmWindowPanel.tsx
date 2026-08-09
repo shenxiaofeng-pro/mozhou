@@ -1,7 +1,7 @@
-import type { Chapter } from '@mozhou/contracts'
+import type { ChapterSummary } from '@mozhou/contracts'
 
 interface RhythmWindowPanelProps {
-  chapters: Chapter[]
+  chapters: ChapterSummary[]
   activeChapterId: string
 }
 

@@ -1,7 +1,7 @@
-import type { ChapterStatus, Workspace } from '@mozhou/contracts'
+import type { ChapterStatus, WorkspaceSummary } from '@mozhou/contracts'
 
 interface SerialControlPanelProps {
-  workspace: Workspace
+  workspace: WorkspaceSummary
 }
 
 const statusLabels: Record<ChapterStatus, string> = {

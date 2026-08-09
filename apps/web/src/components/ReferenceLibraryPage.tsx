@@ -1,10 +1,10 @@
-import type { Workspace } from '@mozhou/contracts'
+import type { Workspace, WorkspaceSummary } from '@mozhou/contracts'
 
 import { ReferenceLabPanel } from './ReferenceLabPanel'
 
 interface ReferenceLibraryPageProps {
-  workspace: Workspace
-  onWorkspaceChanged: (workspace: Workspace) => void
+  workspace: WorkspaceSummary
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onBack: () => void
 }
 

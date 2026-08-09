@@ -3,14 +3,15 @@ import type {
   ReferencePatternDimension,
   ReferenceRightsBasis,
   Workspace,
+  WorkspaceSummary,
 } from '@mozhou/contracts'
 import { useMemo, useState } from 'react'
 
 import { api } from '../api'
 
 interface ReferenceLabPanelProps {
-  workspace: Workspace
-  onWorkspaceChanged: (workspace: Workspace) => void
+  workspace: WorkspaceSummary
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -314,9 +315,9 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
 
 interface ReferencePatternCardPanelProps {
   card: ReferencePatternCard
-  workspace: Workspace
+  workspace: WorkspaceSummary
   sourceLabels: Map<string, string>
-  onWorkspaceChanged: (workspace: Workspace) => void
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 function ReferencePatternCardPanel({

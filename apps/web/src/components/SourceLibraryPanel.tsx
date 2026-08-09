@@ -1,11 +1,17 @@
-import type { SourceCard, SourceConfidence, SourceKind, Workspace } from '@mozhou/contracts'
+import type {
+  SourceCard,
+  SourceConfidence,
+  SourceKind,
+  Workspace,
+  WorkspaceSummary,
+} from '@mozhou/contracts'
 import { useState } from 'react'
 
 import { api } from '../api'
 
 interface SourceLibraryPanelProps {
-  workspace: Workspace
-  onWorkspaceChanged: (workspace: Workspace) => void
+  workspace: WorkspaceSummary
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 const sourceKindLabels = {

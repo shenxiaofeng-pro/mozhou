@@ -3,14 +3,15 @@ import type {
   KnowledgeConfidence,
   KnowledgeReviewAction,
   Workspace,
+  WorkspaceSummary,
 } from '@mozhou/contracts'
 import { useState } from 'react'
 
 import { api } from '../api'
 
 interface FutureKnowledgePanelProps {
-  workspace: Workspace
-  onWorkspaceChanged: (workspace: Workspace) => void
+  workspace: WorkspaceSummary
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
 const confidenceLabels: Record<KnowledgeConfidence, string> = {
