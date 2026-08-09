@@ -267,6 +267,22 @@ CREATE TABLE IF NOT EXISTS reference_pattern_applications (
 
 CREATE INDEX IF NOT EXISTS idx_reference_pattern_applications_project_created
 ON reference_pattern_applications(project_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS ai_provider_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 80),
+    provider TEXT NOT NULL CHECK(provider IN ('openai', 'openai_compatible')),
+    base_url TEXT NOT NULL CHECK(length(base_url) BETWEEN 1 AND 2048),
+    model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 100),
+    capabilities_json TEXT NOT NULL CHECK(length(capabilities_json) BETWEEN 2 AND 1000),
+    input_cost_microusd_per_million INTEGER
+        CHECK(input_cost_microusd_per_million IS NULL OR input_cost_microusd_per_million >= 0),
+    output_cost_microusd_per_million INTEGER
+        CHECK(output_cost_microusd_per_million IS NULL OR output_cost_microusd_per_million >= 0),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 class DatabaseIntegrityError(RuntimeError):
