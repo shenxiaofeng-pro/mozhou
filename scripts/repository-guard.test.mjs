@@ -42,3 +42,17 @@ test('ignores an indexed file that is being deleted from the working tree', () =
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('scans untracked files that would be included by the next commit', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mozhou-repository-guard-untracked-'))
+  try {
+    execFileSync('git', ['init', '--quiet'], { cwd: root })
+    writeFileSync(join(root, 'pending.txt'), 'sk-' + 'abcdefghijklmnopqrstuvwxyz123456')
+
+    assert.deepEqual(inspectRepository(root), [
+      'pending.txt: possible OpenAI API Key',
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
