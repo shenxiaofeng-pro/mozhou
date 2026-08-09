@@ -60,13 +60,18 @@ export function ContextPacketPanel({
 
   function renderItem(item: ContextItem) {
     const directive = directiveFor(item)
+    const effectiveDirective = directive?.action ?? item.directive
     const canDirect = (
-      !item.required
-      && item.source_refs.length > 0
+      item.source_refs.length > 0
       && (
-        item.included
-        || item.directive !== null
-        || item.exclusion_reason?.includes('预算') === true
+        effectiveDirective != null
+        || (
+          !item.required
+          && (
+            item.included
+            || item.exclusion_reason?.includes('预算') === true
+          )
+        )
       )
     )
     return (
@@ -86,15 +91,15 @@ export function ContextPacketPanel({
         {item.conflict_notes.map((note) => <p className="context-conflict-note" key={note}>{note}</p>)}
         <div className="context-item-actions">
           {item.required ? <span>硬约束 · 不可静默移除</span> : null}
-          {canDirect && !directive ? (
+          {canDirect && effectiveDirective == null ? (
             <>
               <button type="button" disabled={busy} onClick={() => onSetDirective(item, 'pin')}>本章固定</button>
               <button type="button" disabled={busy} onClick={() => onSetDirective(item, 'exclude')}>本章排除</button>
             </>
           ) : null}
-          {canDirect && directive ? (
+          {canDirect && effectiveDirective != null ? (
             <button type="button" disabled={busy} onClick={() => onClearDirective(item)}>
-              取消{directive.action === 'pin' ? '固定' : '排除'}
+              取消{effectiveDirective === 'pin' ? '固定' : '排除'}
             </button>
           ) : null}
         </div>
