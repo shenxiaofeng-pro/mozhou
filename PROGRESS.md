@@ -72,6 +72,7 @@
 - 在全新目录按 pnpm/uv 锁文件安装并执行完整 verify，全部通过。
 - 创建并推送 v0.1.0-baseline 标签；从标签创建独立临时分支后再次完成锁文件安装和完整 verify。
 - 冻结 0.1.0 数据、API、归档与测试契约，并建立提交与 Pull Request 约定。
+- M0 收尾 PR #4 的 macOS、Windows 和 security 三项门全部通过，并以 rebase 方式合入 main；Actions v7 更新已获得远端证据。
 
 ### 当前基线
 
@@ -89,11 +90,10 @@
 - GitHub workflow scope 权限已经解除，远端自动发布门可正常运行。
 - GitHub 对私有仓库的经典分支保护和 Repository Ruleset 均返回 HTTP 403：当前账户必须升级 GitHub Pro 或把仓库设为公开。
 - 公开仓库违反已确认的闭源私测决策，因此没有擅自改变可见性；在获得套餐权限前只能用 PR 和 CI 流程自律执行，不能从服务端阻止绕过。
-- Dependabot 已创建 npm、Python 和 GitHub Actions 更新 PR；CI Actions 的 Node 24 运行时更新已纳入 M0 收尾分支，其余升级保持独立验证。
+- Dependabot 已创建 npm、Python 和 GitHub Actions 更新 PR；CI Actions 的 Node 24 运行时更新已由 PR #4 验证并合入，其余升级保持独立验证。
 
-### 剩余验证
+### 剩余工作
 
-- 推送 `codex/m0-finalize`，由 Pull Request 再次执行三项远端门并合入。
 - 获得私有仓库分支保护权限后，启用严格状态检查、PR、线性历史、禁止强推和禁止删除。
 
 ## 遗留风险
