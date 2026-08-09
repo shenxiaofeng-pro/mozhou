@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-CURRENT_SCHEMA_VERSION = 2
+from app.migrations import MIGRATIONS
+
+CURRENT_SCHEMA_VERSION = MIGRATIONS[-1].version
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -267,20 +269,6 @@ CREATE INDEX IF NOT EXISTS idx_reference_pattern_applications_project_created
 ON reference_pattern_applications(project_id, created_at, id);
 """
 
-CHAPTER_BRIEF_COLUMNS = {
-    "reader_promise": "TEXT NOT NULL DEFAULT ''",
-    "opening_hook": "TEXT NOT NULL DEFAULT ''",
-    "state_change": "TEXT NOT NULL DEFAULT ''",
-    "emotional_payoff": "TEXT NOT NULL DEFAULT ''",
-    "ending_cliffhanger": "TEXT NOT NULL DEFAULT ''",
-}
-
-GENERATION_RUN_COLUMNS = {
-    "provider": "TEXT NOT NULL DEFAULT 'demo'",
-    "model": "TEXT NOT NULL DEFAULT 'replay-v1'",
-}
-
-
 class DatabaseIntegrityError(RuntimeError):
     """Raised when SQLite reports that an existing database is damaged."""
 
@@ -293,6 +281,10 @@ class DatabaseBackupError(RuntimeError):
     """Raised when an upgrade backup cannot be completed safely."""
 
 
+class DatabaseMigrationError(RuntimeError):
+    """Raised when a versioned migration fails before replacing the source database."""
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -300,6 +292,7 @@ class Database:
     def initialize(self) -> None:
         database_exists = self.path.is_file() and self.path.stat().st_size > 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        schema_version = 0
         if database_exists:
             schema_version = self._inspect_existing_database()
             if schema_version > CURRENT_SCHEMA_VERSION:
@@ -308,23 +301,65 @@ class Database:
                 )
             if schema_version < CURRENT_SCHEMA_VERSION:
                 self._backup_before_upgrade(CURRENT_SCHEMA_VERSION)
-        with self.connect() as connection:
-            connection.execute("PRAGMA journal_mode=WAL")
-            connection.executescript(SCHEMA)
-            columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(chapters)").fetchall()
-            }
-            for name, definition in CHAPTER_BRIEF_COLUMNS.items():
-                if name not in columns:
-                    connection.execute(f"ALTER TABLE chapters ADD COLUMN {name} {definition}")
-            run_columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(generation_runs)").fetchall()
-            }
-            for name, definition in GENERATION_RUN_COLUMNS.items():
-                if name not in run_columns:
-                    connection.execute(f"ALTER TABLE generation_runs ADD COLUMN {name} {definition}")
-            connection.execute(f"PRAGMA user_version={CURRENT_SCHEMA_VERSION}")
+        if schema_version == CURRENT_SCHEMA_VERSION:
+            return
+        self._migrate_staged_copy(schema_version, database_exists=database_exists)
+
+    def _migrate_staged_copy(self, source_version: int, *, database_exists: bool) -> None:
+        staging_path = self.path.with_name(f".mozhou-migrate-{uuid4().hex}.db")
+        try:
+            if database_exists:
+                with (
+                    closing(sqlite3.connect(self.path, timeout=5)) as source_connection,
+                    closing(sqlite3.connect(staging_path)) as staging_connection,
+                ):
+                    source_connection.backup(staging_connection)
+
+            with closing(sqlite3.connect(staging_path, timeout=5)) as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                for migration in MIGRATIONS:
+                    if migration.version <= source_version:
+                        continue
+                    try:
+                        migration.upgrade(connection, SCHEMA)
+                        connection.execute(f"PRAGMA user_version={migration.version}")
+                        connection.commit()
+                    except Exception as error:
+                        connection.rollback()
+                        raise DatabaseMigrationError(
+                            f"数据库迁移 v{migration.version - 1}→v{migration.version} 失败，原库保持不变"
+                        ) from error
+
+                check_results = connection.execute("PRAGMA quick_check").fetchall()
+                if check_results != [("ok",)]:
+                    raise DatabaseMigrationError("迁移副本完整性检查未通过，原库保持不变")
+                connection.execute("PRAGMA journal_mode=WAL").fetchone()
+
+            self._remove_sqlite_sidecars(staging_path)
+            if database_exists:
+                self._checkpoint_source_before_replace()
+            staging_path.replace(self.path)
+        except DatabaseMigrationError:
+            raise
+        except (OSError, sqlite3.DatabaseError) as error:
+            raise DatabaseMigrationError("数据库迁移失败，原库保持不变") from error
+        finally:
+            staging_path.unlink(missing_ok=True)
+            self._remove_sqlite_sidecars(staging_path)
+
+    @staticmethod
+    def _remove_sqlite_sidecars(database_path: Path) -> None:
+        database_path.with_name(f"{database_path.name}-wal").unlink(missing_ok=True)
+        database_path.with_name(f"{database_path.name}-shm").unlink(missing_ok=True)
+
+    def _checkpoint_source_before_replace(self) -> None:
+        with closing(sqlite3.connect(self.path, timeout=5)) as connection:
+            checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if checkpoint is not None and int(checkpoint[0]) != 0:
+                raise DatabaseMigrationError(
+                    "原库仍被其他进程占用，未替换已完成的迁移副本"
+                )
+        self._remove_sqlite_sidecars(self.path)
 
     def _inspect_existing_database(self) -> int:
         try:
