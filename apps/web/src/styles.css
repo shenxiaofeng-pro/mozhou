@@ -1378,6 +1378,22 @@ textarea:focus-visible {
   text-decoration: underline;
 }
 
+.director-surface {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.director-surface .agent-panel {
+  height: 100%;
+}
+
+.director-drawer-trigger,
+.director-drawer-backdrop,
+.director-drawer-bar {
+  display: none;
+}
+
 .agent-panel {
   min-height: 0;
   overflow-y: auto;
@@ -3389,6 +3405,14 @@ textarea:focus-visible {
   .onboarding-intro > :nth-child(4) { animation-delay: 120ms; }
   .onboarding-intro > :nth-child(5) { animation-delay: 160ms; }
 
+  .director-surface {
+    transition: transform 220ms ease-out, visibility 220ms;
+  }
+
+  .director-drawer-backdrop {
+    transition: opacity 180ms ease-out, visibility 180ms;
+  }
+
   @keyframes arrive {
     from {
       opacity: 0;
@@ -3430,8 +3454,131 @@ textarea:focus-visible {
     grid-template-columns: 12rem 1fr auto;
   }
 
-  .agent-panel {
-    display: none;
+  .director-drawer-trigger {
+    position: fixed;
+    z-index: 40;
+    top: calc(50% + 2.25rem);
+    right: 0;
+    display: grid;
+    gap: 0.35rem;
+    place-items: center;
+    width: 3rem;
+    min-height: 7rem;
+    border: 1px solid #344044;
+    border-right: 0;
+    padding: 0.7rem 0.55rem;
+    color: var(--paper);
+    background: var(--ink);
+    box-shadow: -5px 8px 18px rgb(23 33 38 / 18%);
+  }
+
+  .director-drawer-trigger span {
+    color: var(--rust-light);
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+  }
+
+  .director-drawer-trigger strong {
+    writing-mode: vertical-rl;
+    font-family: "Songti SC", "STSong", serif;
+    font-size: 0.9rem;
+    letter-spacing: 0.12em;
+  }
+
+  .director-drawer-trigger:focus-visible {
+    outline: 3px solid var(--rust-light);
+    outline-offset: 3px;
+  }
+
+  .director-drawer-backdrop {
+    position: fixed;
+    z-index: 41;
+    inset: 4.5rem 0 0;
+    display: block;
+    visibility: hidden;
+    border: 0;
+    padding: 0;
+    opacity: 0;
+    background: rgb(23 33 38 / 36%);
+    pointer-events: none;
+  }
+
+  .director-drawer-backdrop[data-open="true"] {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .director-surface {
+    position: fixed;
+    z-index: 42;
+    top: 4.5rem;
+    right: 0;
+    bottom: 0;
+    width: min(24rem, calc(100vw - 3rem));
+    visibility: hidden;
+    border-left: 1px solid #aeb9b8;
+    background: #eef1f0;
+    box-shadow: -18px 0 45px rgb(23 33 38 / 22%);
+    transform: translateX(100%);
+  }
+
+  .director-surface[data-open="true"] {
+    visibility: visible;
+    transform: translateX(0);
+  }
+
+  .director-drawer-bar {
+    min-height: 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+    padding-left: 1.4rem;
+    background: var(--ink);
+  }
+
+  .director-drawer-bar > div {
+    display: grid;
+    gap: 0.16rem;
+  }
+
+  .director-drawer-bar span {
+    color: var(--rust-light);
+    font-size: 0.55rem;
+    font-weight: 800;
+    letter-spacing: 0.13em;
+  }
+
+  .director-drawer-bar strong {
+    color: var(--paper);
+    font-family: "Songti SC", "STSong", serif;
+    font-size: 0.92rem;
+    letter-spacing: 0.08em;
+  }
+
+  .director-drawer-bar button {
+    align-self: stretch;
+    width: 4rem;
+    border: 0;
+    border-left: 1px solid #465258;
+    color: var(--paper);
+    background: transparent;
+    font-size: 1.6rem;
+    line-height: 1;
+  }
+
+  .director-drawer-bar button:hover,
+  .director-drawer-bar button:focus-visible {
+    color: var(--ink);
+    background: var(--rust-light);
+    outline: 0;
+  }
+
+  .director-surface .agent-panel {
+    height: calc(100% - 4rem);
+    border-left: 0;
   }
 
   .header-metrics > span:last-of-type {
@@ -3624,6 +3771,19 @@ textarea:focus-visible {
 
   .manuscript {
     width: calc(100% - 2rem);
+  }
+
+  .director-drawer-trigger {
+    top: calc(50% + 2rem);
+  }
+
+  .director-drawer-backdrop {
+    inset: 4rem 0 0;
+  }
+
+  .director-surface {
+    top: 4rem;
+    width: min(24rem, calc(100vw - 2.5rem));
   }
 
   .form-row,
