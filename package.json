@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.34.1",
   "scripts": {
-    "dev": "pnpm --parallel --filter @mozhou/web dev & pnpm run dev:api",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "pnpm --filter @mozhou/web dev",
     "dev:api": "uv run --project services/api --no-sync uvicorn app.main:app --app-dir services/api --reload --host 127.0.0.1 --port 8765",
     "build:sidecar": "node scripts/build-sidecar.mjs",
@@ -15,8 +15,9 @@
     "lint": "pnpm --filter @mozhou/web lint && uv run --project services/api --no-sync ruff check services/api",
     "typecheck": "pnpm --filter @mozhou/web typecheck && uv run --project services/api --no-sync mypy services/api/app",
     "test": "pnpm --filter @mozhou/web test",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "test:backend": "uv run --project services/api --no-sync pytest services/api/tests",
     "build": "pnpm --filter @mozhou/web build",
-    "verify": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run test:backend && pnpm run build && pnpm run desktop:check"
+    "verify": "pnpm run lint && pnpm run typecheck && pnpm run test:scripts && pnpm run test && pnpm run test:backend && pnpm run build && pnpm run desktop:check"
   }
 }
