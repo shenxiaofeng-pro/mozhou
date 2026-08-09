@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -31,6 +32,7 @@ from app.models import (
 )
 from app.providers import (
     AiErrorCategory,
+    ModelProfile,
     ProviderAdapterConfig,
     ProviderCallError,
     ProviderResult,
@@ -173,6 +175,40 @@ class UsageFixtureAdapter:
             duration_ms=250,
         )
 
+
+class CancellableStreamingAdapter(UsageFixtureAdapter):
+    config = ProviderAdapterConfig(
+        provider=ProviderKind.OPENAI,
+        base_url="https://api.openai.com/v1",
+        model="streaming-fixture",
+        capabilities=ModelCapabilities(streaming=True, usage=True),
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_between_deltas: Callable[[], None] | None = None
+
+    def generate_text_stream(
+        self,
+        *,
+        instructions: str,
+        input_text: str,
+        on_delta: Callable[[str], None],
+        max_output_tokens: int | None = None,
+    ) -> ProviderResult[str]:
+        del instructions, input_text, max_output_tokens
+        first = "一九九八年的梅山坡" * 10
+        second = "停产名单在风里卷起一角" * 30
+        on_delta(first)
+        if self.cancel_between_deltas is not None:
+            self.cancel_between_deltas()
+        on_delta(second)
+        return ProviderResult(
+            output=first + second,
+            usage=ProviderUsage(input_tokens=100, output_tokens=200),
+            duration_ms=300,
+        )
+
 def build_chapter_runtime(
     database_path: Path,
     gateway: AiGateway,
@@ -262,6 +298,98 @@ def test_chapter_attempt_records_usage_duration_and_estimated_cost(tmp_path: Pat
     assert attempt.output_tokens == 80
     assert attempt.duration_ms == 250
     assert attempt.estimated_cost_microusd == 1_500
+
+
+def test_queued_job_keeps_its_bound_gateway_after_active_profile_switch(tmp_path: Path) -> None:
+    database = Database(tmp_path / "profile-switch.db")
+    database.initialize()
+    repository = ProjectRepository(database)
+    workspace = repository.create_project(CreateProjectRequest(
+        title="回到九八年的南平",
+        genre=Genre.URBAN_REBIRTH,
+        rebirth_year=1998,
+        rebirth_location="福建南平",
+    ))
+    jobs = JobRepository(database)
+    first_gateway = OpenAiGateway(
+        "unused-first",
+        "brief-model",
+        "test",
+        adapter=UsageFixtureAdapter(),
+        profile_id="profile-first",
+        profile_name="章纲模型",
+    )
+    manager = AiGatewayManager(first_gateway)
+    service = ChapterJobService(repository, jobs, manager)
+    runtime = JobRuntime(jobs, {JobKind.CHAPTER_BRIEF: service.handle_brief})
+    job = service.submit_brief(
+        workspace.chapters[0].id,
+        AiChapterBriefRequest(expected_revision=0, author_intent=""),
+    )
+    manager.activate_profile(
+        ModelProfile(
+            id="profile-second",
+            name="正文模型",
+            provider=ProviderKind.OPENAI_COMPATIBLE,
+            base_url="https://provider.test/v1",
+            model="draft-model",
+            capabilities=ModelCapabilities(),
+            input_cost_microusd_per_million=None,
+            output_cost_microusd_per_million=None,
+            revision=0,
+            created_at="2026-08-10T00:00:00Z",
+            updated_at="2026-08-10T00:00:00Z",
+        ),
+        "unused-second",
+        key_source="test",
+    )
+
+    runtime.run_once()
+
+    detail = jobs.get_job_detail(job.id)
+    assert detail.state == JobState.SUCCEEDED
+    assert detail.provider_profile_id == "profile-first"
+    assert detail.artifacts[0].provider_profile_id == "profile-first"
+
+
+def test_streaming_draft_honours_cancel_and_can_retry_without_partial_artifact(
+    tmp_path: Path,
+) -> None:
+    adapter = CancellableStreamingAdapter()
+    gateway = OpenAiGateway(
+        "unused-streaming",
+        "streaming-fixture",
+        "test",
+        adapter=adapter,
+        profile_id="profile-streaming",
+        profile_name="流式测试",
+    )
+    repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "stream-cancel.db",
+        gateway,
+    )
+    chapter = save_complete_brief(repository, chapter)
+    job = service.submit_draft(
+        chapter.id,
+        AiDraftRequest(expected_revision=chapter.revision, author_intent=""),
+    )
+    adapter.cancel_between_deltas = lambda: jobs.request_cancel(job.id)
+
+    runtime.run_once()
+
+    cancelled = jobs.get_job_detail(job.id)
+    assert cancelled.state == JobState.CANCELLED
+    assert cancelled.attempts[0].error_code == AiErrorCategory.CANCELLED.value
+    assert cancelled.artifacts == []
+
+    adapter.cancel_between_deltas = None
+    jobs.retry_job(job.id)
+    runtime.run_once()
+
+    completed = jobs.get_job_detail(job.id)
+    assert completed.state == JobState.SUCCEEDED
+    assert len(completed.attempts) == 2
+    assert len(completed.artifacts) == 1
 
 
 def test_chapter_attempt_keeps_normalized_provider_failure_actionable(tmp_path: Path) -> None:

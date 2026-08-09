@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Callable
 from threading import Lock, local
 from typing import Protocol, runtime_checkable
 
@@ -28,6 +29,7 @@ from app.providers import (
     ProviderCallError,
     ProviderCallMetrics,
     ProviderResult,
+    StreamingProviderAdapter,
 )
 from app.providers.models import ModelProfile, ProviderKind
 from app.providers.openai_adapters import (
@@ -113,6 +115,17 @@ class AiGateway(Protocol):
 @runtime_checkable
 class MetricsAwareGateway(Protocol):
     def consume_last_call_metrics(self) -> ProviderCallMetrics | None: ...
+
+
+@runtime_checkable
+class StreamingDraftGateway(Protocol):
+    def draft_chapter_streaming(
+        self,
+        workspace: Workspace,
+        chapter: Chapter,
+        author_intent: str,
+        on_delta: Callable[[str], None],
+    ) -> str: ...
 
 
 def consume_ai_call_metrics(gateway: AiGateway) -> ProviderCallMetrics | None:
@@ -275,6 +288,39 @@ class OpenAiGateway:
             raise AiProviderError("AI 返回的正文长度不符合要求")
         return candidate
 
+    def draft_chapter_streaming(
+        self,
+        workspace: Workspace,
+        chapter: Chapter,
+        author_intent: str,
+        on_delta: Callable[[str], None],
+    ) -> str:
+        self._clear_call_metrics()
+        try:
+            if isinstance(self.adapter, StreamingProviderAdapter):
+                result = self.adapter.generate_text_stream(
+                    instructions=DRAFT_INSTRUCTIONS,
+                    input_text=build_chapter_context(workspace, chapter, author_intent),
+                    max_output_tokens=12_000,
+                    on_delta=on_delta,
+                )
+            else:
+                result = self.adapter.generate_text(
+                    instructions=DRAFT_INSTRUCTIONS,
+                    input_text=build_chapter_context(workspace, chapter, author_intent),
+                    max_output_tokens=12_000,
+                )
+                on_delta(result.output)
+            candidate = self._remember_result(result)
+        except ProviderCallError as error:
+            raise _ai_provider_error("AI 正文生成失败", error) from error
+        except Exception as error:
+            raise AiProviderError("AI 正文生成失败") from error
+        candidate = candidate.strip()
+        if not 300 <= len(candidate) <= 100_000:
+            raise AiProviderError("AI 返回的正文长度不符合要求")
+        return candidate
+
     def synthesize_references(
         self,
         segments: list[ReferenceAnalysisInput],
@@ -408,6 +454,10 @@ class AiGatewayManager:
     def __init__(self, gateway: AiGateway | None = None) -> None:
         self._lock = Lock()
         self._gateway: AiGateway = gateway or _gateway_from_environment()
+        status = self._gateway.status()
+        self._profile_gateways: dict[str, AiGateway] = {}
+        if status.configured and status.profile_id is not None:
+            self._profile_gateways[status.profile_id] = self._gateway
 
     def status(self) -> AiStatus:
         return self.gateway().status()
@@ -415,6 +465,17 @@ class AiGatewayManager:
     def gateway(self) -> AiGateway:
         with self._lock:
             return self._gateway
+
+    def gateway_for(self, profile_id: str | None) -> AiGateway:
+        with self._lock:
+            if profile_id is None:
+                status = self._gateway.status()
+                return self._gateway if status.profile_id is None else DisabledAiGateway()
+            return self._profile_gateways.get(profile_id, DisabledAiGateway())
+
+    def has_profile(self, profile_id: str) -> bool:
+        with self._lock:
+            return profile_id in self._profile_gateways
 
     def configure_openai(self, request: ConfigureAiRequest) -> AiStatus:
         api_key = request.api_key.get_secret_value()
@@ -426,6 +487,7 @@ class AiGatewayManager:
             key_source="session",
         )
         with self._lock:
+            self._profile_gateways.clear()
             self._gateway = gateway
         return gateway.status()
 
@@ -435,6 +497,7 @@ class AiGatewayManager:
         api_key: str,
         *,
         key_source: str,
+        make_active: bool = True,
     ) -> AiStatus:
         if not 1 <= len(api_key) <= 2_000 or "\x00" in api_key:
             raise ValueError("invalid_api_key")
@@ -458,14 +521,25 @@ class AiGatewayManager:
             profile_name=profile.name,
         )
         with self._lock:
-            self._gateway = gateway
+            self._profile_gateways[profile.id] = gateway
+            if make_active:
+                self._gateway = gateway
         return gateway.status()
 
     def deactivate(self) -> AiStatus:
-        gateway = DisabledAiGateway()
         with self._lock:
-            self._gateway = gateway
-        return gateway.status()
+            active_id = self._gateway.status().profile_id
+            if active_id is not None:
+                self._profile_gateways.pop(active_id, None)
+            self._gateway = DisabledAiGateway()
+            return self._gateway.status()
+
+    def unload_profile(self, profile_id: str) -> AiStatus:
+        with self._lock:
+            self._profile_gateways.pop(profile_id, None)
+            if self._gateway.status().profile_id == profile_id:
+                self._gateway = DisabledAiGateway()
+            return self._gateway.status()
 
 
 class AiWritingService:

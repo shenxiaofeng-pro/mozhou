@@ -49,6 +49,7 @@ class ModelProfile(BaseModel):
 
 class ActivateModelProfileRequest(BaseModel):
     api_key: SecretStr
+    make_active: bool = True
 
 
 class CreateModelProfileRequest(BaseModel):

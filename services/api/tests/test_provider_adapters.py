@@ -1,12 +1,14 @@
 import json
 from collections.abc import Callable
+from types import SimpleNamespace
+from typing import Self
 
 import httpx
 import pytest
 from openai import OpenAI
 from pydantic import BaseModel
 
-from app.providers import ProviderCallError
+from app.providers import ProviderCallError, ProviderUsage
 from app.providers.models import AiErrorCategory, ModelCapabilities
 from app.providers.openai_adapters import (
     OpenAiCompatibleChatAdapter,
@@ -163,3 +165,193 @@ def test_provider_http_errors_are_normalized_without_leaking_body(
     assert caught.value.category == category
     assert caught.value.retryable is retryable
     assert secret_body not in caught.value.safe_message
+
+
+class FakeResponseStream:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.closed = True
+
+    def __iter__(self):
+        yield SimpleNamespace(type="response.output_text.delta", delta="第一段")
+        yield SimpleNamespace(type="response.output_text.delta", delta="第二段")
+
+    def get_final_response(self):
+        return SimpleNamespace(
+            output_text="第一段第二段",
+            usage=SimpleNamespace(input_tokens=12, output_tokens=8),
+        )
+
+
+class FakeResponsesResource:
+    def __init__(self, stream: FakeResponseStream) -> None:
+        self.fixture_stream = stream
+
+    def stream(self, **request: object) -> FakeResponseStream:
+        assert request["store"] is False
+        return self.fixture_stream
+
+
+def test_responses_stream_emits_deltas_usage_and_closes_connection() -> None:
+    stream = FakeResponseStream()
+    client = SimpleNamespace(responses=FakeResponsesResource(stream))
+    adapter = OpenAiResponsesAdapter("unused", "gpt-test", client=client)
+    deltas: list[str] = []
+
+    result = adapter.generate_text_stream(
+        instructions="写作",
+        input_text="资料",
+        on_delta=deltas.append,
+    )
+
+    assert result.output == "第一段第二段"
+    assert deltas == ["第一段", "第二段"]
+    assert result.usage == ProviderUsage(input_tokens=12, output_tokens=8)
+    assert stream.closed
+
+
+def test_compatible_stream_uses_sse_when_capability_is_enabled() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        events = [
+            {
+                "id": "chatcmpl_stream",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "compatible-test",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": "第一段"},
+                    "finish_reason": None,
+                }],
+            },
+            {
+                "id": "chatcmpl_stream",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "compatible-test",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": "第二段"},
+                    "finish_reason": "stop",
+                }],
+            },
+            {
+                "id": "chatcmpl_stream",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "compatible-test",
+                "choices": [],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 6, "total_tokens": 16},
+            },
+        ]
+        body = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    adapter = OpenAiCompatibleChatAdapter(
+        "unused",
+        "compatible-test",
+        "https://provider.test/v1",
+        ModelCapabilities(streaming=True, usage=True),
+        client=openai_client(handler),
+    )
+    deltas: list[str] = []
+
+    result = adapter.generate_text_stream(
+        instructions="写作",
+        input_text="资料",
+        on_delta=deltas.append,
+    )
+
+    assert result.output == "第一段第二段"
+    assert deltas == ["第一段", "第二段"]
+    assert result.usage == ProviderUsage(input_tokens=10, output_tokens=6)
+
+
+def test_compatible_stream_falls_back_to_one_complete_delta() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": "chatcmpl_fallback",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "compatible-test",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "完整结果"},
+            }],
+        })
+
+    adapter = OpenAiCompatibleChatAdapter(
+        "unused",
+        "compatible-test",
+        "https://provider.test/v1",
+        ModelCapabilities(streaming=False),
+        client=openai_client(handler),
+    )
+    deltas: list[str] = []
+
+    result = adapter.generate_text_stream(
+        instructions="写作",
+        input_text="资料",
+        on_delta=deltas.append,
+    )
+
+    assert result.output == "完整结果"
+    assert deltas == ["完整结果"]
+
+
+def test_invalid_compatible_structured_output_is_actionable() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": "chatcmpl_invalid",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "compatible-test",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "not-json"},
+            }],
+        })
+
+    adapter = OpenAiCompatibleChatAdapter(
+        "unused",
+        "compatible-test",
+        "https://provider.test/v1",
+        ModelCapabilities(),
+        client=openai_client(handler),
+    )
+
+    with pytest.raises(ProviderCallError) as caught:
+        adapter.generate_structured(
+            instructions="归纳",
+            input_text="资料",
+            output_model=StructuredFixture,
+        )
+
+    assert caught.value.category == AiErrorCategory.INVALID_RESPONSE
+    assert caught.value.retryable
+
+
+def test_provider_timeout_is_normalized_for_safe_retry() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("fixture timeout", request=request)
+
+    adapter = OpenAiCompatibleChatAdapter(
+        "unused",
+        "compatible-test",
+        "https://provider.test/v1",
+        ModelCapabilities(),
+        client=openai_client(handler),
+    )
+
+    with pytest.raises(ProviderCallError) as caught:
+        adapter.generate_text(instructions="写作", input_text="资料")
+
+    assert caught.value.category == AiErrorCategory.TIMEOUT
+    assert caught.value.retryable
