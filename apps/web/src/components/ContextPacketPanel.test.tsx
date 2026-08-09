@@ -133,3 +133,36 @@ it('explains selected and excluded sources and protects hard constraints', async
   await user.click(screen.getByText('未入选与原因 · 1'))
   expect(screen.getByText(/candidate_invalid/)).toBeVisible()
 })
+
+it('allows an author-pinned item to be cleared after it becomes required', async () => {
+  const user = userEvent.setup()
+  const onClearDirective = vi.fn()
+  const pinnedItem = {
+    ...packet.items[1],
+    required: true,
+    directive: 'pin' as const,
+    selection_reason: '按来源章节新近程度召回正式事实；作者为本章临时固定',
+  }
+  render(
+    <ContextPacketPanel
+      packet={{ ...packet, items: [packet.items[0], pinnedItem, packet.items[2]] }}
+      directives={[{
+        id: 'directive-pin',
+        chapter_id: packet.chapter_id,
+        project_id: packet.project_id,
+        source_kind: 'fact',
+        source_id: 'fact-cash',
+        action: 'pin',
+        revision: 0,
+        created_at: '2026-08-10T00:00:00Z',
+        updated_at: '2026-08-10T00:00:00Z',
+      }]}
+      busy={false}
+      onSetDirective={vi.fn()}
+      onClearDirective={onClearDirective}
+    />,
+  )
+
+  await user.click(screen.getByRole('button', { name: '取消固定' }))
+  expect(onClearDirective).toHaveBeenCalledWith(pinnedItem)
+})
