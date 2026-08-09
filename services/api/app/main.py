@@ -29,6 +29,14 @@ from app.archive import (
 from app.config import default_database_path
 from app.database import Database
 from app.generation import GenerationService
+from app.jobs import (
+    Job,
+    JobArtifactContent,
+    JobDetail,
+    JobNotFoundError,
+    JobRepository,
+    JobRuntime,
+)
 from app.models import (
     AiChapterBriefProposal,
     AiChapterBriefRequest,
@@ -103,7 +111,13 @@ def create_app(
         database.initialize()
         application.state.repository = ProjectRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
-        yield
+        application.state.job_repository = JobRepository(database)
+        application.state.job_runtime = JobRuntime(application.state.job_repository)
+        application.state.job_runtime.start()
+        try:
+            yield
+        finally:
+            application.state.job_runtime.stop()
 
     application = FastAPI(
         title="墨舟本地 API",
@@ -157,6 +171,63 @@ def create_app(
     @application.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @application.get("/api/projects/{project_id}/jobs", response_model=list[Job])
+    def list_jobs(
+        project_id: UUID,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> list[Job]:
+        try:
+            return jobs.list_jobs(str(project_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get("/api/jobs/{job_id}", response_model=JobDetail)
+    def get_job(
+        job_id: UUID,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> JobDetail:
+        try:
+            return jobs.get_job_detail(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
+
+    @application.get(
+        "/api/job-artifacts/{artifact_id}",
+        response_model=JobArtifactContent,
+    )
+    def get_job_artifact(
+        artifact_id: UUID,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> JobArtifactContent:
+        try:
+            return jobs.get_artifact(str(artifact_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务产物不存在") from error
+
+    @application.post("/api/jobs/{job_id}/cancel", response_model=Job)
+    def cancel_job(
+        job_id: UUID,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = jobs.request_cancel(str(job_id))
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
+
+    @application.post("/api/jobs/{job_id}/retry", response_model=Job)
+    def retry_job(
+        job_id: UUID,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = jobs.retry_job(str(job_id))
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
 
     @application.get("/api/ai/status", response_model=AiStatus)
     def get_ai_status(
@@ -719,6 +790,20 @@ def create_app(
 def get_repository(request: Request) -> ProjectRepository:
     repository: ProjectRepository = request.app.state.repository
     return repository
+
+
+def get_job_repository(request: Request) -> JobRepository:
+    repository: JobRepository = request.app.state.job_repository
+    return repository
+
+
+def get_job_runtime_from_repository(
+    application: FastAPI,
+    repository: JobRepository,
+) -> JobRuntime:
+    del repository
+    runtime: JobRuntime = application.state.job_runtime
+    return runtime
 
 
 def get_generation_service(request: Request) -> GenerationService:

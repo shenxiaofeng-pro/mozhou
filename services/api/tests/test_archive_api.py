@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.jobs import JobKind, JobRepository
 from app.main import create_app
 
 ARCHIVE_TABLES = {
@@ -13,6 +14,11 @@ ARCHIVE_TABLES = {
     "generation_runs",
     "chapter_events",
     "run_events",
+    "jobs",
+    "job_chunks",
+    "job_attempts",
+    "job_artifacts",
+    "job_events",
     "timeline_events",
     "story_facts",
     "fact_change_sets",
@@ -194,6 +200,60 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
     assert original_after["project"]["title"] == "回到九八年的南平"
     assert original_after["chapters"][0]["id"] == chapter_id
     assert len(projects) == 2
+
+
+def test_archive_round_trip_preserves_job_history_and_immutable_artifacts(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "可恢复任务归档",
+                "genre": "historical_rebirth",
+                "rebirth_year": 1984,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        jobs: JobRepository = client.app.state.job_repository
+        job, _ = jobs.create_job(
+            project_id=project_id,
+            kind=JobKind.REFERENCE_FUSION,
+            idempotency_key="archive-fusion",
+            input_payload={"selected_segment_ids": ["a", "b"]},
+            provider="openai",
+            model="test-model",
+        )
+        artifact, _ = jobs.put_artifact(
+            job.id,
+            kind="reference_map",
+            artifact_key="map-a-0",
+            payload='{"era":"旧城改造"}',
+            content_type="application/json",
+            provider="openai",
+            model="test-model",
+        )
+        archive = client.get(f"/api/projects/{project_id}/export").json()
+
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        ).json()
+        restored_project_id = restored["project"]["id"]
+        restored_jobs = client.get(
+            f"/api/projects/{restored_project_id}/jobs"
+        ).json()
+        restored_detail = client.get(f"/api/jobs/{restored_jobs[0]['id']}").json()
+        restored_artifact = client.get(
+            f"/api/job-artifacts/{restored_detail['artifacts'][0]['id']}"
+        ).json()
+
+    assert restored_jobs[0]["id"] != job.id
+    assert restored_jobs[0]["project_id"] == restored_project_id
+    assert restored_detail["artifacts"][0]["id"] != artifact.id
+    assert restored_artifact["payload"] == '{"era":"旧城改造"}'
 
 
 def test_import_rejects_tampered_or_unknown_archive_without_writing(tmp_path: Path) -> None:

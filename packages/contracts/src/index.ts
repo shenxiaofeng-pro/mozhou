@@ -4,6 +4,27 @@ export type ChapterStatus = 'planned' | 'drafted' | 'reviewing' | 'approved'
 
 export type GenerationState = 'context_ready' | 'generating' | 'drafted' | 'applied' | 'interrupted'
 
+export type JobKind =
+  | 'chapter_brief'
+  | 'chapter_draft'
+  | 'reference_segment_map'
+  | 'reference_book_reduce'
+  | 'reference_fusion'
+  | 'review'
+
+export type JobState =
+  | 'queued'
+  | 'running'
+  | 'pause_requested'
+  | 'cancelled'
+  | 'succeeded'
+  | 'failed'
+  | 'interrupted'
+
+export type JobAttemptState = 'running' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled'
+
+export type JobChunkState = 'queued' | 'running' | 'cancelled' | 'succeeded' | 'failed' | 'interrupted'
+
 export type TimelineLayer = 'original' | 'novel'
 
 export type FactKind = 'state_change' | 'open_thread'
@@ -479,4 +500,96 @@ export interface GenerationRun {
   model: string
   created_at: string
   updated_at: string
+}
+
+export interface Job {
+  id: string
+  project_id: string
+  chapter_id: string | null
+  parent_job_id: string | null
+  kind: JobKind
+  state: JobState
+  idempotency_key: string
+  progress_current: number
+  progress_total: number
+  current_step: string
+  estimated_calls: number
+  completed_calls: number
+  provider: string
+  model: string
+  lease_owner: string | null
+  lease_expires_at: string | null
+  heartbeat_at: string | null
+  error_code: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface JobChunk {
+  id: string
+  job_id: string
+  kind: JobKind
+  ordinal: number
+  state: JobChunkState
+  idempotency_key: string
+  attempt_count: number
+  error_code: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface JobAttempt {
+  id: string
+  job_id: string
+  chunk_id: string | null
+  ordinal: number
+  state: JobAttemptState
+  provider: string
+  model: string
+  input_tokens: number | null
+  output_tokens: number | null
+  error_code: string | null
+  error_message: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+export interface JobArtifact {
+  id: string
+  job_id: string
+  chunk_id: string | null
+  kind: string
+  artifact_key: string
+  content_type: 'application/json' | 'text/plain'
+  payload_sha256: string
+  metadata: Record<string, unknown>
+  provider: string
+  model: string
+  created_at: string
+}
+
+export interface JobArtifactContent extends JobArtifact {
+  payload: string
+}
+
+export interface JobEvent {
+  id: string
+  job_id: string
+  sequence: number
+  event_type: string
+  from_state: JobState | null
+  to_state: JobState | null
+  detail: Record<string, unknown>
+  created_at: string
+}
+
+export interface JobDetail extends Job {
+  chunks: JobChunk[]
+  attempts: JobAttempt[]
+  artifacts: JobArtifact[]
+  events: JobEvent[]
 }
