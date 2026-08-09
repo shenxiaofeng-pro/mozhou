@@ -171,6 +171,8 @@ def test_ai_requires_configuration_and_never_echoes_session_key(tmp_path: Path) 
         "provider": "openai",
         "model": "gpt-5.6",
         "key_source": "session",
+        "profile_id": None,
+        "profile_name": None,
     }
     assert "api_key" not in configured.text
     assert "sk-test" not in configured.text

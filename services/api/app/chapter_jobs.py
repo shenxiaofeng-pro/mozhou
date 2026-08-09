@@ -10,6 +10,7 @@ from app.ai import (
     AiNotConfiguredError,
     AiProviderError,
     build_chapter_context,
+    consume_ai_call_metrics,
 )
 from app.jobs.models import AttemptState, ChunkState, Job, JobKind
 from app.jobs.repository import JobRepository
@@ -116,6 +117,7 @@ class ChapterJobService:
         idempotency_key = sha256(_canonical_json({
             **input_payload,
             "provider": status.provider.value,
+            "provider_profile_id": status.profile_id,
             "model": status.model,
             "kind": kind.value,
         }).encode("utf-8")).hexdigest()
@@ -126,6 +128,7 @@ class ChapterJobService:
             idempotency_key=idempotency_key,
             input_payload=input_payload,
             provider=status.provider.value,
+            provider_profile_id=status.profile_id,
             model=status.model,
             progress_total=1,
             estimated_calls=1,
@@ -157,6 +160,7 @@ class ChapterJobService:
         if (
             not status.configured
             or status.provider.value != job.provider
+            or status.profile_id != job.provider_profile_id
             or status.model != job.model
         ):
             raise JobExecutionError(
@@ -222,6 +226,7 @@ class ChapterJobService:
             job.id,
             chunk_id=chunk.id,
             provider=job.provider,
+            provider_profile_id=job.provider_profile_id,
             model=job.model,
         )
         gateway = self.manager.gateway()
@@ -234,6 +239,30 @@ class ChapterJobService:
                 task_input,
                 job,
             )
+        except AiProviderError as error:
+            metrics = consume_ai_call_metrics(gateway)
+            self.jobs.finish_attempt(
+                attempt.id,
+                AttemptState.FAILED,
+                duration_ms=error.duration_ms or (metrics.duration_ms if metrics else None),
+                input_tokens=metrics.usage.input_tokens if metrics else None,
+                output_tokens=metrics.usage.output_tokens if metrics else None,
+                estimated_cost_microusd=(
+                    metrics.estimated_cost_microusd if metrics else None
+                ),
+                error_code=error.category.value,
+                error_message=error.safe_message,
+            )
+            self.jobs.transition_chunk(
+                chunk.id,
+                ChunkState.FAILED,
+                error_code=error.category.value,
+                error_message=error.safe_message,
+            )
+            raise JobExecutionError(
+                error.category.value,
+                error.safe_message,
+            ) from error
         except Exception as error:
             self.jobs.finish_attempt(
                 attempt.id,
@@ -264,9 +293,20 @@ class ChapterJobService:
             ),
             metadata=metadata,
             provider=job.provider,
+            provider_profile_id=job.provider_profile_id,
             model=job.model,
         )
-        self.jobs.finish_attempt(attempt.id, AttemptState.SUCCEEDED)
+        metrics = consume_ai_call_metrics(gateway)
+        self.jobs.finish_attempt(
+            attempt.id,
+            AttemptState.SUCCEEDED,
+            input_tokens=metrics.usage.input_tokens if metrics else None,
+            output_tokens=metrics.usage.output_tokens if metrics else None,
+            duration_ms=metrics.duration_ms if metrics else None,
+            estimated_cost_microusd=(
+                metrics.estimated_cost_microusd if metrics else None
+            ),
+        )
         self.jobs.transition_chunk(chunk.id, ChunkState.SUCCEEDED)
         self.jobs.update_progress(job.id, current=1, total=1, step="章节候选已生成")
         if expected_kind == JobKind.CHAPTER_DRAFT:

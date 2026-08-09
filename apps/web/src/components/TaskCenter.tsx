@@ -68,6 +68,35 @@ export function TaskCenter({
     () => jobs.filter((job) => activeStates.has(job.state)).length,
     [jobs],
   )
+  const usageSummary = useMemo(() => {
+    if (!selected) return null
+    const inputTokens = selected.attempts.reduce(
+      (total, attempt) => total + (attempt.input_tokens ?? 0),
+      0,
+    )
+    const outputTokens = selected.attempts.reduce(
+      (total, attempt) => total + (attempt.output_tokens ?? 0),
+      0,
+    )
+    const durationMs = selected.attempts.reduce(
+      (total, attempt) => total + (attempt.duration_ms ?? 0),
+      0,
+    )
+    const estimatedCost = selected.attempts.reduce(
+      (total, attempt) => total + (attempt.estimated_cost_microusd ?? 0),
+      0,
+    )
+    return {
+      inputTokens,
+      outputTokens,
+      durationMs,
+      estimatedCost,
+      hasUsage: selected.attempts.some(
+        (attempt) => attempt.input_tokens !== null || attempt.output_tokens !== null,
+      ),
+      hasCost: selected.attempts.some((attempt) => attempt.estimated_cost_microusd !== null),
+    }
+  }, [selected])
 
   useEffect(() => {
     let stopped = false
@@ -290,6 +319,15 @@ export function TaskCenter({
                 <div><dt>模型</dt><dd>{selected.provider} · {selected.model}</dd></div>
                 <div><dt>调用</dt><dd>{selected.completed_calls} / 预计 {selected.estimated_calls}</dd></div>
                 <div><dt>任务块</dt><dd>{selected.chunks.filter((chunk) => chunk.state === 'succeeded').length} / {selected.chunks.length}</dd></div>
+                {usageSummary?.hasUsage ? (
+                  <div><dt>Token</dt><dd>{usageSummary.inputTokens.toLocaleString()} 入 / {usageSummary.outputTokens.toLocaleString()} 出</dd></div>
+                ) : null}
+                {usageSummary && selected.attempts.length > 0 ? (
+                  <div><dt>耗时</dt><dd>{(usageSummary.durationMs / 1000).toFixed(1)} 秒</dd></div>
+                ) : null}
+                {usageSummary?.hasCost ? (
+                  <div><dt>估算费用</dt><dd>约 ${(usageSummary.estimatedCost / 1_000_000).toFixed(4)}</dd></div>
+                ) : null}
               </dl>
               {selected.error_message ? <p className="task-detail-error">{selected.error_message}</p> : null}
               <div className="task-artifacts">

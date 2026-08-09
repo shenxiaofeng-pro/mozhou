@@ -71,7 +71,7 @@ class OpenAiResponsesAdapter:
                 duration_ms=_duration_ms(started),
             )
         except Exception as error:
-            raise normalize_provider_error(error) from error
+            raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
 
     def generate_structured(
         self,
@@ -98,7 +98,7 @@ class OpenAiResponsesAdapter:
                 duration_ms=_duration_ms(started),
             )
         except Exception as error:
-            raise normalize_provider_error(error) from error
+            raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
 
 
 class OpenAiCompatibleChatAdapter:
@@ -151,7 +151,7 @@ class OpenAiCompatibleChatAdapter:
                 duration_ms=_duration_ms(started),
             )
         except Exception as error:
-            raise normalize_provider_error(error) from error
+            raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
 
     def generate_structured(
         self,
@@ -183,7 +183,7 @@ class OpenAiCompatibleChatAdapter:
                 duration_ms=_duration_ms(started),
             )
         except Exception as error:
-            raise normalize_provider_error(error) from error
+            raise normalize_provider_error(error, duration_ms=_duration_ms(started)) from error
 
 
 def _messages(instructions: str, input_text: str) -> list[ChatCompletionMessageParam]:

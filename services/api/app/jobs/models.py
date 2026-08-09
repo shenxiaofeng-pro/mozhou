@@ -53,6 +53,7 @@ class Job(BaseModel):
     estimated_calls: int
     completed_calls: int
     provider: str
+    provider_profile_id: str | None
     model: str
     lease_owner: str | None
     lease_expires_at: str | None
@@ -86,9 +87,12 @@ class JobAttempt(BaseModel):
     ordinal: int
     state: AttemptState
     provider: str
+    provider_profile_id: str | None
     model: str
     input_tokens: int | None
     output_tokens: int | None
+    duration_ms: int | None
+    estimated_cost_microusd: int | None
     error_code: str | None
     error_message: str | None
     started_at: str
@@ -105,6 +109,7 @@ class JobArtifact(BaseModel):
     payload_sha256: str
     metadata: dict[str, object] = Field(default_factory=dict)
     provider: str
+    provider_profile_id: str | None
     model: str
     created_at: str
 

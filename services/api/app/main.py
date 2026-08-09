@@ -84,6 +84,7 @@ from app.models import (
     WorkspaceSummary,
 )
 from app.providers import (
+    ActivateModelProfileRequest,
     CreateModelProfileRequest,
     DuplicateModelProfileError,
     ModelProfile,
@@ -294,10 +295,32 @@ def create_app(
         except DuplicateModelProfileError as error:
             raise HTTPException(status_code=409, detail="模型配置名称已存在") from error
 
+    @application.post(
+        "/api/ai/profiles/{profile_id}/activate",
+        response_model=AiStatus,
+    )
+    def activate_ai_profile(
+        profile_id: UUID,
+        body: ActivateModelProfileRequest,
+    ) -> AiStatus:
+        try:
+            profile = application.state.model_profiles.get_profile(str(profile_id))
+            return application.state.ai_manager.activate_profile(
+                profile,
+                body.api_key.get_secret_value(),
+                key_source="runtime",
+            )
+        except ModelProfileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="模型配置不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="API Key 格式无效") from error
+
     @application.delete("/api/ai/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_ai_profile(profile_id: UUID, expected_revision: int) -> Response:
         if expected_revision < 0:
             raise HTTPException(status_code=422, detail="请求内容格式无效")
+        if application.state.ai_manager.status().profile_id == str(profile_id):
+            raise HTTPException(status_code=409, detail="请先切换到其他模型配置")
         try:
             application.state.model_profiles.delete_profile(
                 str(profile_id),

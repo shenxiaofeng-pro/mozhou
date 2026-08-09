@@ -118,6 +118,7 @@ class ContinuityIssueKind(StrEnum):
 class AiProvider(StrEnum):
     UNAVAILABLE = "unavailable"
     OPENAI = "openai"
+    OPENAI_COMPATIBLE = "openai_compatible"
 
 
 class CreateProjectRequest(BaseModel):
@@ -357,6 +358,8 @@ class AiStatus(BaseModel):
     provider: AiProvider
     model: str
     key_source: str | None = None
+    profile_id: str | None = None
+    profile_name: str | None = None
 
 
 class ConfigureAiRequest(BaseModel):

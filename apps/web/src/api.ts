@@ -166,6 +166,12 @@ export const api = {
       body: JSON.stringify(input),
     })
   },
+  activateAiProfile(profileId: string, apiKey: string) {
+    return request<AiStatus>(`/api/ai/profiles/${encodeURIComponent(profileId)}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ api_key: apiKey }),
+    })
+  },
   deleteAiProfile(profileId: string, expectedRevision: number) {
     const query = new URLSearchParams({ expected_revision: String(expectedRevision) })
     return request<void>(`/api/ai/profiles/${encodeURIComponent(profileId)}?${query}`, {

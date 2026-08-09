@@ -2,7 +2,13 @@ import json
 from dataclasses import dataclass
 from hashlib import sha256
 
-from app.ai import AiGateway, AiGatewayManager, AiNotConfiguredError, AiProviderError
+from app.ai import (
+    AiGateway,
+    AiGatewayManager,
+    AiNotConfiguredError,
+    AiProviderError,
+    consume_ai_call_metrics,
+)
 from app.jobs.models import AttemptState, ChunkState, Job, JobChunk, JobKind
 from app.jobs.repository import JobRepository
 from app.jobs.runtime import JobExecutionContext, JobExecutionError
@@ -34,12 +40,14 @@ def _canonical_json(value: object) -> str:
 def _job_idempotency_key(
     request: ReferenceSynthesisRequest,
     provider: str,
+    provider_profile_id: str | None,
     model: str,
 ) -> str:
     payload = {
         "selected_segment_ids": request.selected_segment_ids,
         "author_focus": request.author_focus,
         "provider": provider,
+        "provider_profile_id": provider_profile_id,
         "model": model,
         "prompt_version": REFERENCE_JOB_PROMPT_VERSION,
     }
@@ -134,6 +142,7 @@ class ReferenceJobService:
             idempotency_key=_job_idempotency_key(
                 request,
                 status.provider.value,
+                status.profile_id,
                 status.model,
             ),
             input_payload={
@@ -141,6 +150,7 @@ class ReferenceJobService:
                 "prompt_version": REFERENCE_JOB_PROMPT_VERSION,
             },
             provider=status.provider.value,
+            provider_profile_id=status.profile_id,
             model=status.model,
             progress_total=len(plan),
             estimated_calls=len(plan),
@@ -154,6 +164,7 @@ class ReferenceJobService:
         if (
             not status.configured
             or status.provider.value != job.provider
+            or status.profile_id != job.provider_profile_id
             or status.model != job.model
         ):
             raise JobExecutionError(
@@ -207,6 +218,7 @@ class ReferenceJobService:
                 job.id,
                 chunk_id=chunk.id,
                 provider=job.provider,
+                provider_profile_id=job.provider_profile_id,
                 model=job.model,
             )
             try:
@@ -218,6 +230,30 @@ class ReferenceJobService:
                     gateway,
                     job.id,
                 )
+            except AiProviderError as error:
+                metrics = consume_ai_call_metrics(gateway)
+                self.jobs.finish_attempt(
+                    attempt.id,
+                    AttemptState.FAILED,
+                    input_tokens=metrics.usage.input_tokens if metrics else None,
+                    output_tokens=metrics.usage.output_tokens if metrics else None,
+                    duration_ms=error.duration_ms or (metrics.duration_ms if metrics else None),
+                    estimated_cost_microusd=(
+                        metrics.estimated_cost_microusd if metrics else None
+                    ),
+                    error_code=error.category.value,
+                    error_message=error.safe_message,
+                )
+                self.jobs.transition_chunk(
+                    chunk.id,
+                    ChunkState.FAILED,
+                    error_code=error.category.value,
+                    error_message=error.safe_message,
+                )
+                raise JobExecutionError(
+                    error.category.value,
+                    error.safe_message,
+                ) from error
             except Exception as error:
                 self.jobs.finish_attempt(
                     attempt.id,
@@ -246,9 +282,20 @@ class ReferenceJobService:
                 content_type="application/json",
                 metadata=metadata,
                 provider=job.provider,
+                provider_profile_id=job.provider_profile_id,
                 model=job.model,
             )
-            self.jobs.finish_attempt(attempt.id, AttemptState.SUCCEEDED)
+            metrics = consume_ai_call_metrics(gateway)
+            self.jobs.finish_attempt(
+                attempt.id,
+                AttemptState.SUCCEEDED,
+                input_tokens=metrics.usage.input_tokens if metrics else None,
+                output_tokens=metrics.usage.output_tokens if metrics else None,
+                duration_ms=metrics.duration_ms if metrics else None,
+                estimated_cost_microusd=(
+                    metrics.estimated_cost_microusd if metrics else None
+                ),
+            )
             self.jobs.transition_chunk(chunk.id, ChunkState.SUCCEEDED)
             completed += 1
             self.jobs.update_progress(

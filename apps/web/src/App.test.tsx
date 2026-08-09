@@ -74,6 +74,7 @@ function queuedJob(kind: JobKind, chapterId: string | null = null): Job {
     estimated_calls: 1,
     completed_calls: 0,
     provider: 'openai',
+    provider_profile_id: null,
     model: 'gpt-5.6',
     lease_owner: null,
     lease_expires_at: null,
@@ -108,6 +109,8 @@ beforeEach(() => {
     provider: 'unavailable',
     model: '',
     key_source: null,
+    profile_id: null,
+    profile_name: null,
   })
 })
 
@@ -572,6 +575,8 @@ describe('App', () => {
       provider: 'openai',
       model: 'gpt-5.6',
       key_source: 'session',
+      profile_id: null,
+      profile_name: null,
     })
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const proposal = {
@@ -626,6 +631,8 @@ describe('App', () => {
       provider: 'openai',
       model: 'gpt-5.6',
       key_source: 'session',
+      profile_id: null,
+      profile_name: null,
     })
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const candidate = '一九九八年的梅山坡还没有后来那排高楼。沈砚把停产名单压在桌上。'
@@ -1058,6 +1065,7 @@ describe('App', () => {
       payload_sha256: 'a'.repeat(64),
       metadata: {},
       provider: 'openai',
+      provider_profile_id: null,
       model: 'gpt-5.6',
       created_at: '2026-08-09T00:00:01Z',
     }
@@ -1202,6 +1210,7 @@ describe('App', () => {
       estimated_calls: 5,
       completed_calls: 0,
       provider: 'openai',
+      provider_profile_id: null,
       model: 'test-reference-model',
       lease_owner: null,
       lease_expires_at: null,
