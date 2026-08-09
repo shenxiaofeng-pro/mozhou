@@ -34,9 +34,9 @@ TIER_RATIOS = {
     ContextTier.CANON: 25,
     ContextTier.CURRENT_STATE: 18,
     ContextTier.RECENT_CHAPTER: 25,
-    ContextTier.DISTANT_CHAPTER: 10,
+    ContextTier.DISTANT_CHAPTER: 8,
     ContextTier.TIMELINE: 10,
-    ContextTier.REALITY_SOURCE: 6,
+    ContextTier.REALITY_SOURCE: 8,
     ContextTier.BLUEPRINT: 6,
 }
 
@@ -257,6 +257,26 @@ class ContextCompiler:
             if entity.name and entity.name.casefold() in focus
         }
         chapter_numbers = {item.id: item.chapter_number for item in workspace.chapters}
+        latest_fact_chapter = max(
+            (
+                chapter_numbers.get(fact.source_chapter_id, -1)
+                for fact in workspace.story_facts
+                if chapter_numbers.get(fact.source_chapter_id, -1) <= chapter.chapter_number
+            ),
+            default=-1,
+        )
+        latest_fact_chapter_by_entity = {
+            name: max(
+                (
+                    chapter_numbers.get(fact.source_chapter_id, -1)
+                    for fact in workspace.story_facts
+                    if name in fact.content.casefold()
+                    and chapter_numbers.get(fact.source_chapter_id, -1) <= chapter.chapter_number
+                ),
+                default=-1,
+            )
+            for name in matched_entity_names
+        }
 
         candidates.extend((
             self._candidate(
@@ -338,18 +358,40 @@ class ContextCompiler:
                     force_exclusion="来源章节晚于当前章节，不能提前泄漏",
                 ))
                 continue
-            relevant = any(name in fact.content.casefold() for name in matched_entity_names)
+            relevant_names = {
+                name for name in matched_entity_names if name in fact.content.casefold()
+            }
+            relevant = bool(relevant_names)
+            latest_relevant = relevant and any(
+                source_number == latest_fact_chapter_by_entity[name]
+                for name in relevant_names
+            )
+            latest_global = source_number == latest_fact_chapter
+            older_state_note = (
+                "同一实体存在来源章节更新的正式事实；本条只作历史过程，当前状态以更新来源为准。"
+                if relevant and not latest_relevant else None
+            )
             candidates.append(self._candidate(
                 item_id=f"fact:{fact.id}",
                 kind=ContextItemKind.CANONICAL_FACT,
                 tier=ContextTier.CANON,
                 label=f"第 {source_number} 章正式事实",
                 content=fact.content,
-                priority=6_000 + source_number + (2_000 if relevant else 0),
-                required=relevant,
+                priority=(
+                    6_000
+                    + source_number
+                    + (2_000 if latest_relevant or latest_global else 500 if relevant else 0)
+                ),
+                required=latest_relevant,
                 reason=(
-                    "命中当前章明确参与实体，作为连续性硬约束"
-                    if relevant else "按来源章节新近程度召回正式事实"
+                    "命中当前章明确参与实体，且是该实体最新来源，作为连续性硬约束"
+                    if latest_relevant else (
+                        "命中当前参与实体，但已有更新来源；仅作为历史过程候选"
+                        if relevant else (
+                            "最新来源章节的正式事实优先召回"
+                            if latest_global else "按来源章节新近程度召回正式事实"
+                        )
+                    )
                 ),
                 source_kind="fact",
                 source_id=fact.id,
@@ -357,6 +399,7 @@ class ContextCompiler:
                 chapter_id=fact.source_chapter_id,
                 chapter_number=source_number,
                 updated_at=fact.created_at,
+                conflict_notes=((older_state_note,) if older_state_note else ()),
             ))
 
         for entity in workspace.story_entities:
@@ -548,7 +591,7 @@ class ContextCompiler:
                     "confidence": card.confidence.value,
                     "excerpt": excerpt,
                 }),
-                priority=4_000 + {"high": 300, "medium": 200, "low": 100}[card.confidence.value],
+                priority=7_200 + {"high": 300, "medium": 200, "low": 100}[card.confidence.value],
                 required=False,
                 reason="仅使用作者已确认且覆盖重生年代的现实资料",
                 source_kind="source_card",
@@ -704,7 +747,13 @@ class ContextCompiler:
             for tier in TIER_ORDER
         }
 
-        for tier in TIER_ORDER[1:]:
+        budgeted_tiers = TIER_ORDER[1:]
+        for tier_index, tier in enumerate(budgeted_tiers):
+            reserved_for_later_tiers = sum(
+                tier_budgets[later_tier]
+                for later_tier in budgeted_tiers[tier_index + 1:]
+            )
+            tier_total_ceiling = max(used, token_budget - reserved_for_later_tiers)
             tier_candidates = sorted(
                 (
                     item for item in selected
@@ -717,7 +766,7 @@ class ContextCompiler:
             for item in tier_candidates:
                 if (
                     tier_used[tier] + item.token_estimate <= tier_budgets[tier]
-                    and used + item.token_estimate <= token_budget
+                    and used + item.token_estimate <= tier_total_ceiling
                 ):
                     selected = [
                         replace(candidate, included=True) if candidate.id == item.id else candidate
