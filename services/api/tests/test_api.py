@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 
+SESSION_TOKEN = "a" * 64
+
 
 def test_health(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
@@ -14,23 +16,57 @@ def test_health(tmp_path: Path) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_session_token_rejects_missing_and_wrong_values_but_accepts_the_current_token(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "mozhou.db", session_token=SESSION_TOKEN)) as client:
+        health = client.get("/health")
+        missing = client.get("/api/projects")
+        wrong = client.get(
+            "/api/projects",
+            headers={"X-Mozhou-Session-Token": "b" * 64},
+        )
+        correct = client.get(
+            "/api/projects",
+            headers={"X-Mozhou-Session-Token": SESSION_TOKEN},
+        )
+
+    assert health.status_code == 200
+    assert missing.status_code == 401
+    assert missing.json() == {"detail": "本地会话无效，请重启墨舟"}
+    assert wrong.status_code == 401
+    assert wrong.json() == missing.json()
+    assert correct.status_code == 200
+    assert correct.json() == []
+
+
+@pytest.mark.parametrize("session_token", ["", "short", "G" * 64])
+def test_rejects_invalid_configured_session_tokens(
+    tmp_path: Path,
+    session_token: str,
+) -> None:
+    with pytest.raises(ValueError, match="session token"):
+        create_app(tmp_path / "mozhou.db", session_token=session_token)
+
+
 @pytest.mark.parametrize(
     "origin",
     ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"],
 )
 def test_allows_only_known_tauri_origins(tmp_path: Path, origin: str) -> None:
-    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+    with TestClient(create_app(tmp_path / "mozhou.db", session_token=SESSION_TOKEN)) as client:
         response = client.options(
             "/api/projects",
             headers={
                 "Origin": origin,
                 "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": "content-type",
+                "Access-Control-Request-Headers": "content-type,x-mozhou-session-token",
             },
         )
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == origin
+    assert "x-mozhou-session-token" in response.headers["access-control-allow-headers"].lower()
 
 
 def test_create_load_and_update_project(tmp_path: Path) -> None:

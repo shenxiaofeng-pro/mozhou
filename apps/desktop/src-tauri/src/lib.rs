@@ -4,21 +4,36 @@ use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use tauri::{Manager, State};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandChild;
 
 const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_millis(300);
+const SESSION_TOKEN_ENV: &str = "MOZHOU_API_SESSION_TOKEN";
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiConnection {
+    base_url: String,
+    session_token: String,
+}
 
 struct ApiSidecar {
-    base_url: String,
+    connection: ApiConnection,
     child: Mutex<Option<CommandChild>>,
 }
 
 #[tauri::command]
-fn api_base_url(sidecar: State<'_, ApiSidecar>) -> String {
-    sidecar.base_url.clone()
+fn api_connection(sidecar: State<'_, ApiSidecar>) -> ApiConnection {
+    sidecar.connection.clone()
+}
+
+fn generate_session_token() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| "无法生成本地 API 会话令牌".to_owned())?;
+    Ok(hex::encode(bytes))
 }
 
 fn select_loopback_port() -> std::io::Result<u16> {
@@ -35,17 +50,17 @@ fn wait_for_health(port: u16, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     while Instant::now() < deadline {
-        if let Ok(mut stream) = TcpStream::connect_timeout(&address.into(), HEALTH_REQUEST_TIMEOUT) {
+        if let Ok(mut stream) = TcpStream::connect_timeout(&address.into(), HEALTH_REQUEST_TIMEOUT)
+        {
             let _ = stream.set_read_timeout(Some(HEALTH_REQUEST_TIMEOUT));
             let _ = stream.set_write_timeout(Some(HEALTH_REQUEST_TIMEOUT));
             if stream
                 .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
                 .is_ok()
             {
-                let mut response = [0_u8; 1024];
-                if let Ok(length) = stream.read(&mut response)
-                    && is_healthy_http_response(&response[..length])
-                {
+                let mut response = Vec::with_capacity(1024);
+                let _ = stream.take(4096).read_to_end(&mut response);
+                if is_healthy_http_response(&response) {
                     return true;
                 }
             }
@@ -57,11 +72,13 @@ fn wait_for_health(port: u16, timeout: Duration) -> bool {
 
 fn start_api_sidecar(app: &tauri::App) -> Result<ApiSidecar, String> {
     let port = select_loopback_port().map_err(|error| format!("无法选择本地 API 端口：{error}"))?;
+    let session_token = generate_session_token()?;
     let command = app
         .shell()
         .sidecar("mozhou-api")
         .map_err(|error| format!("无法定位本地 API：{error}"))?
-        .args(["--port", &port.to_string()]);
+        .args(["--port", &port.to_string()])
+        .env(SESSION_TOKEN_ENV, &session_token);
     let (mut events, child) = command
         .spawn()
         .map_err(|error| format!("无法启动本地 API：{error}"))?;
@@ -73,7 +90,10 @@ fn start_api_sidecar(app: &tauri::App) -> Result<ApiSidecar, String> {
     }
 
     Ok(ApiSidecar {
-        base_url: format!("http://127.0.0.1:{port}"),
+        connection: ApiConnection {
+            base_url: format!("http://127.0.0.1:{port}"),
+            session_token,
+        },
         child: Mutex::new(Some(child)),
     })
 }
@@ -91,7 +111,7 @@ fn stop_api_sidecar(app: &tauri::AppHandle) {
 pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![api_base_url])
+        .invoke_handler(tauri::generate_handler![api_connection])
         .setup(|app| {
             let sidecar = start_api_sidecar(app).map_err(std::io::Error::other)?;
             app.manage(sidecar);
@@ -108,7 +128,14 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_healthy_http_response, select_loopback_port};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread::{self, sleep};
+    use std::time::Duration;
+
+    use super::{
+        generate_session_token, is_healthy_http_response, select_loopback_port, wait_for_health,
+    };
 
     #[test]
     fn selects_a_nonzero_loopback_port() {
@@ -123,5 +150,43 @@ mod tests {
         assert!(!is_healthy_http_response(
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"starting\"}"
         ));
+    }
+
+    #[test]
+    fn generates_a_fresh_256_bit_hex_session_token() {
+        let first = generate_session_token().expect("token generation should succeed");
+        let second = generate_session_token().expect("token generation should succeed");
+
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(first, first.to_ascii_lowercase());
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn waits_for_a_complete_fragmented_health_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("health request should connect");
+            let mut request = [0_u8; 256];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 15\r\nconnection: close\r\n\r\n",
+                )
+                .expect("headers should write");
+            stream.flush().expect("headers should flush");
+            sleep(Duration::from_millis(20));
+            stream
+                .write_all(br#"{"status":"ok"}"#)
+                .expect("body should write");
+        });
+
+        assert!(wait_for_health(port, Duration::from_secs(1)));
+        server.join().expect("health server should exit");
     }
 }

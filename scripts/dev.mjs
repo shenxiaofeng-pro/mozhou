@@ -20,7 +20,8 @@ export function createDevCommands(platform = process.platform) {
         'services/api',
         '--no-sync',
         'uvicorn',
-        'app.main:app',
+        'app.runtime:create_runtime_app',
+        '--factory',
         '--app-dir',
         'services/api',
         '--reload',
@@ -29,6 +30,7 @@ export function createDevCommands(platform = process.platform) {
         '--port',
         '8765',
       ],
+      env: { MOZHOU_ALLOW_INSECURE_DEV_API: '1' },
     },
   ]
 }
@@ -61,7 +63,7 @@ export function startDevelopment(commands = createDevCommands()) {
     const child = spawn(command.executable, command.args, {
       cwd: process.cwd(),
       detached: process.platform !== 'win32',
-      env: process.env,
+      env: { ...process.env, ...command.env },
       shell: false,
       stdio: 'inherit',
     })
@@ -87,5 +89,8 @@ export function startDevelopment(commands = createDevCommands()) {
 
 const entryPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : ''
 if (import.meta.url === entryPath) {
-  startDevelopment()
+  const commands = process.argv.includes('--api-only')
+    ? createDevCommands().filter((command) => command.name === 'api')
+    : createDevCommands()
+  startDevelopment(commands)
 }

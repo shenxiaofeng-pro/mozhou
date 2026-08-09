@@ -7,11 +7,11 @@
 ## 目标流程
 
 1. Tauri 启动时从 `127.0.0.1` 选择一个空闲动态端口。
-2. Rust 通过 Tauri external binary 启动独立 `mozhou-api` sidecar，只向它传入 host 与端口。
+2. Rust 生成 256-bit 随机会话令牌，通过子进程环境传给独立 `mozhou-api` sidecar，并用 Tauri external binary 启动它。
 3. Rust 轮询真实 `/health`，在限定时间内成功后才完成桌面初始化；失败则停止子进程并给出启动错误。
-4. 前端通过只读 `api_base_url` command 获取 `http://127.0.0.1:<port>`，所有请求共享同一解析入口。
+4. 前端通过只读 `api_connection` command 获取动态地址和会话令牌，令牌只保存在当前 WebView 内存，所有业务请求共享同一请求入口。
 5. 桌面应用退出时回收 API 子进程；sidecar 输出被排空但不转发到页面。
-6. 普通浏览器开发不调用 Tauri，继续使用 `VITE_API_BASE_URL`，未配置时走 Vite 的 8765 代理。
+6. 普通浏览器开发不调用 Tauri，继续使用 `VITE_API_BASE_URL`，未配置时走 Vite 的 8765 代理；版本化开发脚本必须显式开启无令牌兼容开关并输出警告。
 
 ## 打包
 
@@ -23,6 +23,8 @@
 ## 安全边界
 
 - API 只监听 `127.0.0.1`，Python 入口不接受外网 host。
+- 除 `/health` 与 CORS 预检外，所有 `/api/*` 请求必须使用本次桌面启动令牌；缺失和错误令牌返回相同的 401 响应。
+- 令牌不进入命令行、数据库、文件、URL、日志或 localStorage；桌面退出后随进程内存销毁。
 - 网页侧不获得 shell 权限，只能调用返回 API 地址的 command。
 - CSP 只增加 `http://127.0.0.1:*` 连接源。
 - Rust 不把 sidecar stdout/stderr 注入 DOM，也不在命令行传递 API Key。
@@ -36,8 +38,8 @@
 4. 关闭应用后对应端口不可连接，子进程不存在。
 5. Web 模式、前端测试和 API 单独开发方式不回退。
 6. `cargo test`、`cargo check`、整仓 `verify` 和本机桌面 release 构建通过。
+7. API 对缺失、错误和正确令牌分别返回 401、401 和业务响应；8765 被占用时桌面仍通过动态端口正常工作。
 
 ## 后续
 
-- 下一安全增强可加入每次启动随机 token，进一步隔离其他本机进程。
 - 安装包签名、公证和自动更新需要发布证书，当前先产出本机可安装未签名包。

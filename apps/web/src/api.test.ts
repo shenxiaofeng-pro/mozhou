@@ -13,9 +13,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('uses the loopback sidecar address returned by Tauri', async () => {
+it('uses the loopback sidecar address and in-memory session token returned by Tauri', async () => {
+  const sessionToken = 'a'.repeat(64)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
   vi.mocked(isTauri).mockReturnValue(true)
-  vi.mocked(invoke).mockResolvedValue('http://127.0.0.1:54321')
+  vi.mocked(invoke).mockResolvedValue({
+    baseUrl: 'http://127.0.0.1:54321',
+    sessionToken,
+  })
   const request = vi.fn().mockResolvedValue(
     new Response(JSON.stringify([]), {
       status: 200,
@@ -26,6 +31,8 @@ it('uses the loopback sidecar address returned by Tauri', async () => {
 
   await api.listProjects()
 
-  expect(invoke).toHaveBeenCalledWith('api_base_url')
+  expect(invoke).toHaveBeenCalledWith('api_connection')
   expect(request).toHaveBeenCalledWith('http://127.0.0.1:54321/api/projects', expect.any(Object))
+  const requestInit = request.mock.calls[0][1] as RequestInit
+  expect(new Headers(requestInit.headers).get('X-Mozhou-Session-Token')).toBe(sessionToken)
 })
