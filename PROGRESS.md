@@ -4,7 +4,7 @@
 > 计划状态：已批准，范围冻结  
 > 开始日期：2026-08-09  
 > 当前阶段：M0 工程治理与计划对齐  
-> 总体状态：M0 进行中；等待 GitHub workflow 权限，尚未达到 Definition of Done
+> 总体状态：M0 进行中；GitHub workflow 权限已恢复，首轮远端 CI 正在运行，尚未达到 Definition of Done
 
 ## 已确认产品决策
 
@@ -63,6 +63,9 @@
 - 建立仓库守卫，阻止数据库、构建产物、环境密钥、大文件和生成目录进入版本控制；守卫测试 3/3 通过。
 - pnpm 高危依赖审计通过：未发现已知漏洞。
 - 本地创建 macOS/Windows 完整 verify 和独立 security CI，以及 npm、uv、Cargo、GitHub Actions 的 Dependabot 配置。
+- GitHub CLI 已获得 workflow scope，CI 和仓库守卫提交已推送到私有远端。
+- 记录本地优先运行时、持久任务与上下文、作者批准门、全局拆书库与清洁实现四项 ADR。
+- 建立真实能力状态矩阵，并将 PRD、早期开发计划和历史任务清单指向冻结的 PLAN.md。
 
 ### 当前基线
 
@@ -75,17 +78,11 @@
 | 用户数据数量 | 8 个项目、17 个章节、2 本参考作品 |
 | Git 基线 | 86cd5bc |
 
-### 当前阻断
+### 当前状态
 
-- 当前 GitHub CLI Token 具有 repo 权限但缺少 workflow 权限。
-- GitHub 拒绝推送本地提交 bdb3c48，原因是该提交新增 .github/workflows/verify.yml。
-- 需要为当前 GitHub 凭据增加 workflow scope 后重试；不会改用其他凭据绕过权限。
-
-### 恢复后继续
-
-- 推送并实际运行 macOS/Windows CI。
+- 权限阻断已经解除；推送事件触发的 macOS、Windows 和 security 首轮 CI 正在运行。
+- Dependabot 已按配置创建首批 npm、Python 和 GitHub Actions 更新 PR；这些升级不属于当前 M0 基线，需独立验证后再决定是否合并。
 - CI 全绿后配置 main 分支保护。
-- 建立 ADR 和能力状态矩阵。
 
 ### 剩余验证
 
@@ -97,7 +94,7 @@
 ## 遗留风险
 
 - 远程仓库已经建立，但主分支保护尚未生效。
-- 远程私有仓库已建立，但远端目前只有基线；CI 提交因 workflow scope 不足尚未推送。
+- 首轮远端 CI 尚未完成，Windows 原生构建结论待流水线产生。
 - Windows 原生构建证据尚未产生。
 - macOS 安装包仍是 ad-hoc 签名，未公证。
 - 其余风险按 PLAN.md 第 4、13 节持续跟踪。
