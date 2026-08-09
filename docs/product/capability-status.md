@@ -89,7 +89,7 @@
 | 层 | 数量 | 状态 |
 |---|---:|---|
 | Web Vitest | 26 | 全部通过 |
-| FastAPI pytest | 68 | 全部通过 |
+| FastAPI pytest | 69 | 全部通过 |
 | Tauri Rust | 2 | 全部通过 |
 | Node 工程脚本 | 8 | 全部通过 |
 

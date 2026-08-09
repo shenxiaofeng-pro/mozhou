@@ -20,6 +20,7 @@ from app.models import (
     ReferencePatternCard,
     ReferenceSynthesisProposal,
     ReferenceSynthesisRequest,
+    StoryFact,
     Workspace,
 )
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
@@ -349,6 +350,66 @@ def _gateway_from_environment() -> AiGateway:
     return OpenAiGateway(api_key, model, key_source="environment")
 
 
+CANONICAL_FACT_LIMIT = 50
+CANONICAL_FACT_RELEVANCE_RESERVE = 10
+
+
+def select_canonical_facts(
+    workspace: Workspace,
+    chapter: Chapter,
+    author_intent: str,
+) -> list[dict[str, object]]:
+    chapter_numbers = {item.id: item.chapter_number for item in workspace.chapters}
+    eligible = [
+        fact
+        for fact in workspace.story_facts
+        if chapter_numbers.get(fact.source_chapter_id, -1) <= chapter.chapter_number
+    ]
+
+    def recency_key(fact: StoryFact) -> tuple[int, str, str]:
+        return (
+            chapter_numbers.get(fact.source_chapter_id, -1),
+            fact.created_at,
+            fact.id,
+        )
+
+    recent_first = sorted(eligible, key=recency_key, reverse=True)
+    focus = (
+        f"{author_intent}\n{chapter.title}\n{chapter.reader_promise}\n"
+        f"{chapter.opening_hook}\n{chapter.state_change}\n{chapter.ending_cliffhanger}"
+    ).casefold()
+    focus_entity_names = {
+        entity.name.casefold()
+        for entity in workspace.story_entities
+        if entity.name and entity.name.casefold() in focus
+    }
+    relevant_first = [
+        fact
+        for fact in recent_first
+        if any(name in fact.content.casefold() for name in focus_entity_names)
+    ]
+    relevant_ids = {
+        fact.id for fact in relevant_first[:CANONICAL_FACT_RELEVANCE_RESERVE]
+    }
+    selected_ids = set(relevant_ids)
+    for fact in recent_first:
+        if len(selected_ids) >= CANONICAL_FACT_LIMIT:
+            break
+        selected_ids.add(fact.id)
+
+    return [
+        {
+            **fact.model_dump(mode="json"),
+            "source_chapter_number": chapter_numbers.get(fact.source_chapter_id),
+            "selection_reason": (
+                "entity_relevance" if fact.id in relevant_ids else "source_chapter_recency"
+            ),
+        }
+        for fact in recent_first
+        if fact.id in selected_ids
+    ]
+
+
 def build_chapter_context(workspace: Workspace, chapter: Chapter, author_intent: str) -> str:
     recent_chapters = [
         {
@@ -368,7 +429,7 @@ def build_chapter_context(workspace: Workspace, chapter: Chapter, author_intent:
         "project": workspace.project.model_dump(mode="json"),
         "current_chapter": chapter.model_dump(mode="json", exclude={"content"}),
         "recent_chapters": recent_chapters,
-        "canonical_facts": [fact.model_dump(mode="json") for fact in workspace.story_facts[:50]],
+        "canonical_facts": select_canonical_facts(workspace, chapter, author_intent),
         "entities": [entity.model_dump(mode="json") for entity in workspace.story_entities[:20]],
         "open_threads": [
             thread.model_dump(mode="json")
