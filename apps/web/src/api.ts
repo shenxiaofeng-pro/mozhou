@@ -153,11 +153,29 @@ export const api = {
       body: JSON.stringify(input),
     })
   },
+  startAiChapterBriefJob(chapterId: string, input: AiChapterBriefInput) {
+    return request<Job>(`/api/chapters/${encodeURIComponent(chapterId)}/ai-brief-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  getAiChapterBriefJobResult(jobId: string) {
+    return request<AiChapterBriefProposal>(`/api/jobs/${encodeURIComponent(jobId)}/chapter-brief-result`)
+  },
   generateAiDraft(chapterId: string, input: AiChapterBriefInput) {
     return request<GenerationRun>(`/api/chapters/${encodeURIComponent(chapterId)}/ai-draft-runs`, {
       method: 'POST',
       body: JSON.stringify(input),
     })
+  },
+  startAiChapterDraftJob(chapterId: string, input: AiChapterBriefInput) {
+    return request<Job>(`/api/chapters/${encodeURIComponent(chapterId)}/ai-draft-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  getAiChapterDraftJobResult(jobId: string) {
+    return request<GenerationRun>(`/api/jobs/${encodeURIComponent(jobId)}/chapter-draft-result`)
   },
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })

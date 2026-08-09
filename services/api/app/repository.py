@@ -1538,6 +1538,67 @@ class ProjectRepository:
             raise NotFoundError(run_id)
         return self._generation_run(row)
 
+    def materialize_generation_run(
+        self,
+        run_id: str,
+        chapter_id: str,
+        expected_revision: int,
+        candidate_content: str,
+        provider: str,
+        model: str,
+    ) -> GenerationRun:
+        """Materialize an immutable job artifact as an author-reviewable candidate."""
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            if connection.execute(
+                "SELECT id FROM chapters WHERE id = ?",
+                (chapter_id,),
+            ).fetchone() is None:
+                raise NotFoundError(chapter_id)
+            result = connection.execute(
+                """
+                INSERT INTO generation_runs (
+                    id, chapter_id, state, expected_chapter_revision,
+                    candidate_content, error_message, provider, model, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                """,
+                (
+                    run_id,
+                    chapter_id,
+                    GenerationState.DRAFTED.value,
+                    expected_revision,
+                    candidate_content,
+                    provider,
+                    model,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            if result.rowcount == 1:
+                for state in (
+                    GenerationState.CONTEXT_READY,
+                    GenerationState.GENERATING,
+                    GenerationState.DRAFTED,
+                ):
+                    self._append_event(connection, run_id, state, timestamp)
+            row = connection.execute(
+                "SELECT * FROM generation_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(run_id)
+        run = self._generation_run(row)
+        if (
+            run.chapter_id != chapter_id
+            or run.expected_chapter_revision != expected_revision
+            or run.candidate_content != candidate_content
+            or run.provider != provider
+            or run.model != model
+        ):
+            raise ValueError("生成候选标识对应了不同产物")
+        return run
+
     def get_generation_context(self, run_id: str) -> ChapterContext:
         with self.database.connect() as connection:
             row = connection.execute(

@@ -1543,6 +1543,42 @@ textarea:focus-visible {
   background: var(--rust-light);
 }
 
+.ai-command-deck .ai-job-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  border-left: 2px solid var(--rust-light);
+  padding: 0.45rem 0.55rem;
+  background: #253238;
+}
+
+.ai-job-progress > div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.ai-job-progress strong {
+  color: var(--paper);
+  font-size: 0.55rem;
+}
+
+.ai-job-progress span {
+  color: #aeb9bc;
+  font-size: 0.5rem;
+}
+
+.ai-job-progress progress {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--rust-light);
+}
+
+.ai-command-deck .ai-job-progress > button {
+  padding: 0.3rem 0.42rem;
+  font-size: 0.5rem;
+}
+
 .ai-setup button:disabled,
 .ai-command-deck button:disabled {
   border-color: #465257;

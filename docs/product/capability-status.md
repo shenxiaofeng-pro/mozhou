@@ -19,7 +19,7 @@
 | pnpm monorepo 与统一 verify | 已交付 | 根脚本、锁文件、Web/API/Rust 检查、双平台 CI | 持续维护发布门 |
 | 稳定数据目录与旧库复制 | 已交付 | config.py、数据库配置测试 | 保持迁移回归 |
 | schema 版本、升级备份、损坏拒绝 | 已交付 | migrations v1→v2→v3→v4、暂存副本、失败注入测试 | 后续结构变更继续追加迁移 |
-| 持久任务基础设施 | 部分交付 | Job/Attempt/Chunk/Artifact/Event、状态机、幂等键、租约；拆书已接入 | 接入写章和全局任务中心 |
+| 持久任务基础设施 | 部分交付 | Job/Attempt/Chunk/Artifact/Event、状态机、幂等键、租约；拆书与写章已接入 | 完成全局任务中心 |
 | 导航前保存与项目书架 | 已交付 | autosave hook、书架和交互测试 | 长篇性能与桌面 E2E |
 | 项目归档与恢复点 | 已交付 | 完整 JSON 归档、校验和、恢复副本 | M5 适配全局参考资产 |
 | Tauri sidecar、动态端口与会话令牌 | 已交付 | 256-bit 启动令牌、统一请求头、PyInstaller、macOS DMG | M10 签名、公证与 Windows |
@@ -45,7 +45,7 @@
 | OpenAI 章纲候选 | 已交付 | Responses 结构化输出与候选采用 | M3 统一 provider 契约 |
 | OpenAI 完整章节候选 | 已交付 | 正文生成、revision 与采用门 | M2 后台恢复；M7 一键单章编排 |
 | 假模型与运行事件 | 已交付 | demo 状态机和离线测试 | M2 统一 Job/Artifact |
-| 可恢复真实模型任务 | 部分交付 | 长篇拆书支持块缓存、取消、失败重试与重启恢复 | M2 迁移章纲和写章 |
+| 可恢复真实模型任务 | 已交付 | 长篇拆书、AI 章纲和完整正文候选均支持持久任务、取消、重试与 artifact 复用 | M3 增加流式取消和用量治理 |
 | 多 OpenAI-compatible 配置 | 未开始 | 只有单 OpenAI Key/Model | M3 |
 | 系统密钥库与成本记录 | 未开始 | Key 仅在环境或进程内存 | M3 |
 | 长篇 ContextPacket | 部分交付 | 近期三章、相关/最新事实选择与入选原因 | M4 预算、来源与重放 |
@@ -91,7 +91,7 @@
 | 层 | 数量 | 状态 |
 |---|---:|---|
 | Web Vitest | 28 | 全部通过 |
-| FastAPI pytest | 101 | 全部通过 |
+| FastAPI pytest | 107 | 全部通过 |
 | Tauri Rust | 4 | 全部通过 |
 | Node 工程脚本 | 10 | 全部通过 |
 

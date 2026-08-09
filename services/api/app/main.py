@@ -26,6 +26,7 @@ from app.archive import (
     ProjectArchiveService,
     ProjectArchiveTooLargeError,
 )
+from app.chapter_jobs import ChapterJobService
 from app.config import default_database_path
 from app.database import Database
 from app.generation import GenerationService
@@ -119,10 +120,17 @@ def create_app(
             application.state.job_repository,
             application.state.ai_manager,
         )
+        application.state.chapter_job_service = ChapterJobService(
+            application.state.repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+        )
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
             {
                 JobKind.REFERENCE_FUSION: application.state.reference_job_service.handle,
+                JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
+                JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
             },
         )
         application.state.job_runtime.start()
@@ -280,6 +288,42 @@ def create_app(
             raise HTTPException(status_code=502, detail="AI 暂时未能生成可用章纲") from error
 
     @application.post(
+        "/api/chapters/{chapter_id}/ai-brief-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_ai_chapter_brief_job(
+        chapter_id: UUID,
+        body: AiChapterBriefRequest,
+    ) -> Job:
+        service: ChapterJobService = application.state.chapter_job_service
+        try:
+            job = service.submit_brief(str(chapter_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="章节已有新版本，请重新提交") from error
+        except InvalidChapterStateError as error:
+            raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/chapter-brief-result",
+        response_model=AiChapterBriefProposal,
+    )
+    def get_ai_chapter_brief_job_result(job_id: UUID) -> AiChapterBriefProposal:
+        service: ChapterJobService = application.state.chapter_job_service
+        try:
+            return service.get_brief_result(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="章纲任务尚无可用结果") from error
+
+    @application.post(
         "/api/chapters/{chapter_id}/ai-draft-runs",
         response_model=GenerationRun,
         status_code=status.HTTP_201_CREATED,
@@ -301,6 +345,42 @@ def create_app(
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except AiProviderError as error:
             raise HTTPException(status_code=502, detail="AI 暂时未能生成可用正文") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/ai-draft-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_ai_chapter_draft_job(
+        chapter_id: UUID,
+        body: AiDraftRequest,
+    ) -> Job:
+        service: ChapterJobService = application.state.chapter_job_service
+        try:
+            job = service.submit_draft(str(chapter_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="章节已有新版本，请重新提交") from error
+        except InvalidChapterStateError as error:
+            raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/chapter-draft-result",
+        response_model=GenerationRun,
+    )
+    def get_ai_chapter_draft_job_result(job_id: UUID) -> GenerationRun:
+        service: ChapterJobService = application.state.chapter_job_service
+        try:
+            return service.get_draft_result(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
+        except (NotFoundError, TypeError, ValueError) as error:
+            raise HTTPException(status_code=409, detail="正文任务尚无可用结果") from error
 
     @application.get("/api/projects", response_model=list[Project])
     def list_projects(

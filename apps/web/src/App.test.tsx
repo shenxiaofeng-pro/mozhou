@@ -1,4 +1,4 @@
-import type { Workspace, WorkspaceSummary } from '@mozhou/contracts'
+import type { GenerationRun, Job, JobKind, Workspace, WorkspaceSummary } from '@mozhou/contracts'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,6 +56,34 @@ function summarizeWorkspace(source: Workspace): WorkspaceSummary {
       has_content: content.trim().length > 0,
       content_characters: content.length,
     })),
+  }
+}
+
+function queuedJob(kind: JobKind, chapterId: string | null = null): Job {
+  return {
+    id: `${kind}-job`,
+    project_id: workspace.project.id,
+    chapter_id: chapterId,
+    parent_job_id: null,
+    kind,
+    state: 'queued',
+    idempotency_key: `${kind}-test`,
+    progress_current: 0,
+    progress_total: 1,
+    current_step: '',
+    estimated_calls: 1,
+    completed_calls: 0,
+    provider: 'openai',
+    model: 'gpt-5.6',
+    lease_owner: null,
+    lease_expires_at: null,
+    heartbeat_at: null,
+    error_code: null,
+    error_message: null,
+    created_at: '2026-08-09T00:00:00Z',
+    updated_at: '2026-08-09T00:00:00Z',
+    started_at: null,
+    completed_at: null,
   }
 }
 
@@ -497,7 +525,7 @@ describe('App', () => {
     vi.spyOn(api, 'startGeneration').mockResolvedValue({
       id: 'd80eb27a-5f0c-45dc-92ea-ea40e66e1c4c',
       chapter_id: workspace.chapters[0].id,
-      state: 'drafted',
+      state: 'drafted' as const,
       expected_chapter_revision: 0,
       candidate_content: candidate,
       error_message: null,
@@ -546,7 +574,20 @@ describe('App', () => {
       why_this_works: '信息差立即转化为行动和家庭回报。',
       risk_notes: ['厂办流程需要现实资料校验'],
     }
-    const propose = vi.spyOn(api, 'proposeAiChapterBrief').mockResolvedValue(proposal)
+    const briefJob = queuedJob('chapter_brief', workspace.chapters[0].id)
+    const startBrief = vi.spyOn(api, 'startAiChapterBriefJob').mockResolvedValue(briefJob)
+    vi.spyOn(api, 'getJob').mockResolvedValue({
+      ...briefJob,
+      state: 'succeeded',
+      progress_current: 1,
+      completed_calls: 1,
+      current_step: '章节候选已生成',
+      chunks: [],
+      attempts: [],
+      artifacts: [],
+      events: [],
+    })
+    vi.spyOn(api, 'getAiChapterBriefJobResult').mockResolvedValue(proposal)
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
@@ -555,7 +596,7 @@ describe('App', () => {
     await user.type(await screen.findByLabelText('本章创作意图'), '让主角用信息差救下父亲')
     await user.click(screen.getByRole('button', { name: 'AI 设计本章' }))
 
-    expect(propose).toHaveBeenCalledWith(workspace.chapters[0].id, {
+    expect(startBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '让主角用信息差救下父亲',
     })
@@ -578,7 +619,7 @@ describe('App', () => {
     })
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const candidate = '一九九八年的梅山坡还没有后来那排高楼。沈砚把停产名单压在桌上。'
-    const generate = vi.spyOn(api, 'generateAiDraft').mockResolvedValue({
+    const generatedRun: GenerationRun = {
       id: '58463d2b-b298-45ca-a4d0-87af9f068bc6',
       chapter_id: workspace.chapters[0].id,
       state: 'drafted',
@@ -589,7 +630,21 @@ describe('App', () => {
       model: 'gpt-5.6',
       created_at: '2026-08-09T00:00:00Z',
       updated_at: '2026-08-09T00:00:01Z',
+    }
+    const draftJob = queuedJob('chapter_draft', workspace.chapters[0].id)
+    const startDraft = vi.spyOn(api, 'startAiChapterDraftJob').mockResolvedValue(draftJob)
+    vi.spyOn(api, 'getJob').mockResolvedValue({
+      ...draftJob,
+      state: 'succeeded',
+      progress_current: 1,
+      completed_calls: 1,
+      current_step: '章节候选已生成',
+      chunks: [],
+      attempts: [],
+      artifacts: [],
+      events: [],
     })
+    vi.spyOn(api, 'getAiChapterDraftJobResult').mockResolvedValue(generatedRun)
     vi.spyOn(api, 'applyGeneration').mockResolvedValue({
       ...workspace.chapters[0],
       content: candidate,
@@ -603,7 +658,7 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'AI 写完整章节' }))
 
-    expect(generate).toHaveBeenCalledWith(workspace.chapters[0].id, {
+    expect(startDraft).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '',
     })
