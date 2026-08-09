@@ -35,7 +35,7 @@
 | M0 工程治理与计划对齐 | 已完成 | 数据、基线、双平台 CI、恢复演练和免费私有仓库替代控制已通过 |
 | M1 创作可信度与核心可达性热修 | 已完成 | 事实选择、全宽度 AI 入口、按需正文、迁移链、动态端口与会话令牌均已通过 |
 | M2 可恢复 AI 任务运行时 | 已完成 | 任务核心、长篇拆书、章纲/写章、任务中心、心跳续租和真实 DMG 强杀恢复均已验收 |
-| M3 模型网关、密钥与用量治理 | 未开始 | — |
+| M3 模型网关、密钥与用量治理 | 进行中 | 功能、完整本地验证、真实浏览器与 macOS DMG 已通过；等待远端 PR 门 |
 | M4 长篇上下文编译器 | 未开始 | — |
 | M5 全局拆书库与现实资料导入 | 未开始 | — |
 | M6 原创性门禁与蓝图工作流 | 未开始 | — |
@@ -188,6 +188,36 @@
 ### 验收结论
 
 - M2 的交付、故障矩阵、浏览器任务中心和真实 macOS DMG 恢复标准均已验证；进入 M3 模型网关、密钥与用量治理。
+
+## M3：模型网关、密钥与用量治理
+
+### 已完成
+
+- 新增 ADR 0007，冻结 provider profile、任务绑定、能力降级、系统凭据、外发预览与浏览器会话降级边界；Ollama 原生支持保持在 P1。
+- 从单一 AiGateway 拆出 ProviderAdapter、能力、统一结果/用量和错误类别；实现 OpenAI Responses 与通用 OpenAI-compatible Chat Completions 适配器。
+- OpenAI Responses 正文使用 `response.output_text.delta` 流式事件；兼容端点只有明确声明流式能力时使用 SSE，否则安全降级为单次完整 delta。
+- 401、403、429、5xx、超时、无效 JSON、取消和不支持能力统一为不泄漏响应正文的安全错误；默认测试使用 MockTransport、假流与脱敏回放，不访问付费模型。
+- schema v6 增加全局 provider profile 和 Job/Attempt/Artifact profile ID、Token、耗时与费用；profile 元数据不进入作品归档，历史任务仍保留稳定来源标识。
+- 模型线路台支持多个 OpenAI/OpenAI-compatible profile、安全自定义 base URL、模型、估价、能力快照、乐观 revision、删除和切换；OpenAI 固定官方 HTTPS 地址，兼容端点只允许 HTTPS 或回环 HTTP，拒绝 URL 凭据、查询串和危险协议。
+- schema v7 增加章纲、正文、拆书与审校任务默认线路；任务提交时绑定指定 profile，之后切换活动线路也不会改变已排队 Job 与 Artifact。
+- 每个 Attempt 记录输入/输出 Token、耗时、重试和估算费用；任务中心聚合展示调用后实际用量，profile 未填写价格时明确显示未知而不伪造金额。
+- 章纲与正文入口加入显式外发确认：展示目标 profile/provider/model、数据类型、内容范围、字符数、预计输入/输出 Token 和费用；确认前不创建 Job，修改作者意图会使旧预览失效。
+- macOS 使用系统 Keychain 保存每条 profile 密钥和活动标记；Web 只能查询存在/活动状态，不能读回明文。Rust 请求缓冲区和临时密钥在使用后清零，数据库、归档和日志泄漏扫描通过。
+- 桌面 sidecar 启动时先延迟 Job worker，恢复所有仍存在的 Keychain profile，最后恢复活动线路，再显式启动 worker；避免中断任务在凭据恢复前抢跑。无活动线路时也会预载其他已保存线路，保证任务级分流可恢复。
+- 浏览器开发模式支持多线路当前页面内存密钥，刷新即清除，不进入 localStorage、项目或数据库；真实浏览器验收中发现并修复了切换第二条线路后第一条会话密钥丢失的问题。
+- Provider 回放夹具只保存脱敏响应和能力事件，带显式 `sanitized` 标记；仓库守卫继续扫描已跟踪和未跟踪文件中的敏感数据。
+
+### 验证证据
+
+- 完整 `pnpm run verify` 通过：仓库守卫、lint、严格类型检查、工程脚本 10/10、Web、API、生产构建、独立 sidecar 和 Rust desktop check 全绿；最终计数为 Web 33/33、API 137/137。
+- Rust 常规测试 7/7 通过，另有 1 项真实 macOS Keychain 写入、读取、删除测试通过并确认无残留；多 profile 恢复顺序的假 Keychain/HTTP 集成测试验证非活动线路先加载、活动线路最后加载。
+- 真实浏览器使用隔离数据库建立两条兼容线路并分别绑定章纲/正文：确认页显示章纲非活动线路、923 字符、1,016 输入 Token、1,200 输出 Token和约 0.0029 美元；确认前 Job 数为 0，确认后 Job 与 Attempt 均绑定章纲 profile。
+- 不可达兼容端点最终显示“模型服务暂时不可用，可安全重试”，没有泄漏底层连接信息；740×900 窄屏模型线路台、任务分流与焦点入口可达，控制台 warning/error 为 0。
+- macOS arm64 ad-hoc DMG 已重新完整构建，产物位于 `artifacts/desktop/墨舟_0.1.0_aarch64.dmg`；未执行付费模型冒烟。
+
+### 当前验收状态
+
+- M3 本地功能与验收场景已满足；远端 macOS、Windows 和 security PR 门通过并合入 main 后，状态改为已完成并进入 M4。
 
 ## 遗留风险
 
