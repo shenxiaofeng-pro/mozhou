@@ -1,6 +1,8 @@
 # 墨舟贡献约定
 
-墨舟 MVP 目前在私有仓库开发。所有变更从受保护的 `main` 分支创建短生命周期分支，并通过 Pull Request 合入。
+墨舟 MVP 目前在 GitHub 免费私有仓库开发。所有变更从 `main` 创建短生命周期分支，并通过 Pull Request 合入。当前套餐不能启用服务端分支保护，因此仓库使用版本化 `pre-push` hook 阻止本机直接推送 `main`；该控制不能替代 GitHub 服务端强制门，套餐或协作范围变化时必须重新评估。
+
+`pnpm install` 会自动配置 `.githooks`；也可以手动执行 `pnpm run setup:git-hooks`。安装后用 `git config --get core.hooksPath` 确认结果为 `.githooks`。
 
 ## 提交
 

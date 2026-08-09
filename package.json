@@ -4,6 +4,8 @@
   "private": true,
   "packageManager": "pnpm@10.34.1",
   "scripts": {
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "setup:git-hooks": "node scripts/install-git-hooks.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:web": "pnpm --filter @mozhou/web dev",
     "dev:api": "uv run --project services/api --no-sync uvicorn app.main:app --app-dir services/api --reload --host 127.0.0.1 --port 8765",
