@@ -1,5 +1,7 @@
 import type {
   AiStatus,
+  AiTaskDefault,
+  AiTaskType,
   CreateModelProfileInput,
   ModelProfile,
   ProviderKind,
@@ -33,6 +35,13 @@ const emptyForm: ProfileForm = {
   inputPrice: '',
   outputPrice: '',
 }
+
+const taskRoutes: Array<{ type: AiTaskType; label: string; detail: string }> = [
+  { type: 'chapter_brief', label: '章纲设计', detail: '钩子、冲突和章节回报' },
+  { type: 'chapter_draft', label: '正文主笔', detail: '完整章节候选稿' },
+  { type: 'reference_analysis', label: '拆书萃取', detail: '分段分析与多书融合' },
+  { type: 'review', label: '一致性审校', detail: '事实、人物与伏笔检查' },
+]
 
 function profileForm(profile: ModelProfile): ProfileForm {
   return {
@@ -74,6 +83,7 @@ export function ModelSettingsPanel({
   onStatusChanged,
 }: ModelSettingsPanelProps) {
   const [profiles, setProfiles] = useState<ModelProfile[]>([])
+  const [taskDefaults, setTaskDefaults] = useState<AiTaskDefault[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [form, setForm] = useState<ProfileForm>(emptyForm)
   const [apiKey, setApiKey] = useState('')
@@ -98,10 +108,11 @@ export function ModelSettingsPanel({
   useEffect(() => {
     if (!open) return undefined
     let stopped = false
-    api.listAiProfiles()
-      .then((items) => {
+    Promise.all([api.listAiProfiles(), api.listAiTaskDefaults()])
+      .then(([items, defaults]) => {
         if (stopped) return
         setProfiles(items)
+        setTaskDefaults(defaults)
         const initial = items.find((item) => item.id === status?.profile_id) ?? items[0]
         if (initial) {
           setSelectedId(initial.id)
@@ -241,6 +252,7 @@ export function ModelSettingsPanel({
       await api.deleteAiProfile(selected.id, selected.revision)
       const remaining = profiles.filter((profile) => profile.id !== selected.id)
       setProfiles(remaining)
+      setTaskDefaults((current) => current.filter((item) => item.profile_id !== selected.id))
       const next = remaining[0] ?? null
       setSelectedId(next?.id ?? null)
       setForm(next ? profileForm(next) : emptyForm)
@@ -248,6 +260,32 @@ export function ModelSettingsPanel({
       onStatusChanged(await api.getAiStatus())
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '删除模型配置失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function changeTaskRoute(taskType: AiTaskType, profileId: string) {
+    if (busy) return
+    const current = taskDefaults.find((item) => item.task_type === taskType)
+    setBusy(`route:${taskType}`)
+    setError(null)
+    try {
+      if (!profileId) {
+        if (current) await api.deleteAiTaskDefault(taskType, current.revision)
+        setTaskDefaults((items) => items.filter((item) => item.task_type !== taskType))
+        return
+      }
+      const saved = await api.setAiTaskDefault(taskType, {
+        profile_id: profileId,
+        expected_revision: current?.revision ?? null,
+      })
+      setTaskDefaults((items) => [
+        ...items.filter((item) => item.task_type !== taskType),
+        saved,
+      ])
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '更新任务线路失败')
     } finally {
       setBusy(null)
     }
@@ -322,6 +360,32 @@ export function ModelSettingsPanel({
                 ))}
               </div>
             ) : null}
+
+            <fieldset className="model-task-routes">
+              <legend>任务分流</legend>
+              <p>不同创作任务可走不同模型；留空时跟随当前启用线路。</p>
+              <div>
+                {taskRoutes.map((route) => {
+                  const taskDefault = taskDefaults.find((item) => item.task_type === route.type)
+                  return (
+                    <label key={route.type}>
+                      <span><strong>{route.label}</strong><small>{route.detail}</small></span>
+                      <select
+                        aria-label={`${route.label}模型线路`}
+                        value={taskDefault?.profile_id ?? ''}
+                        disabled={busy !== null}
+                        onChange={(event) => { void changeTaskRoute(route.type, event.target.value) }}
+                      >
+                        <option value="">跟随当前线路</option>
+                        {profiles.map((profile) => (
+                          <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )
+                })}
+              </div>
+            </fieldset>
 
             <label className="model-secret-field">
               API Key

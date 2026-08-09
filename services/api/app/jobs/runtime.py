@@ -94,6 +94,10 @@ class JobRuntime:
         )
         self._thread.start()
 
+    @property
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
         self._wake.set()

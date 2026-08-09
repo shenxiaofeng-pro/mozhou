@@ -1,8 +1,15 @@
 from io import BytesIO
+from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
-from app.runtime import INSECURE_DEV_ENV, SESSION_TOKEN_ENV, create_runtime_app
+from app.runtime import (
+    DEFER_JOB_RUNTIME_ENV,
+    INSECURE_DEV_ENV,
+    SESSION_TOKEN_ENV,
+    create_runtime_app,
+)
 from app.sidecar import parse_args, wait_for_parent_disconnect
 
 
@@ -58,3 +65,23 @@ def test_runtime_accepts_the_desktop_session_token_without_development_switch(
     application = create_runtime_app()
 
     assert application.title == "墨舟本地 API"
+
+
+def test_desktop_can_restore_credentials_before_starting_job_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_token = "b" * 64
+    monkeypatch.setenv(SESSION_TOKEN_ENV, session_token)
+    monkeypatch.setenv(DEFER_JOB_RUNTIME_ENV, "1")
+    monkeypatch.setenv("MOZHOU_DATA_DIR", str(tmp_path))
+    application = create_runtime_app()
+
+    with TestClient(application) as client:
+        assert application.state.job_runtime.is_running is False
+        response = client.post(
+            "/api/runtime/start",
+            headers={"X-Mozhou-Session-Token": session_token},
+        )
+        assert response.json() == {"status": "running"}
+        assert application.state.job_runtime.is_running is True

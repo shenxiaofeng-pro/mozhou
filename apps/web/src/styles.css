@@ -1607,6 +1607,108 @@ textarea:focus-visible {
   background: #263238;
 }
 
+.ai-outbound-preview {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+  border: 1px solid #59666b;
+  border-left: 3px solid var(--rust-light);
+  padding: 0.8rem;
+  color: #d8ddda;
+  background: #202b30;
+}
+
+.ai-outbound-preview > header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.ai-outbound-preview h4,
+.ai-outbound-preview p {
+  margin: 0;
+}
+
+.ai-outbound-preview header small {
+  color: var(--rust-light);
+  font-size: 0.46rem;
+  letter-spacing: 0.12em;
+}
+
+.ai-outbound-preview h4 {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.9rem;
+}
+
+.ai-outbound-preview header > strong,
+.ai-outbound-preview > p {
+  color: #aeb9bc;
+  font-size: 0.54rem;
+  line-height: 1.5;
+}
+
+.ai-outbound-preview ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-outbound-preview li {
+  border: 1px solid #59666b;
+  padding: 0.2rem 0.32rem;
+  color: #c9d1d2;
+  font-size: 0.5rem;
+}
+
+.ai-outbound-preview dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.ai-outbound-preview dl > div {
+  display: grid;
+  gap: 0.1rem;
+  border-top: 1px solid #465257;
+  padding-top: 0.35rem;
+}
+
+.ai-outbound-preview dt {
+  color: #8f9a9e;
+  font-size: 0.46rem;
+}
+
+.ai-outbound-preview dd {
+  margin: 0;
+  font-size: 0.57rem;
+  font-weight: 800;
+}
+
+.ai-outbound-preview > footer {
+  display: grid;
+  grid-template-columns: 0.7fr 1.3fr;
+  gap: 0.4rem;
+}
+
+.ai-outbound-preview > footer button {
+  border: 1px solid var(--rust-light);
+  padding: 0.48rem;
+  color: var(--paper);
+  background: transparent;
+  font-size: 0.56rem;
+  font-weight: 800;
+}
+
+.ai-outbound-preview > footer button:last-child {
+  color: #172126;
+  background: var(--rust-light);
+}
+
 .ai-proposal {
   margin-top: 0.85rem;
   border-top: 1px solid #526066;
@@ -1917,6 +2019,63 @@ textarea:focus-visible {
   border-color: #7e998c;
   color: #3f6653;
   background: #e5eee8;
+}
+
+.model-task-routes {
+  margin: 1rem 0 0;
+  border: 1px solid var(--line);
+  padding: 0.75rem;
+}
+
+.model-task-routes legend {
+  padding: 0 0.35rem;
+  color: var(--rust);
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.model-task-routes > p {
+  margin: 0 0 0.65rem;
+  color: var(--slate);
+  font-size: 0.54rem;
+}
+
+.model-task-routes > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.model-task-routes label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.model-task-routes label > span {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.model-task-routes strong {
+  color: var(--ink);
+  font-size: 0.58rem;
+}
+
+.model-task-routes small {
+  color: var(--slate);
+  font-size: 0.48rem;
+}
+
+.model-task-routes select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #c2c9c7;
+  border-radius: 0;
+  padding: 0.42rem;
+  color: var(--ink);
+  background: #fffefa;
+  font-size: 0.58rem;
 }
 
 .model-secret-field {
@@ -4313,6 +4472,10 @@ textarea:focus-visible {
   }
 
   .model-profile-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .model-task-routes > div {
     grid-template-columns: 1fr;
   }
 

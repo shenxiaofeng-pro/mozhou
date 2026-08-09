@@ -10,11 +10,14 @@ from app.providers.base import (
 from app.providers.models import (
     ActivateModelProfileRequest,
     AiErrorCategory,
+    AiOutboundPreview,
+    AiTaskDefault,
     AiTaskType,
     CreateModelProfileRequest,
     ModelCapabilities,
     ModelProfile,
     ProviderKind,
+    UpdateAiTaskDefaultRequest,
     UpdateModelProfileRequest,
 )
 from app.providers.repository import (
@@ -22,11 +25,14 @@ from app.providers.repository import (
     ModelProfileNotFoundError,
     ModelProfileRepository,
     StaleModelProfileError,
+    StaleTaskDefaultError,
 )
 
 __all__ = [
     "ActivateModelProfileRequest",
     "AiErrorCategory",
+    "AiOutboundPreview",
+    "AiTaskDefault",
     "AiTaskType",
     "CreateModelProfileRequest",
     "DuplicateModelProfileError",
@@ -42,6 +48,8 @@ __all__ = [
     "ProviderResult",
     "ProviderUsage",
     "StaleModelProfileError",
+    "StaleTaskDefaultError",
     "StreamingProviderAdapter",
+    "UpdateAiTaskDefaultRequest",
     "UpdateModelProfileRequest",
 ]

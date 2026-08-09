@@ -47,6 +47,35 @@ class ModelProfile(BaseModel):
     updated_at: str
 
 
+class AiTaskDefault(BaseModel):
+    task_type: AiTaskType
+    profile_id: str
+    profile_name: str
+    provider: ProviderKind
+    model: str
+    revision: int
+    updated_at: str
+
+
+class UpdateAiTaskDefaultRequest(BaseModel):
+    profile_id: str = Field(min_length=36, max_length=36)
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class AiOutboundPreview(BaseModel):
+    task_type: AiTaskType
+    profile_id: str | None
+    profile_name: str
+    provider: ProviderKind
+    model: str
+    data_types: list[str]
+    content_scope: str
+    character_count: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+
 class ActivateModelProfileRequest(BaseModel):
     api_key: SecretStr
     make_active: bool = True

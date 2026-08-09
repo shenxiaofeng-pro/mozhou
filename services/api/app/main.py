@@ -85,12 +85,17 @@ from app.models import (
 )
 from app.providers import (
     ActivateModelProfileRequest,
+    AiOutboundPreview,
+    AiTaskDefault,
+    AiTaskType,
     CreateModelProfileRequest,
     DuplicateModelProfileError,
     ModelProfile,
     ModelProfileNotFoundError,
     ModelProfileRepository,
     StaleModelProfileError,
+    StaleTaskDefaultError,
+    UpdateAiTaskDefaultRequest,
     UpdateModelProfileRequest,
 )
 from app.reference_jobs import ReferenceJobService
@@ -114,6 +119,8 @@ def create_app(
     database_path: Path | None = None,
     ai_manager: AiGatewayManager | None = None,
     session_token: str | None = None,
+    *,
+    defer_job_runtime: bool = False,
 ) -> FastAPI:
     if session_token is not None and fullmatch(r"[0-9a-f]{64}", session_token) is None:
         raise ValueError("session token must be 64 lowercase hexadecimal characters")
@@ -130,11 +137,13 @@ def create_app(
             application.state.repository,
             application.state.job_repository,
             application.state.ai_manager,
+            application.state.model_profiles,
         )
         application.state.chapter_job_service = ChapterJobService(
             application.state.repository,
             application.state.job_repository,
             application.state.ai_manager,
+            application.state.model_profiles,
         )
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
@@ -144,7 +153,8 @@ def create_app(
                 JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
             },
         )
-        application.state.job_runtime.start()
+        if not defer_job_runtime:
+            application.state.job_runtime.start()
         try:
             yield
         finally:
@@ -177,7 +187,7 @@ def create_app(
             "https://tauri.localhost",
         ],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-Mozhou-Session-Token"],
     )
 
@@ -202,6 +212,14 @@ def create_app(
     @application.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @application.post("/api/runtime/start")
+    def start_job_runtime(
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> dict[str, str]:
+        runtime = get_job_runtime_from_repository(application, jobs)
+        runtime.start()
+        return {"status": "running"}
 
     @application.get("/api/projects/{project_id}/jobs", response_model=list[Job])
     def list_jobs(
@@ -267,17 +285,64 @@ def create_app(
         return manager.status()
 
     @application.get("/api/ai/profiles", response_model=list[ModelProfile])
-    def list_ai_profiles() -> list[ModelProfile]:
-        return application.state.model_profiles.list_profiles()
+    def list_ai_profiles(
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+    ) -> list[ModelProfile]:
+        return profiles.list_profiles()
+
+    @application.get("/api/ai/task-defaults", response_model=list[AiTaskDefault])
+    def list_ai_task_defaults(
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+    ) -> list[AiTaskDefault]:
+        return profiles.list_task_defaults()
+
+    @application.put(
+        "/api/ai/task-defaults/{task_type}",
+        response_model=AiTaskDefault,
+    )
+    def set_ai_task_default(
+        task_type: AiTaskType,
+        body: UpdateAiTaskDefaultRequest,
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+    ) -> AiTaskDefault:
+        try:
+            return profiles.set_task_default(task_type, body)
+        except ModelProfileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="模型配置不存在") from error
+        except StaleTaskDefaultError as error:
+            raise HTTPException(status_code=409, detail="任务默认模型已更新，请刷新后重试") from error
+
+    @application.delete(
+        "/api/ai/task-defaults/{task_type}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_ai_task_default(
+        task_type: AiTaskType,
+        expected_revision: int,
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+    ) -> Response:
+        if expected_revision < 0:
+            raise HTTPException(status_code=422, detail="请求内容格式无效")
+        try:
+            profiles.delete_task_default(
+                task_type,
+                expected_revision,
+            )
+        except StaleTaskDefaultError as error:
+            raise HTTPException(status_code=409, detail="任务默认模型已更新，请刷新后重试") from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post(
         "/api/ai/profiles",
         response_model=ModelProfile,
         status_code=status.HTTP_201_CREATED,
     )
-    def create_ai_profile(body: CreateModelProfileRequest) -> ModelProfile:
+    def create_ai_profile(
+        body: CreateModelProfileRequest,
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+    ) -> ModelProfile:
         try:
-            return application.state.model_profiles.create_profile(body)
+            return profiles.create_profile(body)
         except DuplicateModelProfileError as error:
             raise HTTPException(status_code=409, detail="模型配置名称已存在") from error
 
@@ -285,10 +350,12 @@ def create_app(
     def update_ai_profile(
         profile_id: UUID,
         body: UpdateModelProfileRequest,
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+        manager: Annotated[AiGatewayManager, Depends(get_ai_manager)],
     ) -> ModelProfile:
         try:
-            profile = application.state.model_profiles.update_profile(str(profile_id), body)
-            application.state.ai_manager.unload_profile(str(profile_id))
+            profile = profiles.update_profile(str(profile_id), body)
+            manager.unload_profile(str(profile_id))
             return profile
         except ModelProfileNotFoundError as error:
             raise HTTPException(status_code=404, detail="模型配置不存在") from error
@@ -304,10 +371,12 @@ def create_app(
     def activate_ai_profile(
         profile_id: UUID,
         body: ActivateModelProfileRequest,
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+        manager: Annotated[AiGatewayManager, Depends(get_ai_manager)],
     ) -> AiStatus:
         try:
-            profile = application.state.model_profiles.get_profile(str(profile_id))
-            return application.state.ai_manager.activate_profile(
+            profile = profiles.get_profile(str(profile_id))
+            return manager.activate_profile(
                 profile,
                 body.api_key.get_secret_value(),
                 key_source="runtime",
@@ -319,28 +388,38 @@ def create_app(
             raise HTTPException(status_code=422, detail="API Key 格式无效") from error
 
     @application.post("/api/ai/deactivate", response_model=AiStatus)
-    def deactivate_ai_profile() -> AiStatus:
-        return application.state.ai_manager.deactivate()
+    def deactivate_ai_profile(
+        manager: Annotated[AiGatewayManager, Depends(get_ai_manager)],
+    ) -> AiStatus:
+        return manager.deactivate()
 
     @application.post(
         "/api/ai/profiles/{profile_id}/deactivate",
         response_model=AiStatus,
     )
-    def deactivate_one_ai_profile(profile_id: UUID) -> AiStatus:
-        return application.state.ai_manager.unload_profile(str(profile_id))
+    def deactivate_one_ai_profile(
+        profile_id: UUID,
+        manager: Annotated[AiGatewayManager, Depends(get_ai_manager)],
+    ) -> AiStatus:
+        return manager.unload_profile(str(profile_id))
 
     @application.delete("/api/ai/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_ai_profile(profile_id: UUID, expected_revision: int) -> Response:
+    def delete_ai_profile(
+        profile_id: UUID,
+        expected_revision: int,
+        profiles: Annotated[ModelProfileRepository, Depends(get_model_profile_repository)],
+        manager: Annotated[AiGatewayManager, Depends(get_ai_manager)],
+    ) -> Response:
         if expected_revision < 0:
             raise HTTPException(status_code=422, detail="请求内容格式无效")
-        if application.state.ai_manager.status().profile_id == str(profile_id):
+        if manager.status().profile_id == str(profile_id):
             raise HTTPException(status_code=409, detail="请先切换到其他模型配置")
         try:
-            application.state.model_profiles.delete_profile(
+            profiles.delete_profile(
                 str(profile_id),
                 expected_revision,
             )
-            application.state.ai_manager.unload_profile(str(profile_id))
+            manager.unload_profile(str(profile_id))
         except ModelProfileNotFoundError as error:
             raise HTTPException(status_code=404, detail="模型配置不存在") from error
         except StaleModelProfileError as error:
@@ -378,6 +457,26 @@ def create_app(
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except AiProviderError as error:
             raise HTTPException(status_code=502, detail="AI 暂时未能生成可用章纲") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/ai-brief-preview",
+        response_model=AiOutboundPreview,
+    )
+    def preview_ai_chapter_brief(
+        chapter_id: UUID,
+        body: AiChapterBriefRequest,
+    ) -> AiOutboundPreview:
+        service: ChapterJobService = application.state.chapter_job_service
+        try:
+            return service.preview_brief(str(chapter_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="章节已有新版本，请重新预览") from error
+        except InvalidChapterStateError as error:
+            raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-brief-jobs",
@@ -437,6 +536,26 @@ def create_app(
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except AiProviderError as error:
             raise HTTPException(status_code=502, detail="AI 暂时未能生成可用正文") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/ai-draft-preview",
+        response_model=AiOutboundPreview,
+    )
+    def preview_ai_chapter_draft(
+        chapter_id: UUID,
+        body: AiDraftRequest,
+    ) -> AiOutboundPreview:
+        service: ChapterJobService = application.state.chapter_job_service
+        try:
+            return service.preview_draft(str(chapter_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="章节已有新版本，请重新预览") from error
+        except InvalidChapterStateError as error:
+            raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-draft-jobs",
@@ -1008,6 +1127,11 @@ def get_repository(request: Request) -> ProjectRepository:
 
 def get_job_repository(request: Request) -> JobRepository:
     repository: JobRepository = request.app.state.job_repository
+    return repository
+
+
+def get_model_profile_repository(request: Request) -> ModelProfileRepository:
+    repository: ModelProfileRepository = request.app.state.model_profiles
     return repository
 
 

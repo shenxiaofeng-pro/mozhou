@@ -304,6 +304,8 @@ export interface ConfigureAiInput {
 
 export type ProviderKind = 'openai' | 'openai_compatible'
 
+export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review'
+
 export interface ModelCapabilities {
   structured_output: boolean
   streaming: boolean
@@ -336,6 +338,35 @@ export interface CreateModelProfileInput {
 
 export interface UpdateModelProfileInput extends CreateModelProfileInput {
   expected_revision: number
+}
+
+export interface AiTaskDefault {
+  task_type: AiTaskType
+  profile_id: string
+  profile_name: string
+  provider: ProviderKind
+  model: string
+  revision: number
+  updated_at: string
+}
+
+export interface UpdateAiTaskDefaultInput {
+  profile_id: string
+  expected_revision: number | null
+}
+
+export interface AiOutboundPreview {
+  task_type: AiTaskType
+  profile_id: string | null
+  profile_name: string
+  provider: ProviderKind
+  model: string
+  data_types: string[]
+  content_scope: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
 }
 
 export interface AiChapterBriefInput {

@@ -32,11 +32,15 @@ from app.models import (
 )
 from app.providers import (
     AiErrorCategory,
+    AiTaskType,
+    CreateModelProfileRequest,
     ModelProfile,
+    ModelProfileRepository,
     ProviderAdapterConfig,
     ProviderCallError,
     ProviderResult,
     ProviderUsage,
+    UpdateAiTaskDefaultRequest,
 )
 from app.providers.models import ModelCapabilities, ProviderKind
 from app.reference_lab import ReferenceAnalysisInput
@@ -350,6 +354,60 @@ def test_queued_job_keeps_its_bound_gateway_after_active_profile_switch(tmp_path
     assert detail.state == JobState.SUCCEEDED
     assert detail.provider_profile_id == "profile-first"
     assert detail.artifacts[0].provider_profile_id == "profile-first"
+
+
+def test_chapter_task_default_selects_loaded_non_active_profile(tmp_path: Path) -> None:
+    database = Database(tmp_path / "task-route.db")
+    database.initialize()
+    repository = ProjectRepository(database)
+    workspace = repository.create_project(CreateProjectRequest(
+        title="回到九八年的南平",
+        genre=Genre.URBAN_REBIRTH,
+        rebirth_year=1998,
+        rebirth_location="福建南平",
+    ))
+    profiles = ModelProfileRepository(database)
+    brief_profile = profiles.create_profile(CreateModelProfileRequest(
+        name="章纲线路",
+        provider=ProviderKind.OPENAI,
+        base_url="https://api.openai.com/v1",
+        model="brief-model",
+    ))
+    active_profile = profiles.create_profile(CreateModelProfileRequest(
+        name="正文线路",
+        provider=ProviderKind.OPENAI_COMPATIBLE,
+        base_url="https://models.example.com/v1",
+        model="draft-model",
+    ))
+    profiles.set_task_default(
+        AiTaskType.CHAPTER_BRIEF,
+        UpdateAiTaskDefaultRequest(profile_id=brief_profile.id),
+    )
+    brief_gateway = OpenAiGateway(
+        "unused-brief-key",
+        brief_profile.model,
+        "test",
+        adapter=UsageFixtureAdapter(),
+        profile_id=brief_profile.id,
+        profile_name=brief_profile.name,
+    )
+    manager = AiGatewayManager(brief_gateway)
+    manager.activate_profile(active_profile, "unused-active-key", key_source="test")
+    jobs = JobRepository(database)
+    service = ChapterJobService(repository, jobs, manager, profiles)
+    runtime = JobRuntime(jobs, {JobKind.CHAPTER_BRIEF: service.handle_brief})
+
+    job = service.submit_brief(
+        workspace.chapters[0].id,
+        AiChapterBriefRequest(expected_revision=0, author_intent=""),
+    )
+    runtime.run_once()
+
+    detail = jobs.get_job_detail(job.id)
+    assert manager.status().profile_id == active_profile.id
+    assert detail.state == JobState.SUCCEEDED
+    assert detail.provider_profile_id == brief_profile.id
+    assert detail.artifacts[0].provider_profile_id == brief_profile.id
 
 
 def test_streaming_draft_honours_cancel_and_can_retry_without_partial_artifact(

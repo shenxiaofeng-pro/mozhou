@@ -18,6 +18,7 @@ from app.models import (
     ReferenceSynthesisProposal,
     ReferenceSynthesisRequest,
 )
+from app.providers import AiTaskType, ModelProfileRepository
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 from app.repository import InvalidReferenceSelectionError, ProjectRepository
 
@@ -120,15 +121,27 @@ class ReferenceJobService:
         repository: ProjectRepository,
         jobs: JobRepository,
         manager: AiGatewayManager,
+        profiles: ModelProfileRepository | None = None,
     ) -> None:
         self.repository = repository
         self.jobs = jobs
         self.manager = manager
+        self.profiles = profiles
 
     def submit(self, project_id: str, request: ReferenceSynthesisRequest) -> Job:
         if not request.confirm_external_processing:
             raise InvalidReferenceSelectionError("external_processing_not_confirmed")
-        status = self.manager.status()
+        profile = (
+            self.profiles.get_task_profile(AiTaskType.REFERENCE_ANALYSIS)
+            if self.profiles is not None
+            else None
+        )
+        gateway = (
+            self.manager.gateway_for(profile.id)
+            if profile is not None
+            else self.manager.gateway()
+        )
+        status = gateway.status()
         if not status.configured:
             raise AiNotConfiguredError
         segments = self.repository.get_reference_segments_for_analysis(

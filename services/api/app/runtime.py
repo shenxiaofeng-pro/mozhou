@@ -7,6 +7,7 @@ from app.main import create_app
 
 SESSION_TOKEN_ENV = "MOZHOU_API_SESSION_TOKEN"
 INSECURE_DEV_ENV = "MOZHOU_ALLOW_INSECURE_DEV_API"
+DEFER_JOB_RUNTIME_ENV = "MOZHOU_DEFER_JOB_RUNTIME"
 
 
 def create_runtime_app() -> FastAPI:
@@ -23,4 +24,7 @@ def create_runtime_app() -> FastAPI:
             RuntimeWarning,
             stacklevel=2,
         )
-    return create_app(session_token=session_token)
+    return create_app(
+        session_token=session_token,
+        defer_job_runtime=os.environ.get(DEFER_JOB_RUNTIME_ENV) == "1",
+    )
