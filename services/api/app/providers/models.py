@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 class ProviderKind(StrEnum):
@@ -45,6 +45,10 @@ class ModelProfile(BaseModel):
     revision: int
     created_at: str
     updated_at: str
+
+
+class ActivateModelProfileRequest(BaseModel):
+    api_key: SecretStr
 
 
 class CreateModelProfileRequest(BaseModel):

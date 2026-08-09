@@ -15,6 +15,13 @@ class ProviderUsage:
 
 
 @dataclass(frozen=True)
+class ProviderCallMetrics:
+    usage: ProviderUsage
+    duration_ms: int
+    estimated_cost_microusd: int | None = None
+
+
+@dataclass(frozen=True)
 class ProviderResult[Output]:
     output: Output
     usage: ProviderUsage
@@ -36,11 +43,13 @@ class ProviderCallError(RuntimeError):
         safe_message: str,
         *,
         retryable: bool,
+        duration_ms: int | None = None,
     ) -> None:
         super().__init__(safe_message)
         self.category = category
         self.safe_message = safe_message
         self.retryable = retryable
+        self.duration_ms = duration_ms
 
 
 class ProviderAdapter(Protocol):

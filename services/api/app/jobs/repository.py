@@ -56,6 +56,7 @@ class JobRepository:
         input_payload: dict[str, object],
         provider: str,
         model: str,
+        provider_profile_id: str | None = None,
         chapter_id: str | None = None,
         parent_job_id: str | None = None,
         progress_total: int = 0,
@@ -71,8 +72,8 @@ class JobRepository:
                 INSERT INTO jobs (
                     id, project_id, chapter_id, parent_job_id, kind, state,
                     idempotency_key, input_json, progress_total, estimated_calls,
-                    provider, model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider, provider_profile_id, model, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, kind, idempotency_key) DO NOTHING
                 """,
                 (
@@ -87,6 +88,7 @@ class JobRepository:
                     progress_total,
                     estimated_calls,
                     provider,
+                    provider_profile_id,
                     model,
                     timestamp,
                     timestamp,
@@ -682,6 +684,7 @@ class JobRepository:
         *,
         provider: str,
         model: str,
+        provider_profile_id: str | None = None,
         chunk_id: str | None = None,
         now: datetime | None = None,
     ) -> JobAttempt:
@@ -695,8 +698,9 @@ class JobRepository:
             connection.execute(
                 """
                 INSERT INTO job_attempts (
-                    id, job_id, chunk_id, ordinal, state, provider, model, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, job_id, chunk_id, ordinal, state, provider,
+                    provider_profile_id, model, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt_id,
@@ -705,6 +709,7 @@ class JobRepository:
                     ordinal,
                     AttemptState.RUNNING.value,
                     provider,
+                    provider_profile_id,
                     model,
                     timestamp,
                 ),
@@ -728,6 +733,8 @@ class JobRepository:
         *,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        duration_ms: int | None = None,
+        estimated_cost_microusd: int | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
         now: datetime | None = None,
@@ -744,6 +751,7 @@ class JobRepository:
             result = connection.execute(
                 """
                 UPDATE job_attempts SET state = ?, input_tokens = ?, output_tokens = ?,
+                    duration_ms = ?, estimated_cost_microusd = ?,
                     error_code = ?, error_message = ?, completed_at = ?
                 WHERE id = ? AND state = ?
                 """,
@@ -751,6 +759,8 @@ class JobRepository:
                     state.value,
                     input_tokens,
                     output_tokens,
+                    duration_ms,
+                    estimated_cost_microusd,
                     error_code,
                     error_message,
                     timestamp,
@@ -822,6 +832,7 @@ class JobRepository:
         content_type: str,
         provider: str,
         model: str,
+        provider_profile_id: str | None = None,
         chunk_id: str | None = None,
         metadata: dict[str, object] | None = None,
         now: datetime | None = None,
@@ -835,8 +846,9 @@ class JobRepository:
                 """
                 INSERT INTO job_artifacts (
                     id, job_id, chunk_id, kind, artifact_key, content_type, payload,
-                    payload_sha256, metadata_json, provider, model, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    payload_sha256, metadata_json, provider, provider_profile_id,
+                    model, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id, artifact_key) DO NOTHING
                 """,
                 (
@@ -850,6 +862,7 @@ class JobRepository:
                     digest,
                     metadata_json,
                     provider,
+                    provider_profile_id,
                     model,
                     timestamp,
                 ),

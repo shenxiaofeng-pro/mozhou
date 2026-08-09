@@ -4,7 +4,7 @@ from time import monotonic, sleep
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ai import AiGatewayManager
+from app.ai import AiGateway, AiGatewayManager, OpenAiGateway
 from app.chapter_jobs import ChapterJobService
 from app.database import Database
 from app.jobs.models import JobKind, JobState
@@ -29,6 +29,14 @@ from app.models import (
     UpdateChapterBriefRequest,
     Workspace,
 )
+from app.providers import (
+    AiErrorCategory,
+    ProviderAdapterConfig,
+    ProviderCallError,
+    ProviderResult,
+    ProviderUsage,
+)
+from app.providers.models import ModelCapabilities, ProviderKind
 from app.reference_lab import ReferenceAnalysisInput
 from app.repository import ProjectRepository
 
@@ -112,9 +120,62 @@ class RecoverableChapterGateway:
         raise AssertionError("not used")
 
 
+class UsageFixtureAdapter:
+    config = ProviderAdapterConfig(
+        provider=ProviderKind.OPENAI,
+        base_url="https://api.openai.com/v1",
+        model="usage-fixture",
+        capabilities=ModelCapabilities(
+            structured_output=True,
+            usage=True,
+        ),
+    )
+
+    def __init__(self, *, failure: ProviderCallError | None = None) -> None:
+        self.failure = failure
+
+    def generate_text(
+        self,
+        *,
+        instructions: str,
+        input_text: str,
+        max_output_tokens: int | None = None,
+    ) -> ProviderResult[str]:
+        del instructions, input_text, max_output_tokens
+        return ProviderResult(
+            output="一九九八年的梅山坡还没有后来那排高楼。" * 30,
+            usage=ProviderUsage(input_tokens=500, output_tokens=800),
+            duration_ms=420,
+        )
+
+    def generate_structured(
+        self,
+        *,
+        instructions: str,
+        input_text: str,
+        output_model: type[AiChapterBriefProposal],
+    ) -> ProviderResult[AiChapterBriefProposal]:
+        del instructions, input_text, output_model
+        if self.failure is not None:
+            raise self.failure
+        return ProviderResult(
+            output=AiChapterBriefProposal(
+                title="第一章 名单之前",
+                reader_promise="主角第一次改变家庭命运",
+                opening_hook="停产名单比记忆中提前贴出",
+                state_change="主角让父亲避开首轮裁员",
+                emotional_payoff="父亲保住岗位却开始怀疑儿子",
+                ending_cliffhanger="厂长拿出一张不该存在的旧照片",
+                why_this_works="信息差立即转化为行动和家庭回报。",
+                risk_notes=[],
+            ),
+            usage=ProviderUsage(input_tokens=120, output_tokens=80),
+            duration_ms=250,
+        )
+
 def build_chapter_runtime(
     database_path: Path,
-    gateway: RecoverableChapterGateway,
+    gateway: AiGateway,
 ) -> tuple[ProjectRepository, JobRepository, ChapterJobService, JobRuntime, Chapter]:
     database = Database(database_path)
     database.initialize()
@@ -168,6 +229,72 @@ def test_brief_job_is_idempotent_and_keeps_saved_chapter_unchanged(tmp_path: Pat
     assert gateway.brief_calls == 1
     assert result.title == "第一章 名单之前"
     assert unchanged.opening_hook == ""
+
+
+def test_chapter_attempt_records_usage_duration_and_estimated_cost(tmp_path: Path) -> None:
+    gateway = OpenAiGateway(
+        "unused-test-key-value-abcdefghijklmnopqrstuvwxyz",
+        "usage-fixture",
+        "test",
+        adapter=UsageFixtureAdapter(),
+        input_cost_microusd_per_million=2_500_000,
+        output_cost_microusd_per_million=15_000_000,
+        profile_id="profile-usage-fixture",
+        profile_name="计费测试 profile",
+    )
+    _repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "usage.db",
+        gateway,
+    )
+    job = service.submit_brief(
+        chapter.id,
+        AiChapterBriefRequest(expected_revision=chapter.revision, author_intent=""),
+    )
+
+    runtime.run_once()
+
+    detail = jobs.get_job_detail(job.id)
+    attempt = detail.attempts[0]
+    assert detail.provider_profile_id == "profile-usage-fixture"
+    assert attempt.provider_profile_id == "profile-usage-fixture"
+    assert detail.artifacts[0].provider_profile_id == "profile-usage-fixture"
+    assert attempt.input_tokens == 120
+    assert attempt.output_tokens == 80
+    assert attempt.duration_ms == 250
+    assert attempt.estimated_cost_microusd == 1_500
+
+
+def test_chapter_attempt_keeps_normalized_provider_failure_actionable(tmp_path: Path) -> None:
+    provider_failure = ProviderCallError(
+        AiErrorCategory.RATE_LIMIT,
+        "模型服务限流，稍后可安全重试",
+        retryable=True,
+        duration_ms=321,
+    )
+    gateway = OpenAiGateway(
+        "unused-test-key-value-abcdefghijklmnopqrstuvwxyz",
+        "usage-fixture",
+        "test",
+        adapter=UsageFixtureAdapter(failure=provider_failure),
+    )
+    _repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "rate-limit.db",
+        gateway,
+    )
+    job = service.submit_brief(
+        chapter.id,
+        AiChapterBriefRequest(expected_revision=chapter.revision, author_intent=""),
+    )
+
+    runtime.run_once()
+
+    detail = jobs.get_job_detail(job.id)
+    attempt = detail.attempts[0]
+    assert detail.state == JobState.FAILED
+    assert detail.error_code == "rate_limit"
+    assert detail.error_message == "模型服务限流，稍后可安全重试"
+    assert attempt.error_code == "rate_limit"
+    assert attempt.duration_ms == 321
 
 
 def test_draft_job_materializes_candidate_but_never_overwrites_body(tmp_path: Path) -> None:

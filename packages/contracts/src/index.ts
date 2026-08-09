@@ -57,7 +57,7 @@ export type ReferencePatternDimension =
   | 'key_scene_sequence'
   | 'ending'
 
-export type AiProvider = 'unavailable' | 'openai'
+export type AiProvider = 'unavailable' | 'openai' | 'openai_compatible'
 
 export type ContinuitySeverity = 'warning' | 'info'
 
@@ -293,6 +293,8 @@ export interface AiStatus {
   provider: AiProvider
   model: string
   key_source: string | null
+  profile_id: string | null
+  profile_name: string | null
 }
 
 export interface ConfigureAiInput {
@@ -553,6 +555,7 @@ export interface Job {
   estimated_calls: number
   completed_calls: number
   provider: string
+  provider_profile_id: string | null
   model: string
   lease_owner: string | null
   lease_expires_at: string | null
@@ -586,9 +589,12 @@ export interface JobAttempt {
   ordinal: number
   state: JobAttemptState
   provider: string
+  provider_profile_id: string | null
   model: string
   input_tokens: number | null
   output_tokens: number | null
+  duration_ms: number | null
+  estimated_cost_microusd: number | null
   error_code: string | null
   error_message: string | null
   started_at: string
@@ -605,6 +611,7 @@ export interface JobArtifact {
   payload_sha256: string
   metadata: Record<string, unknown>
   provider: string
+  provider_profile_id: string | null
   model: string
   created_at: string
 }

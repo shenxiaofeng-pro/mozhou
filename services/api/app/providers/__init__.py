@@ -1,4 +1,13 @@
+from app.providers.base import (
+    ProviderAdapter,
+    ProviderAdapterConfig,
+    ProviderCallError,
+    ProviderCallMetrics,
+    ProviderResult,
+    ProviderUsage,
+)
 from app.providers.models import (
+    ActivateModelProfileRequest,
     AiErrorCategory,
     AiTaskType,
     CreateModelProfileRequest,
@@ -15,6 +24,7 @@ from app.providers.repository import (
 )
 
 __all__ = [
+    "ActivateModelProfileRequest",
     "AiErrorCategory",
     "AiTaskType",
     "CreateModelProfileRequest",
@@ -26,16 +36,10 @@ __all__ = [
     "ProviderAdapter",
     "ProviderAdapterConfig",
     "ProviderCallError",
+    "ProviderCallMetrics",
     "ProviderKind",
     "ProviderResult",
     "ProviderUsage",
     "StaleModelProfileError",
     "UpdateModelProfileRequest",
 ]
-from app.providers.base import (
-    ProviderAdapter,
-    ProviderAdapterConfig,
-    ProviderCallError,
-    ProviderResult,
-    ProviderUsage,
-)

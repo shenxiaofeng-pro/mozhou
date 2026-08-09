@@ -127,3 +127,41 @@ def test_profile_names_are_unique_and_updates_use_revision_gate(tmp_path: Path) 
     assert duplicate.status_code == 409
     assert updated.status_code == 200
     assert stale.status_code == 409
+
+
+def test_profile_activation_binds_runtime_without_echoing_or_persisting_key(tmp_path: Path) -> None:
+    database_path = tmp_path / "activation.db"
+    secret = "compatible-runtime-secret-abcdefghijklmnopqrstuvwxyz"
+    with TestClient(create_app(database_path)) as client:
+        profile = client.post(
+            "/api/ai/profiles",
+            json={
+                "name": "兼容端点",
+                "provider": "openai_compatible",
+                "base_url": "https://models.example.com/v1",
+                "model": "writer-model",
+            },
+        ).json()
+        activated = client.post(
+            f"/api/ai/profiles/{profile['id']}/activate",
+            json={"api_key": secret},
+        )
+        status = client.get("/api/ai/status")
+        delete_active = client.delete(
+            f"/api/ai/profiles/{profile['id']}",
+            params={"expected_revision": profile["revision"]},
+        )
+
+    assert activated.status_code == 200
+    assert activated.json() == {
+        "configured": True,
+        "provider": "openai_compatible",
+        "model": "writer-model",
+        "key_source": "runtime",
+        "profile_id": profile["id"],
+        "profile_name": "兼容端点",
+    }
+    assert status.json() == activated.json()
+    assert secret not in activated.text
+    assert secret.encode() not in database_path.read_bytes()
+    assert delete_active.status_code == 409

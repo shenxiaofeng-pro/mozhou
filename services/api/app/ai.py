@@ -1,7 +1,7 @@
 import json
 import os
-from threading import Lock
-from typing import Protocol
+from threading import Lock, local
+from typing import Protocol, runtime_checkable
 
 from app.models import (
     AiChapterBriefProposal,
@@ -22,8 +22,18 @@ from app.models import (
     StoryFact,
     Workspace,
 )
-from app.providers import ProviderAdapter
-from app.providers.openai_adapters import OpenAiResponsesAdapter
+from app.providers import (
+    AiErrorCategory,
+    ProviderAdapter,
+    ProviderCallError,
+    ProviderCallMetrics,
+    ProviderResult,
+)
+from app.providers.models import ModelProfile, ProviderKind
+from app.providers.openai_adapters import (
+    OpenAiCompatibleChatAdapter,
+    OpenAiResponsesAdapter,
+)
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 from app.repository import (
     InvalidChapterStateError,
@@ -38,7 +48,20 @@ class AiNotConfiguredError(Exception):
 
 
 class AiProviderError(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: AiErrorCategory = AiErrorCategory.UNAVAILABLE,
+        safe_message: str = "模型服务未完成本次请求",
+        retryable: bool = True,
+        duration_ms: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.category = category
+        self.safe_message = safe_message
+        self.retryable = retryable
+        self.duration_ms = duration_ms
 
 
 class AiGateway(Protocol):
@@ -85,6 +108,17 @@ class AiGateway(Protocol):
         allowed_source_segment_ids: list[str],
         author_focus: str,
     ) -> ReferenceSynthesisProposal: ...
+
+
+@runtime_checkable
+class MetricsAwareGateway(Protocol):
+    def consume_last_call_metrics(self) -> ProviderCallMetrics | None: ...
+
+
+def consume_ai_call_metrics(gateway: AiGateway) -> ProviderCallMetrics | None:
+    if isinstance(gateway, MetricsAwareGateway):
+        return gateway.consume_last_call_metrics()
+    return None
 
 
 class DisabledAiGateway:
@@ -153,17 +187,49 @@ class OpenAiGateway:
         key_source: str,
         *,
         adapter: ProviderAdapter | None = None,
+        input_cost_microusd_per_million: int | None = None,
+        output_cost_microusd_per_million: int | None = None,
+        profile_id: str | None = None,
+        profile_name: str | None = None,
     ) -> None:
         self.model = model
         self.key_source = key_source
         self.adapter = adapter or OpenAiResponsesAdapter(api_key, model)
+        self.input_cost_microusd_per_million = input_cost_microusd_per_million
+        self.output_cost_microusd_per_million = output_cost_microusd_per_million
+        self.profile_id = profile_id
+        self.profile_name = profile_name
+        self._call_state = local()
+
+    def consume_last_call_metrics(self) -> ProviderCallMetrics | None:
+        metrics = getattr(self._call_state, "metrics", None)
+        self._call_state.metrics = None
+        return metrics if isinstance(metrics, ProviderCallMetrics) else None
+
+    def _clear_call_metrics(self) -> None:
+        self._call_state.metrics = None
+
+    def _remember_result[Output](self, result: ProviderResult[Output]) -> Output:
+        self._call_state.metrics = ProviderCallMetrics(
+            usage=result.usage,
+            duration_ms=result.duration_ms,
+            estimated_cost_microusd=_estimate_cost_microusd(
+                result.usage.input_tokens,
+                result.usage.output_tokens,
+                self.input_cost_microusd_per_million,
+                self.output_cost_microusd_per_million,
+            ),
+        )
+        return result.output
 
     def status(self) -> AiStatus:
         return AiStatus(
             configured=True,
-            provider=AiProvider.OPENAI,
+            provider=AiProvider(self.adapter.config.provider.value),
             model=self.model,
             key_source=self.key_source,
+            profile_id=self.profile_id,
+            profile_name=self.profile_name,
         )
 
     def propose_brief(
@@ -172,12 +238,15 @@ class OpenAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> AiChapterBriefProposal:
+        self._clear_call_metrics()
         try:
-            proposal = self.adapter.generate_structured(
+            proposal = self._remember_result(self.adapter.generate_structured(
                 instructions=BRIEF_INSTRUCTIONS,
                 input_text=build_chapter_context(workspace, chapter, author_intent),
                 output_model=AiChapterBriefProposal,
-            ).output
+            ))
+        except ProviderCallError as error:
+            raise _ai_provider_error("AI 章纲生成失败", error) from error
         except Exception as error:
             raise AiProviderError("AI 章纲生成失败") from error
         if not isinstance(proposal, AiChapterBriefProposal):
@@ -190,12 +259,15 @@ class OpenAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> str:
+        self._clear_call_metrics()
         try:
-            candidate = self.adapter.generate_text(
+            candidate = self._remember_result(self.adapter.generate_text(
                 instructions=DRAFT_INSTRUCTIONS,
                 input_text=build_chapter_context(workspace, chapter, author_intent),
                 max_output_tokens=12_000,
-            ).output
+            ))
+        except ProviderCallError as error:
+            raise _ai_provider_error("AI 正文生成失败", error) from error
         except Exception as error:
             raise AiProviderError("AI 正文生成失败") from error
         candidate = candidate.strip()
@@ -248,12 +320,15 @@ class OpenAiGateway:
         chunk_start: int,
         chunk_end: int,
     ) -> ReferenceChunkAnalysis:
+        self._clear_call_metrics()
         try:
-            analysis = self.adapter.generate_structured(
+            analysis = self._remember_result(self.adapter.generate_structured(
                 instructions=REFERENCE_MAP_INSTRUCTIONS,
                 input_text=_reference_chunk_context(segment, chunk_start, chunk_end),
                 output_model=ReferenceChunkAnalysis,
-            ).output
+            ))
+        except ProviderCallError as error:
+            raise _ai_provider_error("AI 区段分析失败", error) from error
         except Exception as error:
             raise AiProviderError("AI 区段分析失败") from error
         if not isinstance(analysis, ReferenceChunkAnalysis):
@@ -267,8 +342,9 @@ class OpenAiGateway:
         mapped_analyses: list[dict[str, object]],
         author_focus: str,
     ) -> ReferenceBookAnalysis:
+        self._clear_call_metrics()
         try:
-            analysis = self.adapter.generate_structured(
+            analysis = self._remember_result(self.adapter.generate_structured(
                 instructions=REFERENCE_BOOK_REDUCE_INSTRUCTIONS,
                 input_text=json.dumps(
                     {
@@ -282,7 +358,9 @@ class OpenAiGateway:
                     separators=(",", ":"),
                 ),
                 output_model=ReferenceBookAnalysis,
-            ).output
+            ))
+        except ProviderCallError as error:
+            raise _ai_provider_error("AI 单书归纳失败", error) from error
         except Exception as error:
             raise AiProviderError("AI 单书归纳失败") from error
         if (
@@ -299,8 +377,9 @@ class OpenAiGateway:
         allowed_source_segment_ids: list[str],
         author_focus: str,
     ) -> ReferenceSynthesisProposal:
+        self._clear_call_metrics()
         try:
-            proposal = self.adapter.generate_structured(
+            proposal = self._remember_result(self.adapter.generate_structured(
                 instructions=REFERENCE_FUSION_INSTRUCTIONS,
                 input_text=json.dumps(
                     {
@@ -315,7 +394,9 @@ class OpenAiGateway:
                     separators=(",", ":"),
                 ),
                 output_model=ReferenceSynthesisProposal,
-            ).output
+            ))
+        except ProviderCallError as error:
+            raise _ai_provider_error("AI 多书合成失败", error) from error
         except Exception as error:
             raise AiProviderError("AI 多书合成失败") from error
         if not isinstance(proposal, ReferenceSynthesisProposal):
@@ -343,6 +424,38 @@ class AiGatewayManager:
             api_key,
             request.model,
             key_source="session",
+        )
+        with self._lock:
+            self._gateway = gateway
+        return gateway.status()
+
+    def activate_profile(
+        self,
+        profile: ModelProfile,
+        api_key: str,
+        *,
+        key_source: str,
+    ) -> AiStatus:
+        if not 1 <= len(api_key) <= 2_000 or "\x00" in api_key:
+            raise ValueError("invalid_api_key")
+        if profile.provider == ProviderKind.OPENAI:
+            adapter: ProviderAdapter = OpenAiResponsesAdapter(api_key, profile.model)
+        else:
+            adapter = OpenAiCompatibleChatAdapter(
+                api_key,
+                profile.model,
+                profile.base_url,
+                profile.capabilities,
+            )
+        gateway = OpenAiGateway(
+            api_key,
+            profile.model,
+            key_source=key_source,
+            adapter=adapter,
+            input_cost_microusd_per_million=profile.input_cost_microusd_per_million,
+            output_cost_microusd_per_million=profile.output_cost_microusd_per_million,
+            profile_id=profile.id,
+            profile_name=profile.name,
         )
         with self._lock:
             self._gateway = gateway
@@ -463,6 +576,33 @@ def _gateway_from_environment() -> AiGateway:
         return DisabledAiGateway()
     model = os.environ.get("MOZHOU_AI_MODEL", "gpt-5.6").strip() or "gpt-5.6"
     return OpenAiGateway(api_key, model, key_source="environment")
+
+
+def _ai_provider_error(message: str, error: ProviderCallError) -> AiProviderError:
+    return AiProviderError(
+        message,
+        category=error.category,
+        safe_message=error.safe_message,
+        retryable=error.retryable,
+        duration_ms=error.duration_ms,
+    )
+
+
+def _estimate_cost_microusd(
+    input_tokens: int | None,
+    output_tokens: int | None,
+    input_rate: int | None,
+    output_rate: int | None,
+) -> int | None:
+    if (
+        input_tokens is None
+        or output_tokens is None
+        or input_rate is None
+        or output_rate is None
+    ):
+        return None
+    numerator = input_tokens * input_rate + output_tokens * output_rate
+    return (numerator + 999_999) // 1_000_000
 
 
 CANONICAL_FACT_LIMIT = 50
