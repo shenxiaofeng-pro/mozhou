@@ -461,6 +461,12 @@ class AiGatewayManager:
             self._gateway = gateway
         return gateway.status()
 
+    def deactivate(self) -> AiStatus:
+        gateway = DisabledAiGateway()
+        with self._lock:
+            self._gateway = gateway
+        return gateway.status()
+
 
 class AiWritingService:
     def __init__(self, repository: ProjectRepository, manager: AiGatewayManager) -> None:

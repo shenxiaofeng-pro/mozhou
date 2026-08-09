@@ -1472,7 +1472,14 @@ textarea:focus-visible {
   line-height: 1.45;
 }
 
-.ai-coauthor > header > span {
+.ai-route-status {
+  display: grid;
+  flex: none;
+  gap: 0.35rem;
+  justify-items: end;
+}
+
+.ai-route-status > span {
   flex: none;
   border: 1px solid #59666b;
   padding: 0.26rem 0.38rem;
@@ -1480,9 +1487,18 @@ textarea:focus-visible {
   font-size: 0.5rem;
 }
 
-.ai-coauthor > header > span[data-ready="true"] {
+.ai-route-status > span[data-ready="true"] {
   border-color: #8aa296;
   color: #cfe0d7;
+}
+
+.ai-route-status > button {
+  border: 0;
+  border-bottom: 1px solid #78858a;
+  padding: 0.12rem 0;
+  color: #d8ddda;
+  background: transparent;
+  font-size: 0.54rem;
 }
 
 .ai-setup,
@@ -1655,6 +1671,317 @@ textarea:focus-visible {
   color: #f0a89f;
   font-size: 0.6rem;
   line-height: 1.5;
+}
+
+.model-settings-layer {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  color: var(--ink);
+}
+
+.model-settings-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgb(16 24 28 / 78%);
+  cursor: default;
+}
+
+.model-settings {
+  position: relative;
+  z-index: 1;
+  width: min(68rem, 100%);
+  max-height: calc(100vh - 4rem);
+  overflow: auto;
+  border-top: 5px solid var(--rust);
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 32%);
+}
+
+.model-settings > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.5rem 1.75rem 0;
+}
+
+.model-settings > header small {
+  color: var(--rust);
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.16em;
+}
+
+.model-settings > header h2 {
+  margin: 0.2rem 0 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.model-settings > header > button {
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.model-settings-lead {
+  margin: 0.45rem 1.75rem 1.25rem;
+  color: var(--slate);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.model-settings-grid {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  min-height: 31rem;
+  border-top: 1px solid var(--line);
+}
+
+.model-profile-rail {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #3e4a4f;
+  color: var(--paper);
+  background: #263238;
+}
+
+.model-profile-rail > button {
+  display: grid;
+  gap: 0.22rem;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #465257;
+  padding: 0.85rem 1rem;
+  color: #d6dcda;
+  background: transparent;
+  text-align: left;
+}
+
+.model-profile-rail > button[data-selected="true"] {
+  border-left: 4px solid var(--rust-light);
+  padding-left: calc(1rem - 4px);
+  background: #344148;
+}
+
+.model-profile-rail > button span {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.88rem;
+}
+
+.model-profile-rail > button small {
+  overflow: hidden;
+  color: #9eaaae;
+  font-size: 0.54rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile-rail > button em {
+  width: max-content;
+  border: 1px solid #7e998c;
+  padding: 0.12rem 0.28rem;
+  color: #c9e0d3;
+  font-size: 0.48rem;
+  font-style: normal;
+}
+
+.model-profile-rail > .model-profile-new {
+  display: block;
+  padding: 1rem;
+  color: #192329;
+  background: var(--rust-light);
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.model-profile-rail > p {
+  margin: 1rem;
+  color: #9eaaae;
+  font-size: 0.6rem;
+  line-height: 1.6;
+}
+
+.model-profile-editor {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 1.5rem 1.75rem;
+}
+
+.model-route-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  border-left: 4px solid var(--rust);
+  padding: 0.7rem 0.8rem;
+  background: var(--paper-deep);
+}
+
+.model-route-strip > span {
+  color: var(--rust);
+  font-size: 0.54rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.model-route-strip > strong {
+  overflow: hidden;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-route-strip > small {
+  color: var(--slate);
+  font-size: 0.54rem;
+}
+
+.model-route-strip > small[data-secure="true"] {
+  color: #456957;
+  font-weight: 800;
+}
+
+.model-profile-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.85rem 1rem;
+  margin-top: 1.2rem;
+}
+
+.model-profile-fields label,
+.model-secret-field {
+  display: grid;
+  gap: 0.32rem;
+  color: var(--slate);
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.model-profile-fields label small {
+  font-weight: 500;
+}
+
+.model-profile-fields input,
+.model-profile-fields select,
+.model-secret-field input {
+  min-width: 0;
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid #c2c9c7;
+  border-radius: 0;
+  padding: 0.5rem 0.62rem;
+  color: var(--ink);
+  background: #fffefa;
+  font-size: 0.68rem;
+}
+
+.model-profile-fields input:disabled {
+  color: #677377;
+  background: #e4e6e1;
+}
+
+.model-base-url {
+  grid-column: 1 / -1;
+}
+
+.model-capability-board {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.9rem;
+}
+
+.model-capability-board span {
+  border: 1px solid #c7cdca;
+  padding: 0.28rem 0.42rem;
+  color: #89918e;
+  font-size: 0.52rem;
+}
+
+.model-capability-board span[data-enabled="true"] {
+  border-color: #7e998c;
+  color: #3f6653;
+  background: #e5eee8;
+}
+
+.model-secret-field {
+  margin-top: 1rem;
+}
+
+.model-trust-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0.75rem 0 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.65rem 0;
+  color: var(--slate);
+  font-size: 0.56rem;
+  line-height: 1.5;
+}
+
+.model-trust-note strong {
+  color: var(--rust);
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.8rem;
+}
+
+.model-settings-error {
+  margin: 0.65rem 0 0;
+  color: var(--danger);
+  font-size: 0.62rem;
+}
+
+.model-profile-editor > footer {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 1rem;
+}
+
+.model-profile-editor > footer button {
+  border: 1px solid var(--ink);
+  padding: 0.58rem 0.75rem;
+  color: var(--ink);
+  background: transparent;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.model-profile-editor > footer .model-delete {
+  width: max-content;
+  border-color: transparent;
+  padding-left: 0;
+  color: var(--danger);
+}
+
+.model-profile-editor > footer .model-activate {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.model-profile-editor > footer button:disabled {
+  border-color: #c6cbc9;
+  color: #959c99;
+  background: #e6e7e2;
 }
 
 .brief-fields {
@@ -3944,6 +4271,75 @@ textarea:focus-visible {
 }
 
 @media (max-width: 760px) {
+  .model-settings-layer {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .model-settings {
+    width: 100%;
+    max-height: 100vh;
+  }
+
+  .model-settings > header {
+    padding: 1rem 1rem 0;
+  }
+
+  .model-settings > header h2 {
+    font-size: 1.55rem;
+  }
+
+  .model-settings-lead {
+    margin: 0.4rem 1rem 0.9rem;
+  }
+
+  .model-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-profile-rail {
+    max-height: 11rem;
+    overflow-y: auto;
+    border-right: 0;
+  }
+
+  .model-profile-editor {
+    padding: 1rem;
+  }
+
+  .model-route-strip {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+
+  .model-profile-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .model-base-url {
+    grid-column: auto;
+  }
+
+  .model-profile-editor > footer {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .model-profile-editor > footer .model-delete,
+  .model-profile-editor > footer > span {
+    grid-column: 1 / -1;
+  }
+
+  .ai-coauthor > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ai-route-status {
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-content: space-between;
+  }
+
   .project-library-page {
     background: var(--mist);
   }
