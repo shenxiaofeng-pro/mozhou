@@ -1,4 +1,5 @@
 import type {
+  ContextPacket,
   GenerationRun,
   Job,
   JobDetail,
@@ -106,6 +107,64 @@ function jobDetail(job: Job): JobDetail {
   }
 }
 
+function contextPacket(
+  taskType: 'chapter_brief' | 'chapter_draft',
+  usedTokens: number,
+  tokenBudget = 24_000,
+): ContextPacket {
+  return {
+    id: taskType === 'chapter_brief'
+      ? '7e4dbbc5-af7d-40a5-a8ee-69322bc8b667'
+      : '3a1e84a4-350f-4fb5-afdf-af8551e11187',
+    project_id: workspace.project.id,
+    chapter_id: workspace.chapters[0].id,
+    chapter_revision: 0,
+    task_type: taskType,
+    compiler_version: 'rule-compiler-v1',
+    token_budget: tokenBudget,
+    used_tokens: usedTokens,
+    overflow_tokens: 0,
+    packet_sha256: 'a'.repeat(64),
+    source_fingerprint_sha256: 'b'.repeat(64),
+    rendered_context: '{"items":[]}',
+    items: [{
+      id: 'hard:project',
+      kind: 'project_anchor',
+      tier: 'hard_constraint',
+      label: '作品与重生锚点',
+      content: '福建南平 · 1998',
+      token_estimate: 40,
+      priority: 9990,
+      required: true,
+      included: true,
+      directive: null,
+      selection_reason: '题材、年代和地点是硬约束',
+      exclusion_reason: null,
+      source_refs: [{
+        kind: 'project',
+        source_id: workspace.project.id,
+        label: workspace.project.title,
+        chapter_id: null,
+        chapter_number: null,
+        character_start: null,
+        character_end: null,
+        updated_at: workspace.project.updated_at,
+      }],
+      conflict_notes: [],
+      content_sha256: 'c'.repeat(64),
+    }],
+    tier_usage: [{
+      tier: 'hard_constraint',
+      budget_tokens: 0,
+      used_tokens: 40,
+      included_count: 1,
+      excluded_count: 0,
+    }],
+    conflict_notes: [],
+    created_at: '2026-08-10T00:00:00Z',
+  }
+}
+
 beforeEach(() => {
   window.localStorage.clear()
   vi.spyOn(api, 'listProjects').mockResolvedValue([])
@@ -122,6 +181,7 @@ beforeEach(() => {
   })
   vi.spyOn(api, 'listAiProfiles').mockResolvedValue([])
   vi.spyOn(api, 'listAiTaskDefaults').mockResolvedValue([])
+  vi.spyOn(api, 'listContextDirectives').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -612,6 +672,7 @@ describe('App', () => {
       estimated_input_tokens: 2046,
       estimated_output_tokens: 1200,
       estimated_cost_microusd: 23115,
+      context_packet: contextPacket('chapter_brief', 2046),
     })
     const startBrief = vi.spyOn(api, 'startAiChapterBriefJob').mockResolvedValue(briefJob)
     vi.spyOn(api, 'getJob').mockResolvedValue({
@@ -637,6 +698,7 @@ describe('App', () => {
     expect(previewBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '让主角用信息差救下父亲',
+      context_token_budget: 24000,
     })
     expect(startBrief).not.toHaveBeenCalled()
     expect(await screen.findByRole('heading', { name: '发送前确认' })).toBeVisible()
@@ -645,6 +707,8 @@ describe('App', () => {
     expect(startBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '让主角用信息差救下父亲',
+      context_packet_id: '7e4dbbc5-af7d-40a5-a8ee-69322bc8b667',
+      context_token_budget: 24000,
     })
     expect(await screen.findByText(proposal.why_this_works)).toBeVisible()
     expect(screen.getByLabelText('章节标题')).toHaveValue(workspace.chapters[0].title)
@@ -820,6 +884,7 @@ describe('App', () => {
       estimated_input_tokens: 2200,
       estimated_output_tokens: 3600,
       estimated_cost_microusd: null,
+      context_packet: contextPacket('chapter_draft', 2200),
     })
     const startDraft = vi.spyOn(api, 'startAiChapterDraftJob').mockResolvedValue(draftJob)
     vi.spyOn(api, 'getJob').mockResolvedValue({
@@ -853,6 +918,8 @@ describe('App', () => {
     expect(startDraft).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '',
+      context_packet_id: '3a1e84a4-350f-4fb5-afdf-af8551e11187',
+      context_token_budget: 24000,
     })
     expect(await screen.findByText(candidate)).toBeVisible()
     expect(screen.getByLabelText('章节正文')).toHaveValue('')

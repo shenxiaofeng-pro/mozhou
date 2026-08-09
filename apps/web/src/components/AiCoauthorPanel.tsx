@@ -3,6 +3,9 @@ import type {
   AiOutboundPreview,
   AiStatus,
   Chapter,
+  ContextDirective,
+  ContextDirectiveAction,
+  ContextItem,
   GenerationRun,
   Job,
 } from '@mozhou/contracts'
@@ -10,6 +13,7 @@ import type { MouseEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { aiCredentialStore, api } from '../api'
+import { ContextPacketPanel } from './ContextPacketPanel'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 
 interface AiCoauthorPanelProps {
@@ -32,6 +36,9 @@ export function AiCoauthorPanel({
   const [authorIntent, setAuthorIntent] = useState('')
   const [proposal, setProposal] = useState<AiChapterBriefProposal | null>(null)
   const [outboundPreview, setOutboundPreview] = useState<AiOutboundPreview | null>(null)
+  const [contextDirectives, setContextDirectives] = useState<ContextDirective[]>([])
+  const [contextTokenBudget, setContextTokenBudget] = useState(24_000)
+  const [contextUpdating, setContextUpdating] = useState(false)
   const [previewing, setPreviewing] = useState<'brief' | 'draft' | null>(null)
   const [activity, setActivity] = useState<'brief' | 'draft' | null>(null)
   const [activeJob, setActiveJob] = useState<Job | null>(null)
@@ -109,10 +116,13 @@ export function AiCoauthorPanel({
     setPreviewing('brief')
     setError(null)
     try {
-      setOutboundPreview(await api.previewAiChapterBrief(chapter.id, {
+      const preview = await api.previewAiChapterBrief(chapter.id, {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
-      }))
+        context_token_budget: contextTokenBudget,
+      })
+      setOutboundPreview(preview)
+      setContextDirectives(await api.listContextDirectives(chapter.id))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '无法预览本次外发内容')
     } finally {
@@ -125,10 +135,13 @@ export function AiCoauthorPanel({
     setPreviewing('draft')
     setError(null)
     try {
-      setOutboundPreview(await api.previewAiChapterDraft(chapter.id, {
+      const preview = await api.previewAiChapterDraft(chapter.id, {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
-      }))
+        context_token_budget: contextTokenBudget,
+      })
+      setOutboundPreview(preview)
+      setContextDirectives(await api.listContextDirectives(chapter.id))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '无法预览本次外发内容')
     } finally {
@@ -149,6 +162,8 @@ export function AiCoauthorPanel({
       const input = {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
+        context_packet_id: outboundPreview.context_packet.id,
+        context_token_budget: outboundPreview.context_packet.token_budget,
       }
       const job = kind === 'brief'
         ? await api.startAiChapterBriefJob(chapter.id, input)
@@ -158,6 +173,67 @@ export function AiCoauthorPanel({
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'AI 任务启动失败')
       setActivity(null)
+    }
+  }
+
+  async function refreshContextPreview(taskType: 'chapter_brief' | 'chapter_draft') {
+    const input = {
+      expected_revision: chapter.revision,
+      author_intent: authorIntent,
+      context_token_budget: contextTokenBudget,
+    }
+    const preview = taskType === 'chapter_brief'
+      ? await api.previewAiChapterBrief(chapter.id, input)
+      : await api.previewAiChapterDraft(chapter.id, input)
+    setOutboundPreview(preview)
+    setContextDirectives(await api.listContextDirectives(chapter.id))
+  }
+
+  async function setContextDirective(item: ContextItem, action: ContextDirectiveAction) {
+    if (!outboundPreview || contextUpdating) return
+    const source = item.source_refs[0]
+    if (!source) return
+    const existing = contextDirectives.find((directive) => (
+      directive.source_kind === source.kind && directive.source_id === source.source_id
+    ))
+    setContextUpdating(true)
+    setError(null)
+    try {
+      await api.setContextDirective(chapter.id, {
+        source_kind: source.kind,
+        source_id: source.source_id,
+        action,
+        expected_revision: existing?.revision ?? null,
+      })
+      await refreshContextPreview(
+        outboundPreview.task_type === 'chapter_draft' ? 'chapter_draft' : 'chapter_brief',
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '上下文选择更新失败')
+    } finally {
+      setContextUpdating(false)
+    }
+  }
+
+  async function clearContextDirective(item: ContextItem) {
+    if (!outboundPreview || contextUpdating) return
+    const source = item.source_refs[0]
+    if (!source) return
+    const existing = contextDirectives.find((directive) => (
+      directive.source_kind === source.kind && directive.source_id === source.source_id
+    ))
+    if (!existing) return
+    setContextUpdating(true)
+    setError(null)
+    try {
+      await api.deleteContextDirective(existing.id, existing.revision)
+      await refreshContextPreview(
+        outboundPreview.task_type === 'chapter_draft' ? 'chapter_draft' : 'chapter_brief',
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '上下文选择更新失败')
+    } finally {
+      setContextUpdating(false)
     }
   }
 
@@ -240,6 +316,22 @@ export function AiCoauthorPanel({
               placeholder="可以留空，让总导演根据上一章悬念、人物状态和开放伏笔自行设计。"
             />
           </label>
+          <label className="context-budget-control">
+            本次上下文预算
+            <select
+              aria-label="本次上下文预算"
+              value={contextTokenBudget}
+              onChange={(event) => {
+                setContextTokenBudget(Number(event.target.value))
+                setOutboundPreview(null)
+              }}
+            >
+              <option value={8000}>8,000 Token · 精简</option>
+              <option value={16000}>16,000 Token · 标准</option>
+              <option value={24000}>24,000 Token · 长篇推荐</option>
+              <option value={48000}>48,000 Token · 大上下文</option>
+            </select>
+          </label>
           <div>
             <button type="button" onClick={generateBrief} disabled={activity !== null || previewing !== null || !canUseAi}>
               {previewing === 'brief' ? '正在核算外发内容…' : activity === 'brief' ? '正在设计章纲…' : 'AI 设计本章'}
@@ -294,6 +386,13 @@ export function AiCoauthorPanel({
             <div><dt>预计输出</dt><dd>{outboundPreview.estimated_output_tokens.toLocaleString('zh-CN')} Token</dd></div>
             <div><dt>预计费用</dt><dd>{outboundPreview.estimated_cost_microusd === null ? '线路未填写价格' : `约 $${(outboundPreview.estimated_cost_microusd / 1_000_000).toFixed(4)}`}</dd></div>
           </dl>
+          <ContextPacketPanel
+            packet={outboundPreview.context_packet}
+            directives={contextDirectives}
+            busy={contextUpdating || activity !== null}
+            onSetDirective={(item, action) => { void setContextDirective(item, action) }}
+            onClearDirective={(item) => { void clearContextDirective(item) }}
+          />
           <footer>
             <button type="button" onClick={() => setOutboundPreview(null)}>返回修改</button>
             <button type="button" onClick={() => { void confirmOutbound() }} disabled={activity !== null}>

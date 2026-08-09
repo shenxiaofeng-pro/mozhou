@@ -9,6 +9,9 @@ import type {
   ApplyReferencePatternInput,
   Chapter,
   ConfigureAiInput,
+  ContextDirective,
+  ContextDirectiveInput,
+  ContextPacket,
   CreateModelProfileInput,
   CreateChapterInput,
   CreateFutureKnowledgeInput,
@@ -246,6 +249,27 @@ export const api = {
   },
   getAiChapterDraftJobResult(jobId: string) {
     return request<GenerationRun>(`/api/jobs/${encodeURIComponent(jobId)}/chapter-draft-result`)
+  },
+  listContextPackets(chapterId: string) {
+    return request<ContextPacket[]>(`/api/chapters/${encodeURIComponent(chapterId)}/context-packets`)
+  },
+  getContextPacket(packetId: string) {
+    return request<ContextPacket>(`/api/context-packets/${encodeURIComponent(packetId)}`)
+  },
+  listContextDirectives(chapterId: string) {
+    return request<ContextDirective[]>(`/api/chapters/${encodeURIComponent(chapterId)}/context-directives`)
+  },
+  setContextDirective(chapterId: string, input: ContextDirectiveInput) {
+    return request<ContextDirective>(`/api/chapters/${encodeURIComponent(chapterId)}/context-directives`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    })
+  },
+  deleteContextDirective(directiveId: string, expectedRevision: number) {
+    const query = new URLSearchParams({ expected_revision: String(expectedRevision) })
+    return request<void>(`/api/context-directives/${encodeURIComponent(directiveId)}?${query}`, {
+      method: 'DELETE',
+    })
   },
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })

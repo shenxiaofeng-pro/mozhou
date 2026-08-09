@@ -1541,6 +1541,16 @@ textarea:focus-visible {
   resize: vertical;
 }
 
+.ai-command-deck .context-budget-control select {
+  width: 100%;
+  border: 1px solid #566267;
+  border-radius: 1px;
+  padding: 0.46rem 0.5rem;
+  color: var(--paper);
+  background: #243036;
+  font-size: 0.58rem;
+}
+
 .ai-command-deck > div {
   display: grid;
   grid-template-columns: 0.8fr 1.2fr;
@@ -1648,7 +1658,7 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
-.ai-outbound-preview ul {
+.ai-outbound-preview > ul {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
@@ -1657,33 +1667,33 @@ textarea:focus-visible {
   list-style: none;
 }
 
-.ai-outbound-preview li {
+.ai-outbound-preview > ul > li {
   border: 1px solid #59666b;
   padding: 0.2rem 0.32rem;
   color: #c9d1d2;
   font-size: 0.5rem;
 }
 
-.ai-outbound-preview dl {
+.ai-outbound-preview > dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.35rem;
   margin: 0;
 }
 
-.ai-outbound-preview dl > div {
+.ai-outbound-preview > dl > div {
   display: grid;
   gap: 0.1rem;
   border-top: 1px solid #465257;
   padding-top: 0.35rem;
 }
 
-.ai-outbound-preview dt {
+.ai-outbound-preview > dl dt {
   color: #8f9a9e;
   font-size: 0.46rem;
 }
 
-.ai-outbound-preview dd {
+.ai-outbound-preview > dl dd {
   margin: 0;
   font-size: 0.57rem;
   font-weight: 800;
@@ -1707,6 +1717,213 @@ textarea:focus-visible {
 .ai-outbound-preview > footer button:last-child {
   color: #172126;
   background: var(--rust-light);
+}
+
+.context-packet-panel {
+  display: grid;
+  gap: 0.65rem;
+  border-top: 1px solid #465257;
+  padding-top: 0.65rem;
+}
+
+.context-packet-panel > header {
+  display: flex;
+  gap: 0.65rem;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.context-packet-panel > header small {
+  color: #8aa296;
+  font-size: 0.44rem;
+  letter-spacing: 0.08em;
+}
+
+.context-packet-panel h5 {
+  margin: 0.16rem 0 0;
+  color: var(--paper);
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.72rem;
+}
+
+.context-packet-panel > header > span {
+  color: #88969a;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.46rem;
+}
+
+.context-budget-meter {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid #465257;
+  padding: 0.5rem;
+  background: #253238;
+}
+
+.context-budget-meter > div:first-child {
+  display: flex;
+  gap: 0.2rem;
+  align-items: baseline;
+}
+
+.context-budget-meter strong {
+  color: #e4d7c7;
+  font-size: 0.68rem;
+}
+
+.context-budget-meter span,
+.context-budget-meter p {
+  margin: 0;
+  color: #93a0a3;
+  font-size: 0.47rem;
+}
+
+.context-budget-track {
+  height: 3px;
+  overflow: hidden;
+  background: #172126;
+}
+
+.context-budget-track i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #8aa296, var(--rust-light));
+}
+
+.context-overflow,
+.context-conflict-list {
+  margin: 0;
+  border-left: 2px solid #c98f5b;
+  padding: 0.4rem 0.5rem;
+  color: #e0c7ae;
+  background: #302923;
+  font-size: 0.5rem;
+  line-height: 1.5;
+}
+
+.context-conflict-list {
+  display: grid;
+  gap: 0.2rem;
+  padding-left: 1.4rem;
+}
+
+.context-packet-panel details {
+  border-top: 1px solid #465257;
+  padding-top: 0.45rem;
+}
+
+.context-packet-panel summary {
+  cursor: pointer;
+  color: #d8ddda;
+  font-size: 0.54rem;
+  font-weight: 800;
+}
+
+.context-packet-items {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.context-packet-item {
+  display: grid;
+  gap: 0.38rem;
+  border: 1px solid #465257;
+  padding: 0.5rem;
+  background: #1c272c;
+}
+
+.context-packet-item[data-included="false"] {
+  opacity: 0.78;
+  background: #242a2c;
+}
+
+.context-packet-item-head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.context-packet-item-head > div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.context-packet-item-head span {
+  color: #8aa296;
+  font-size: 0.43rem;
+}
+
+.context-packet-item-head strong {
+  color: #e4e7e4;
+  font-size: 0.56rem;
+}
+
+.context-packet-item-head small {
+  flex: 0 0 auto;
+  color: #859297;
+  font-size: 0.43rem;
+}
+
+.context-packet-item > p {
+  margin: 0;
+  color: #b8c1c2;
+  font-size: 0.49rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.context-packet-item > dl {
+  display: grid;
+  gap: 0.22rem;
+  margin: 0;
+}
+
+.context-packet-item > dl > div {
+  display: grid;
+  grid-template-columns: 3.7rem minmax(0, 1fr);
+  gap: 0.35rem;
+}
+
+.context-packet-item dt,
+.context-packet-item dd {
+  margin: 0;
+  font-size: 0.45rem;
+  line-height: 1.45;
+}
+
+.context-packet-item dt {
+  color: #78868a;
+}
+
+.context-packet-item dd {
+  color: #aeb9bc;
+}
+
+.context-packet-item .context-conflict-note {
+  color: #d6b38f;
+}
+
+.context-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.context-item-actions span {
+  color: #c98f5b;
+  font-size: 0.44rem;
+}
+
+.context-item-actions button {
+  border-color: #59666b;
+  padding: 0.26rem 0.38rem;
+  color: #c9d1d2;
+  font-size: 0.46rem;
 }
 
 .ai-proposal {
