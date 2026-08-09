@@ -194,6 +194,11 @@ export const api = {
   deactivateAiProfile() {
     return request<AiStatus>('/api/ai/deactivate', { method: 'POST' })
   },
+  deactivateOneAiProfile(profileId: string) {
+    return request<AiStatus>(`/api/ai/profiles/${encodeURIComponent(profileId)}/deactivate`, {
+      method: 'POST',
+    })
+  },
   deleteAiProfile(profileId: string, expectedRevision: number) {
     const query = new URLSearchParams({ expected_revision: String(expectedRevision) })
     return request<void>(`/api/ai/profiles/${encodeURIComponent(profileId)}?${query}`, {
@@ -428,6 +433,9 @@ export interface AiCredentialStatus {
   active: boolean
 }
 
+const browserSessionCredentials = new Map<string, string>()
+let browserActiveProfileId: string | null = null
+
 function assertAiCredentialStatus(value: unknown): AiCredentialStatus {
   if (
     !value
@@ -451,23 +459,39 @@ function assertAiCredentialStatus(value: unknown): AiCredentialStatus {
 export const aiCredentialStore = {
   isSystemStoreAvailable: isTauri(),
   async status(profileId: string): Promise<AiCredentialStatus> {
-    if (!isTauri()) return { profileId, stored: false, active: false }
+    if (!isTauri()) {
+      return {
+        profileId,
+        stored: browserSessionCredentials.has(profileId),
+        active: browserActiveProfileId === profileId,
+      }
+    }
     return assertAiCredentialStatus(await invoke('ai_credential_status', { profileId }))
   },
   async storeAndActivate(profileId: string, apiKey: string): Promise<AiCredentialStatus> {
     if (!isTauri()) {
       await api.activateAiProfile(profileId, apiKey)
-      return { profileId, stored: false, active: true }
+      browserSessionCredentials.set(profileId, apiKey)
+      browserActiveProfileId = profileId
+      return { profileId, stored: true, active: true }
     }
     return assertAiCredentialStatus(await invoke('store_ai_credential', { profileId, apiKey }))
   },
   async activateSaved(profileId: string): Promise<AiCredentialStatus> {
-    if (!isTauri()) throw new Error('浏览器开发模式没有系统凭据库，请重新输入 API Key')
+    if (!isTauri()) {
+      const apiKey = browserSessionCredentials.get(profileId)
+      if (!apiKey) throw new Error('该线路的会话密钥已清除，请重新输入 API Key')
+      await api.activateAiProfile(profileId, apiKey)
+      browserActiveProfileId = profileId
+      return { profileId, stored: true, active: true }
+    }
     return assertAiCredentialStatus(await invoke('activate_ai_credential', { profileId }))
   },
   async delete(profileId: string): Promise<AiCredentialStatus> {
     if (!isTauri()) {
-      await api.deactivateAiProfile()
+      await api.deactivateOneAiProfile(profileId)
+      browserSessionCredentials.delete(profileId)
+      if (browserActiveProfileId === profileId) browserActiveProfileId = null
       return { profileId, stored: false, active: false }
     }
     return assertAiCredentialStatus(await invoke('delete_ai_credential', { profileId }))

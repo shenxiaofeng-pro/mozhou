@@ -325,7 +325,9 @@ export function ModelSettingsPanel({
               <span>{selected ? '编辑线路' : '新线路'}</span>
               <strong>{form.name || '未命名模型线路'}</strong>
               <small data-secure={credential?.stored === true}>
-                {credential?.stored ? '密钥已入系统凭据库' : aiCredentialStore.isSystemStoreAvailable ? '尚未保存密钥' : '浏览器模式：仅本次会话'}
+                {credential?.stored
+                  ? aiCredentialStore.isSystemStoreAvailable ? '密钥已入系统凭据库' : '密钥仅留本次页面会话'
+                  : aiCredentialStore.isSystemStoreAvailable ? '尚未保存密钥' : '浏览器模式：仅本次会话'}
               </small>
             </div>
 
@@ -400,7 +402,7 @@ export function ModelSettingsPanel({
               />
             </label>
 
-            <p className="model-trust-note"><strong>密钥不出舱</strong><span>前端不能读回已保存密钥；sidecar 只在执行期间持有内存副本。</span></p>
+            <p className="model-trust-note"><strong>密钥不出舱</strong><span>{aiCredentialStore.isSystemStoreAvailable ? '前端不能读回已保存密钥；sidecar 只在执行期间持有内存副本。' : '开发模式只保存在当前页面内存；刷新即清除，不写入作品或浏览器存储。'}</span></p>
             {error ? <p className="model-settings-error" role="alert">{error}</p> : null}
             <footer>
               {selected ? <button type="button" className="model-delete" onClick={() => { void deleteSelected() }} disabled={busy !== null}>删除线路</button> : <span />}
