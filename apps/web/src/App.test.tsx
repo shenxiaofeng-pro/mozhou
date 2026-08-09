@@ -1,4 +1,4 @@
-import type { Workspace } from '@mozhou/contracts'
+import type { Workspace, WorkspaceSummary } from '@mozhou/contracts'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -48,9 +48,22 @@ const workspace: Workspace = {
   resume_card: null,
 }
 
+function summarizeWorkspace(source: Workspace): WorkspaceSummary {
+  return {
+    ...source,
+    chapters: source.chapters.map(({ content, ...chapter }) => ({
+      ...chapter,
+      has_content: content.trim().length > 0,
+      content_characters: content.length,
+    })),
+  }
+}
+
 beforeEach(() => {
   window.localStorage.clear()
   vi.spyOn(api, 'listProjects').mockResolvedValue([])
+  vi.spyOn(api, 'getProjectSummary').mockResolvedValue(summarizeWorkspace(workspace))
+  vi.spyOn(api, 'getChapter').mockResolvedValue(workspace.chapters[0])
   vi.spyOn(api, 'getAiStatus').mockResolvedValue({
     configured: false,
     provider: 'unavailable',
@@ -68,7 +81,6 @@ afterEach(() => {
 describe('App', () => {
   it('shows existing projects in the library and opens the selected workspace', async () => {
     vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
-    const loadProject = vi.spyOn(api, 'getProject').mockResolvedValue(workspace)
     const user = userEvent.setup()
 
     render(<App />)
@@ -76,7 +88,8 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: '你的作品，都在这里' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: `打开《${workspace.project.title}》` }))
 
-    expect(loadProject).toHaveBeenCalledWith(workspace.project.id)
+    expect(api.getProjectSummary).toHaveBeenCalledWith(workspace.project.id)
+    expect(api.getChapter).toHaveBeenCalledWith(workspace.chapters[0].id)
     expect(await screen.findByRole('heading', { name: workspace.project.title })).toBeVisible()
     expect(window.localStorage.getItem('mozhou:session:v1')).toContain(workspace.project.id)
   })
@@ -194,7 +207,6 @@ describe('App', () => {
 
   it('returns to the project library on exit and can reopen the same work', async () => {
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
-    const loadProject = vi.spyOn(api, 'getProject').mockResolvedValue(workspace)
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
@@ -204,7 +216,8 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '你的作品，都在这里' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: `打开《${workspace.project.title}》` }))
-    expect(loadProject).toHaveBeenCalledWith(workspace.project.id)
+    expect(api.getProjectSummary).toHaveBeenCalledWith(workspace.project.id)
+    expect(api.getChapter).toHaveBeenCalledWith(workspace.chapters[0].id)
     expect(await screen.findByRole('heading', { name: workspace.project.title })).toBeVisible()
   })
 
@@ -307,6 +320,7 @@ describe('App', () => {
       ...workspace,
       chapters: [workspace.chapters[0], secondChapter],
     })
+    vi.mocked(api.getChapter).mockResolvedValue(secondChapter)
     const update = vi.spyOn(api, 'updateChapter').mockResolvedValue({
       ...workspace.chapters[0],
       content: '切章前必须留下的最后一句。',
@@ -327,6 +341,32 @@ describe('App', () => {
       expected_revision: 0,
     })
     expect(await screen.findByRole('heading', { name: '第2章 名单之外' })).toBeVisible()
+    expect(api.getChapter).toHaveBeenCalledWith(secondChapter.id)
+  })
+
+  it('keeps the current chapter open when the next chapter body cannot load', async () => {
+    const secondChapter = {
+      ...workspace.chapters[0],
+      id: '14eb18c0-4ea7-44aa-b30f-cb39825a9961',
+      chapter_number: 2,
+      title: '第2章 还没到站',
+      content: '这一章暂时无法读取。',
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue({
+      ...workspace,
+      chapters: [workspace.chapters[0], secondChapter],
+    })
+    vi.mocked(api.getChapter).mockRejectedValue(new Error('章节正文读取失败'))
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    await user.click(screen.getByRole('button', { name: '打开第 2 章：第2章 还没到站' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('章节正文读取失败')
+    expect(screen.getByRole('heading', { name: workspace.chapters[0].title })).toBeVisible()
+    expect(screen.getByLabelText('章节正文')).toHaveValue(workspace.chapters[0].content)
   })
 
   it('keeps the editor open when navigation cannot save the latest text', async () => {
@@ -402,6 +442,7 @@ describe('App', () => {
     }
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const createChapter = vi.spyOn(api, 'createChapter').mockResolvedValue(secondChapter)
+    vi.mocked(api.getChapter).mockResolvedValue(secondChapter)
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
@@ -414,7 +455,8 @@ describe('App', () => {
     })
     expect(await screen.findByText('1 / 3')).toBeVisible()
     await user.click(screen.getByRole('button', { name: '打开第 2 章：第2章 未命名' }))
-    expect(screen.getByRole('heading', { name: '第2章 未命名' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '第2章 未命名' })).toBeVisible()
+    expect(api.getChapter).toHaveBeenCalledWith(secondChapter.id)
     expect(screen.getByLabelText('章节正文')).toHaveValue('')
   })
 

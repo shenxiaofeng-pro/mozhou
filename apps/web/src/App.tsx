@@ -1,4 +1,4 @@
-import type { Chapter, Project, Workspace } from '@mozhou/contracts'
+import type { Chapter, ChapterSummary, Project, Workspace, WorkspaceSummary } from '@mozhou/contracts'
 import { useCallback, useEffect, useState } from 'react'
 
 import { api } from './api'
@@ -8,8 +8,45 @@ import { ReferenceLibraryPage } from './components/ReferenceLibraryPage'
 import { WorkspaceShell } from './components/WorkspaceShell'
 import { clearActiveProjectId, loadActiveProjectId, saveActiveProjectId } from './storage'
 
+interface LoadedProject {
+  workspace: WorkspaceSummary
+  initialChapter: Chapter
+}
+
+function summarizeChapter({ content, ...chapter }: Chapter): ChapterSummary {
+  return {
+    ...chapter,
+    has_content: content.trim().length > 0,
+    content_characters: content.length,
+  }
+}
+
+function summarizeWorkspace(workspace: Workspace): WorkspaceSummary {
+  return {
+    ...workspace,
+    chapters: workspace.chapters.map(summarizeChapter),
+  }
+}
+
+function isFullWorkspace(workspace: Workspace | WorkspaceSummary): workspace is Workspace {
+  return workspace.chapters.some((chapter) => 'content' in chapter)
+}
+
+async function loadProjectForWriting(projectId: string): Promise<LoadedProject> {
+  const workspace = await api.getProjectSummary(projectId)
+  const initialChapterSummary = workspace.chapters.find(
+    (chapter) => chapter.id === workspace.resume_card?.chapter_id,
+  ) ?? workspace.chapters[0]
+  if (!initialChapterSummary) throw new Error('作品中没有可打开的章节')
+  return {
+    workspace,
+    initialChapter: await api.getChapter(initialChapterSummary.id),
+  }
+}
+
 export function App() {
-  const [workspace, setWorkspace] = useState<Workspace | null>(null)
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null)
+  const [initialChapter, setInitialChapter] = useState<Chapter | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null)
@@ -23,7 +60,7 @@ export function App() {
     let active = true
 
     const projectsRequest = api.listProjects()
-    const workspaceRequest = projectId ? api.getProject(projectId) : Promise.resolve(null)
+    const workspaceRequest = projectId ? loadProjectForWriting(projectId) : Promise.resolve(null)
 
     Promise.allSettled([projectsRequest, workspaceRequest]).then(([projectResult, workspaceResult]) => {
       if (!active) return
@@ -33,9 +70,11 @@ export function App() {
         setLoadError(projectResult.reason instanceof Error ? projectResult.reason.message : '无法读取作品书架')
       }
       if (workspaceResult.status === 'fulfilled') {
-        setWorkspace(workspaceResult.value)
+        setWorkspace(workspaceResult.value?.workspace ?? null)
+        setInitialChapter(workspaceResult.value?.initialChapter ?? null)
       } else {
         clearActiveProjectId()
+        setInitialChapter(null)
         setLoadError(workspaceResult.reason instanceof Error ? workspaceResult.reason.message : '无法打开上次作品')
       }
       setIsLoading(false)
@@ -51,7 +90,8 @@ export function App() {
       created.project,
       ...current.filter((project) => project.id !== created.project.id),
     ])
-    setWorkspace(created)
+    setWorkspace(summarizeWorkspace(created))
+    setInitialChapter(created.chapters[0] ?? null)
     setLoadError(null)
     setLibraryNotice(null)
     setIsCreatingProject(false)
@@ -70,12 +110,13 @@ export function App() {
     setOpeningProjectId(projectId)
     setLoadError(null)
     try {
-      const loaded = await api.getProject(projectId)
+      const loaded = await loadProjectForWriting(projectId)
       saveActiveProjectId(projectId)
-      setWorkspace(loaded)
+      setWorkspace(loaded.workspace)
+      setInitialChapter(loaded.initialChapter)
       setLibraryNotice(null)
       setProjects((current) => [
-        loaded.project,
+        loaded.workspace.project,
         ...current.filter((project) => project.id !== projectId),
       ])
       setActiveView('writing')
@@ -87,12 +128,14 @@ export function App() {
   }, [])
 
   const handleChapterChanged = useCallback((saved: Chapter) => {
+    const summary = summarizeChapter(saved)
+    setInitialChapter((current) => current?.id === saved.id ? saved : current)
     setWorkspace((current) => current ? {
       ...current,
       project: { ...current.project, updated_at: saved.updated_at },
       chapters: current.chapters.some((chapter) => chapter.id === saved.id)
-        ? current.chapters.map((chapter) => chapter.id === saved.id ? saved : chapter)
-        : [...current.chapters, saved].sort((left, right) => left.chapter_number - right.chapter_number),
+        ? current.chapters.map((chapter) => chapter.id === saved.id ? summary : chapter)
+        : [...current.chapters, summary].sort((left, right) => left.chapter_number - right.chapter_number),
     } : current)
     setProjects((current) => {
       const project = current.find((item) => item.id === saved.project_id)
@@ -105,12 +148,23 @@ export function App() {
   const handleClose = useCallback(() => {
     clearActiveProjectId()
     setWorkspace(null)
+    setInitialChapter(null)
     setIsCreatingProject(false)
     setActiveView('writing')
   }, [])
 
-  const handleWorkspaceChanged = useCallback((updated: Workspace) => {
-    setWorkspace(updated)
+  const handleWorkspaceChanged = useCallback((updated: Workspace | WorkspaceSummary) => {
+    if (!isFullWorkspace(updated)) {
+      setWorkspace(updated)
+      return
+    }
+
+    setWorkspace(summarizeWorkspace(updated))
+    setInitialChapter((current) => (
+      current
+        ? updated.chapters.find((chapter) => chapter.id === current.id) ?? current
+        : updated.chapters[0] ?? null
+    ))
   }, [])
 
   if (isLoading) {
@@ -122,7 +176,7 @@ export function App() {
     )
   }
 
-  if (!workspace) {
+  if (!workspace || !initialChapter) {
     if (projects.length > 0 && !isCreatingProject) {
       return (
         <ProjectLibraryPage
@@ -161,6 +215,7 @@ export function App() {
   return (
     <WorkspaceShell
       workspace={workspace}
+      initialChapter={initialChapter}
       onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={handleWorkspaceChanged}
       onOpenReferenceLibrary={() => setActiveView('reference-library')}

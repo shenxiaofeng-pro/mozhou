@@ -1,4 +1,10 @@
-import type { Chapter, ChapterStatus, Workspace } from '@mozhou/contracts'
+import type {
+  Chapter,
+  ChapterStatus,
+  ChapterSummary,
+  Workspace,
+  WorkspaceSummary,
+} from '@mozhou/contracts'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
@@ -6,19 +12,21 @@ import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave
 import { DirectorPanel } from './DirectorPanel'
 
 interface WorkspaceShellProps {
-  workspace: Workspace
+  workspace: WorkspaceSummary
+  initialChapter: Chapter
   onChapterChanged: (chapter: Chapter) => void
-  onWorkspaceChanged: (workspace: Workspace) => void
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
   onClose: () => void
 }
 
 interface ActiveChapterWorkspaceProps extends WorkspaceShellProps {
   chapter: Chapter
-  futureChapters: Chapter[]
+  futureChapters: ChapterSummary[]
   isCreatingChapter: boolean
   createChapterError: string | null
-  onSelectChapter: (chapterId: string) => void
+  chapterLoadError: string | null
+  onSelectChapter: (chapterId: string) => Promise<void>
   onCreateChapter: () => void
 }
 
@@ -45,18 +53,34 @@ const CHAPTER_PREFIX = /^第(?:一|\d+)章\s*/
 
 export function WorkspaceShell({
   workspace,
+  initialChapter,
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
   onClose,
 }: WorkspaceShellProps) {
-  const [activeChapterId, setActiveChapterId] = useState(workspace.chapters[0].id)
+  const [activeChapter, setActiveChapter] = useState(initialChapter)
   const [isCreatingChapter, setIsCreatingChapter] = useState(false)
   const [createChapterError, setCreateChapterError] = useState<string | null>(null)
-  const chapter = workspace.chapters.find((item) => item.id === activeChapterId) ?? workspace.chapters[0]
+  const [chapterLoadError, setChapterLoadError] = useState<string | null>(null)
   const futureChapters = workspace.chapters
-    .filter((item) => item.chapter_number > chapter.chapter_number)
+    .filter((item) => item.chapter_number > activeChapter.chapter_number)
     .slice(0, 3)
+
+  async function selectChapter(chapterId: string) {
+    if (chapterId === activeChapter.id) return
+    setChapterLoadError(null)
+    try {
+      setActiveChapter(await api.getChapter(chapterId))
+    } catch (caught) {
+      setChapterLoadError(caught instanceof Error ? caught.message : '章节正文读取失败')
+    }
+  }
+
+  function handleChapterChanged(chapter: Chapter) {
+    if (chapter.id === activeChapter.id) setActiveChapter(chapter)
+    onChapterChanged(chapter)
+  }
 
   async function createNextChapter() {
     setIsCreatingChapter(true)
@@ -75,16 +99,18 @@ export function WorkspaceShell({
 
   return (
     <ActiveChapterWorkspace
-      key={chapter.id}
+      key={activeChapter.id}
       workspace={workspace}
-      chapter={chapter}
+      initialChapter={initialChapter}
+      chapter={activeChapter}
       futureChapters={futureChapters}
       isCreatingChapter={isCreatingChapter}
       createChapterError={createChapterError}
-      onChapterChanged={onChapterChanged}
+      chapterLoadError={chapterLoadError}
+      onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={onWorkspaceChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
-      onSelectChapter={setActiveChapterId}
+      onSelectChapter={selectChapter}
       onCreateChapter={createNextChapter}
       onClose={onClose}
     />
@@ -97,6 +123,7 @@ function ActiveChapterWorkspace({
   futureChapters,
   isCreatingChapter,
   createChapterError,
+  chapterLoadError,
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
@@ -146,12 +173,15 @@ function ActiveChapterWorkspace({
     directorTriggerRef.current?.focus()
   }
 
-  async function navigateAfterSave(action: () => void) {
+  async function navigateAfterSave(action: () => void | Promise<void>) {
     if (isNavigating) return
     setIsNavigating(true)
-    const saved = await flushNow()
-    setIsNavigating(false)
-    if (saved) action()
+    try {
+      const saved = await flushNow()
+      if (saved) await action()
+    } finally {
+      setIsNavigating(false)
+    }
   }
 
   function handleChapterUpdated(updated: Chapter) {
@@ -279,6 +309,7 @@ function ActiveChapterWorkspace({
               {saveError} <button type="button" onClick={retry}>重试</button>
             </p>
           ) : null}
+          {chapterLoadError ? <p className="save-error" role="alert">{chapterLoadError}</p> : null}
         </footer>
       </section>
 
