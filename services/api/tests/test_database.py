@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 
@@ -50,11 +51,12 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
 
 def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -> None:
     database_path = tmp_path / "legacy.db"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute(
             "CREATE TABLE chapters (id TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '')"
         )
         connection.execute("INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿"))
+        connection.commit()
 
     database = Database(database_path)
     database.initialize()
@@ -79,8 +81,9 @@ def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -
 
 def test_database_adds_ai_provenance_to_existing_generation_table(tmp_path: Path) -> None:
     database_path = tmp_path / "legacy-runs.db"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("CREATE TABLE generation_runs (id TEXT PRIMARY KEY)")
+        connection.commit()
 
     database = Database(database_path)
     database.initialize()
@@ -96,10 +99,11 @@ def test_database_adds_ai_provenance_to_existing_generation_table(tmp_path: Path
 
 def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path: Path) -> None:
     database_path = tmp_path / "mozhou.db"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("CREATE TABLE markers (value TEXT NOT NULL)")
         connection.execute("INSERT INTO markers (value) VALUES (?)", ("升级前内容",))
+        connection.commit()
 
     database = Database(database_path)
     database.initialize()
@@ -107,9 +111,9 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     backups = list((tmp_path / "backups").glob("mozhou-before-v3-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (3,)
-    with sqlite3.connect(backups[0]) as connection:
+    with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
@@ -123,7 +127,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v3_without_losing_data(
     source_version: int,
 ) -> None:
     database_path = tmp_path / f"v{source_version}.db"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("CREATE TABLE markers (value TEXT NOT NULL)")
         connection.execute("INSERT INTO markers (value) VALUES (?)", (f"v{source_version} 原稿",))
         if source_version == 1:
@@ -157,10 +161,11 @@ def test_database_runs_v1_and_v2_fixtures_to_v3_without_losing_data(
         connection.execute("INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿"))
         connection.execute("INSERT INTO generation_runs (id) VALUES (?)", ("run-1",))
         connection.execute(f"PRAGMA user_version={source_version}")
+        connection.commit()
 
     Database(database_path).initialize()
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         chapter = connection.execute(
             "SELECT content, opening_hook, state_change, ending_cliffhanger FROM chapters"
         ).fetchone()
@@ -190,10 +195,11 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_path = tmp_path / "migration-failure.db"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("CREATE TABLE markers (value TEXT NOT NULL)")
         connection.execute("INSERT INTO markers (value) VALUES ('不可丢失的原稿')")
         connection.execute("PRAGMA user_version=1")
+        connection.commit()
     original_sha256 = sha256(database_path.read_bytes()).hexdigest()
 
     def fail_migration(connection: sqlite3.Connection, schema: str) -> None:
@@ -216,7 +222,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
         Database(database_path).initialize()
 
     assert sha256(database_path.read_bytes()).hexdigest() == original_sha256
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (1,)
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             "不可丢失的原稿",
@@ -227,7 +233,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
 
     backups = list((tmp_path / "backups").glob("mozhou-before-v3-*.db"))
     assert len(backups) == 1
-    with sqlite3.connect(backups[0]) as connection:
+    with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             "不可丢失的原稿",
@@ -237,14 +243,15 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
 
 def test_database_rejects_newer_schema_without_modifying_it(tmp_path: Path) -> None:
     database_path = tmp_path / "future.db"
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("CREATE TABLE markers (value TEXT NOT NULL)")
         connection.execute("PRAGMA user_version=99")
+        connection.commit()
 
     with pytest.raises(UnsupportedDatabaseVersionError):
         Database(database_path).initialize()
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (99,)
     assert not (tmp_path / "backups").exists()
 
