@@ -1,5 +1,5 @@
 import type { Chapter, ChapterStatus, Workspace } from '@mozhou/contracts'
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
@@ -109,6 +109,9 @@ function ActiveChapterWorkspace({
     onChapterChanged,
   )
   const [isNavigating, setIsNavigating] = useState(false)
+  const [isDirectorOpen, setIsDirectorOpen] = useState(false)
+  const directorTriggerRef = useRef<HTMLButtonElement>(null)
+  const directorCloseRef = useRef<HTMLButtonElement>(null)
   const deferredDraft = useDeferredValue(draft)
   const wordCount = deferredDraft.replace(/\s/g, '').length
   const progress = Math.min(100, Math.round((wordCount / workspace.project.chapter_target_words) * 100))
@@ -123,6 +126,25 @@ function ActiveChapterWorkspace({
     window.addEventListener('beforeunload', warnBeforeUnload)
     return () => window.removeEventListener('beforeunload', warnBeforeUnload)
   }, [saveStatus])
+
+  useEffect(() => {
+    if (!isDirectorOpen) return
+    directorCloseRef.current?.focus()
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      setIsDirectorOpen(false)
+      directorTriggerRef.current?.focus()
+    }
+
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [isDirectorOpen])
+
+  function closeDirector() {
+    setIsDirectorOpen(false)
+    directorTriggerRef.current?.focus()
+  }
 
   async function navigateAfterSave(action: () => void) {
     if (isNavigating) return
@@ -154,6 +176,7 @@ function ActiveChapterWorkspace({
           <button
             className="library-action"
             type="button"
+            aria-label="打开拆书库"
             disabled={isNavigating}
             onClick={() => { void navigateAfterSave(onOpenReferenceLibrary) }}
           >
@@ -259,16 +282,56 @@ function ActiveChapterWorkspace({
         </footer>
       </section>
 
-      <DirectorPanel
-        key={`${chapter.id}:${chapter.title}:${chapter.reader_promise ?? ''}:${chapter.opening_hook ?? ''}:${chapter.state_change ?? ''}:${chapter.emotional_payoff ?? ''}:${chapter.ending_cliffhanger ?? ''}`}
-        project={workspace.project}
-        workspace={workspace}
-        chapter={chapter}
-        wordCount={wordCount}
-        canUpdateChapter={saveStatus === 'saved'}
-        onChapterUpdated={handleChapterUpdated}
-        onWorkspaceChanged={onWorkspaceChanged}
+      <button
+        ref={directorTriggerRef}
+        className="director-drawer-trigger"
+        type="button"
+        aria-label="打开 AI 导演"
+        aria-controls="ai-director-surface"
+        aria-expanded={isDirectorOpen}
+        onClick={() => setIsDirectorOpen(true)}
+      >
+        <span aria-hidden="true">AI</span>
+        <strong aria-hidden="true">导演</strong>
+      </button>
+      <button
+        className="director-drawer-backdrop"
+        type="button"
+        tabIndex={-1}
+        aria-label="关闭 AI 导演背景"
+        data-open={isDirectorOpen}
+        onClick={closeDirector}
       />
+      <section
+        id="ai-director-surface"
+        className="director-surface"
+        role="region"
+        aria-label="AI 导演"
+        data-open={isDirectorOpen}
+      >
+        <div className="director-drawer-bar">
+          <div>
+            <span>AI 共创</span>
+            <strong>本章导演</strong>
+          </div>
+          <button
+            ref={directorCloseRef}
+            type="button"
+            aria-label="关闭 AI 导演"
+            onClick={closeDirector}
+          >×</button>
+        </div>
+        <DirectorPanel
+          key={`${chapter.id}:${chapter.title}:${chapter.reader_promise ?? ''}:${chapter.opening_hook ?? ''}:${chapter.state_change ?? ''}:${chapter.emotional_payoff ?? ''}:${chapter.ending_cliffhanger ?? ''}`}
+          project={workspace.project}
+          workspace={workspace}
+          chapter={chapter}
+          wordCount={wordCount}
+          canUpdateChapter={saveStatus === 'saved'}
+          onChapterUpdated={handleChapterUpdated}
+          onWorkspaceChanged={onWorkspaceChanged}
+        />
+      </section>
     </main>
   )
 }

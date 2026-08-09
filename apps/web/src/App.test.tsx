@@ -221,6 +221,32 @@ describe('App', () => {
     expect(window.localStorage.getItem('mozhou:session:v1')).toContain(workspace.project.id)
   })
 
+  it('opens and closes the AI director from the narrow-window entry point', async () => {
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    const trigger = await screen.findByRole('button', { name: '打开 AI 导演' })
+    const director = screen.getByRole('region', { name: 'AI 导演' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(director).toHaveAttribute('data-open', 'false')
+
+    await user.click(trigger)
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(director).toHaveAttribute('data-open', 'true')
+    expect(screen.getByRole('button', { name: '关闭 AI 导演' })).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(director).toHaveAttribute('data-open', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
   it('automatically saves chapter content with the current revision', async () => {
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const update = vi.spyOn(api, 'updateChapter').mockResolvedValue({
