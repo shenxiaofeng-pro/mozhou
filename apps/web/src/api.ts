@@ -172,6 +172,9 @@ export const api = {
       body: JSON.stringify({ api_key: apiKey }),
     })
   },
+  deactivateAiProfile() {
+    return request<AiStatus>('/api/ai/deactivate', { method: 'POST' })
+  },
   deleteAiProfile(profileId: string, expectedRevision: number) {
     const query = new URLSearchParams({ expected_revision: String(expectedRevision) })
     return request<void>(`/api/ai/profiles/${encodeURIComponent(profileId)}?${query}`, {
@@ -385,5 +388,57 @@ export const api = {
       `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-cards/${encodeURIComponent(cardId)}/applications`,
       { method: 'POST', body: JSON.stringify(input) },
     )
+  },
+}
+
+export interface AiCredentialStatus {
+  profileId: string
+  stored: boolean
+  active: boolean
+}
+
+function assertAiCredentialStatus(value: unknown): AiCredentialStatus {
+  if (
+    !value
+    || typeof value !== 'object'
+    || !('profileId' in value)
+    || typeof value.profileId !== 'string'
+    || !('stored' in value)
+    || typeof value.stored !== 'boolean'
+    || !('active' in value)
+    || typeof value.active !== 'boolean'
+  ) {
+    throw new Error('系统凭据库返回了无效状态')
+  }
+  return {
+    profileId: value.profileId,
+    stored: value.stored,
+    active: value.active,
+  }
+}
+
+export const aiCredentialStore = {
+  isSystemStoreAvailable: isTauri(),
+  async status(profileId: string): Promise<AiCredentialStatus> {
+    if (!isTauri()) return { profileId, stored: false, active: false }
+    return assertAiCredentialStatus(await invoke('ai_credential_status', { profileId }))
+  },
+  async storeAndActivate(profileId: string, apiKey: string): Promise<AiCredentialStatus> {
+    if (!isTauri()) {
+      await api.activateAiProfile(profileId, apiKey)
+      return { profileId, stored: false, active: true }
+    }
+    return assertAiCredentialStatus(await invoke('store_ai_credential', { profileId, apiKey }))
+  },
+  async activateSaved(profileId: string): Promise<AiCredentialStatus> {
+    if (!isTauri()) throw new Error('浏览器开发模式没有系统凭据库，请重新输入 API Key')
+    return assertAiCredentialStatus(await invoke('activate_ai_credential', { profileId }))
+  },
+  async delete(profileId: string): Promise<AiCredentialStatus> {
+    if (!isTauri()) {
+      await api.deactivateAiProfile()
+      return { profileId, stored: false, active: false }
+    }
+    return assertAiCredentialStatus(await invoke('delete_ai_credential', { profileId }))
   },
 }

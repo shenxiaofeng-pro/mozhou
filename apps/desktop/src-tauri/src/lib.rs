@@ -9,13 +9,20 @@ use tauri::{Manager, State};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandChild;
 
+mod credentials;
+
+use credentials::{
+    CredentialStatus, SystemCredentialStore, activate_saved, credential_status, delete_credential,
+    restore_active_profile, store_and_activate,
+};
+
 const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_millis(300);
 const SESSION_TOKEN_ENV: &str = "MOZHOU_API_SESSION_TOKEN";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ApiConnection {
+pub(crate) struct ApiConnection {
     base_url: String,
     session_token: String,
 }
@@ -28,6 +35,44 @@ struct ApiSidecar {
 #[tauri::command]
 fn api_connection(sidecar: State<'_, ApiSidecar>) -> ApiConnection {
     sidecar.connection.clone()
+}
+
+#[tauri::command]
+fn ai_credential_status(
+    _sidecar: State<'_, ApiSidecar>,
+    profile_id: String,
+) -> Result<CredentialStatus, String> {
+    credential_status(&SystemCredentialStore, &profile_id)
+}
+
+#[tauri::command]
+fn store_ai_credential(
+    sidecar: State<'_, ApiSidecar>,
+    profile_id: String,
+    api_key: String,
+) -> Result<CredentialStatus, String> {
+    store_and_activate(
+        &SystemCredentialStore,
+        &sidecar.connection,
+        &profile_id,
+        api_key,
+    )
+}
+
+#[tauri::command]
+fn activate_ai_credential(
+    sidecar: State<'_, ApiSidecar>,
+    profile_id: String,
+) -> Result<CredentialStatus, String> {
+    activate_saved(&SystemCredentialStore, &sidecar.connection, &profile_id)
+}
+
+#[tauri::command]
+fn delete_ai_credential(
+    sidecar: State<'_, ApiSidecar>,
+    profile_id: String,
+) -> Result<CredentialStatus, String> {
+    delete_credential(&SystemCredentialStore, &sidecar.connection, &profile_id)
 }
 
 fn generate_session_token() -> Result<String, String> {
@@ -111,9 +156,16 @@ fn stop_api_sidecar(app: &tauri::AppHandle) {
 pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![api_connection])
+        .invoke_handler(tauri::generate_handler![
+            api_connection,
+            ai_credential_status,
+            store_ai_credential,
+            activate_ai_credential,
+            delete_ai_credential,
+        ])
         .setup(|app| {
             let sidecar = start_api_sidecar(app).map_err(std::io::Error::other)?;
+            let _ = restore_active_profile(&SystemCredentialStore, &sidecar.connection);
             app.manage(sidecar);
             Ok(())
         })

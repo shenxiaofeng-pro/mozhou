@@ -5,9 +5,11 @@ import type {
   GenerationRun,
   Job,
 } from '@mozhou/contracts'
-import { useEffect, useState } from 'react'
+import type { MouseEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
+import { ModelSettingsPanel } from './ModelSettingsPanel'
 
 interface AiCoauthorPanelProps {
   chapter: Chapter
@@ -25,13 +27,13 @@ export function AiCoauthorPanel({
   onDraftGenerated,
 }: AiCoauthorPanelProps) {
   const [status, setStatus] = useState<AiStatus | null>(null)
-  const [apiKey, setApiKey] = useState('')
-  const [model, setModel] = useState('gpt-5.6')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [authorIntent, setAuthorIntent] = useState('')
   const [proposal, setProposal] = useState<AiChapterBriefProposal | null>(null)
-  const [activity, setActivity] = useState<'configuring' | 'brief' | 'draft' | null>(null)
+  const [activity, setActivity] = useState<'brief' | 'draft' | null>(null)
   const [activeJob, setActiveJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const settingsTrigger = useRef<HTMLButtonElement | null>(null)
   const activeJobId = activeJob?.id
   const activeJobState = activeJob?.state
 
@@ -41,7 +43,6 @@ export function AiCoauthorPanel({
       .then((result) => {
         if (active) {
           setStatus(result)
-          if (result.model) setModel(result.model)
         }
       })
       .catch((caught: unknown) => {
@@ -100,20 +101,6 @@ export function AiCoauthorPanel({
     }
   }, [activeJobId, activeJobState, onDraftGenerated])
 
-  async function configureAi() {
-    if (!apiKey.trim() || activity) return
-    setActivity('configuring')
-    setError(null)
-    try {
-      setStatus(await api.configureAi({ api_key: apiKey, model }))
-      setApiKey('')
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'AI 配置失败')
-    } finally {
-      setActivity(null)
-    }
-  }
-
   async function generateBrief() {
     if (!status?.configured || activity || !canUseAi) return
     setActivity('brief')
@@ -171,6 +158,16 @@ export function AiCoauthorPanel({
     setProposal(null)
   }
 
+  function openModelSettings(event: MouseEvent<HTMLButtonElement>) {
+    settingsTrigger.current = event.currentTarget
+    setSettingsOpen(true)
+  }
+
+  function closeModelSettings() {
+    setSettingsOpen(false)
+    window.setTimeout(() => settingsTrigger.current?.focus(), 0)
+  }
+
   const configured = status?.configured === true
 
   return (
@@ -180,39 +177,22 @@ export function AiCoauthorPanel({
           <p>AI 共创</p>
           <h3 id="ai-coauthor-title">说一句想法，让 AI 完成章纲和初稿</h3>
         </div>
-        <span data-ready={configured}>
-          {status === null ? '读取中' : configured ? `${status.provider} · ${status.model}` : '未配置'}
-        </span>
+        <div className="ai-route-status">
+          <span data-ready={configured}>
+            {status === null
+              ? '读取中'
+              : configured
+                ? `${status.profile_name ?? status.provider} · ${status.model}`
+                : '未配置'}
+          </span>
+          <button type="button" onClick={openModelSettings}>模型设置</button>
+        </div>
       </header>
 
       {!configured ? (
         <div className="ai-setup">
-          <p>API Key 只保存在本地服务内存，重启后清除，不写入作品或浏览器存储。</p>
-          <label>
-            OpenAI API Key
-            <input
-              type="password"
-              aria-label="OpenAI API Key"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="sk-…"
-            />
-          </label>
-          <label>
-            模型
-            <input
-              aria-label="AI 模型"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-              maxLength={100}
-              spellCheck={false}
-            />
-          </label>
-          <button type="button" onClick={configureAi} disabled={activity !== null || apiKey.trim().length < 20}>
-            {activity === 'configuring' ? '正在配置…' : '启用 AI 共创'}
-          </button>
+          <p>先建立一条模型线路。桌面版会把 API Key 放进 macOS 系统凭据库，作品数据库和导出包都不保存密钥。</p>
+          <button type="button" onClick={openModelSettings}>打开模型线路台</button>
         </div>
       ) : (
         <div className="ai-command-deck">
@@ -241,7 +221,7 @@ export function AiCoauthorPanel({
             </button>
           </div>
           <p className="ai-privacy-note">
-            点击生成会把本章章纲、近期正文、正式事实及已确认资料发送给 OpenAI；未确认资料和 API Key 不会进入提示词。
+            点击生成会把本章章纲、近期正文、正式事实及已确认资料发送给当前模型端点；未确认资料和 API Key 不会进入提示词。
           </p>
           {!canGenerateDraft ? <p>先采用并保存完整章纲，即可让 AI 写整章。</p> : null}
           {activeJob ? (
@@ -282,6 +262,15 @@ export function AiCoauthorPanel({
         </article>
       ) : null}
       {error ? <p className="ai-coauthor-error" role="alert">{error}</p> : null}
+      <ModelSettingsPanel
+        open={settingsOpen}
+        status={status}
+        onClose={closeModelSettings}
+        onStatusChanged={(nextStatus) => {
+          setStatus(nextStatus)
+          setError(null)
+        }}
+      />
     </section>
   )
 }

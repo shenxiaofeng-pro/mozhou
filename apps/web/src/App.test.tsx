@@ -1,4 +1,12 @@
-import type { GenerationRun, Job, JobDetail, JobKind, Workspace, WorkspaceSummary } from '@mozhou/contracts'
+import type {
+  GenerationRun,
+  Job,
+  JobDetail,
+  JobKind,
+  ModelProfile,
+  Workspace,
+  WorkspaceSummary,
+} from '@mozhou/contracts'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -112,6 +120,7 @@ beforeEach(() => {
     profile_id: null,
     profile_name: null,
   })
+  vi.spyOn(api, 'listAiProfiles').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -623,6 +632,87 @@ describe('App', () => {
     expect(screen.getByLabelText('读者承诺')).toHaveValue(proposal.reader_promise)
     expect(screen.getByLabelText('情绪回报')).toHaveValue(proposal.emotional_payoff)
     expect(screen.getByRole('button', { name: '保存章纲' })).toBeEnabled()
+  })
+
+  it('creates and activates an OpenAI-compatible model route from the routing desk', async () => {
+    const profile: ModelProfile = {
+      id: '0b4872a9-cba5-45e7-8549-fc31c779e46a',
+      name: '本地长章主笔',
+      provider: 'openai_compatible',
+      base_url: 'http://127.0.0.1:11434/v1',
+      model: 'qwen3-32b',
+      capabilities: {
+        structured_output: false,
+        streaming: false,
+        server_cancellation: false,
+        usage: false,
+      },
+      input_cost_microusd_per_million: 500_000,
+      output_cost_microusd_per_million: 2_000_000,
+      revision: 0,
+      created_at: '2026-08-10T00:00:00Z',
+      updated_at: '2026-08-10T00:00:00Z',
+    }
+    const activeStatus = {
+      configured: true,
+      provider: 'openai_compatible' as const,
+      model: profile.model,
+      key_source: 'session',
+      profile_id: profile.id,
+      profile_name: profile.name,
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    const createProfile = vi.spyOn(api, 'createAiProfile').mockResolvedValue(profile)
+    const activateProfile = vi.spyOn(api, 'activateAiProfile').mockResolvedValue(activeStatus)
+    vi.mocked(api.getAiStatus)
+      .mockResolvedValueOnce({
+        configured: false,
+        provider: 'unavailable',
+        model: '',
+        key_source: null,
+        profile_id: null,
+        profile_name: null,
+      })
+      .mockResolvedValue(activeStatus)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+    const settingsTrigger = await screen.findByRole('button', { name: '打开模型线路台' })
+    await user.click(settingsTrigger)
+
+    let dialog = await screen.findByRole('dialog', { name: '模型线路台' })
+    expect(within(dialog).getByRole('button', { name: '关闭模型设置' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(settingsTrigger).toHaveFocus())
+    await user.click(settingsTrigger)
+    dialog = await screen.findByRole('dialog', { name: '模型线路台' })
+    await user.type(within(dialog).getByLabelText('线路名称'), profile.name)
+    await user.selectOptions(within(dialog).getByLabelText('端点类型'), 'openai_compatible')
+    await user.clear(within(dialog).getByLabelText('API 地址'))
+    await user.type(within(dialog).getByLabelText('API 地址'), profile.base_url)
+    await user.clear(within(dialog).getByLabelText('模型名'))
+    await user.type(within(dialog).getByLabelText('模型名'), profile.model)
+    await user.type(within(dialog).getByLabelText(/输入价格/), '0.5')
+    await user.type(within(dialog).getByLabelText(/输出价格/), '2')
+    await user.type(within(dialog).getByLabelText('模型 API Key'), 'browser-session-test-key')
+    await user.click(within(dialog).getByRole('button', { name: '保存并启用' }))
+
+    await waitFor(() => {
+      expect(createProfile).toHaveBeenCalledWith({
+        name: profile.name,
+        provider: profile.provider,
+        base_url: profile.base_url,
+        model: profile.model,
+        input_cost_microusd_per_million: 500_000,
+        output_cost_microusd_per_million: 2_000_000,
+      })
+      expect(activateProfile).toHaveBeenCalledWith(profile.id, 'browser-session-test-key')
+    })
+    expect(within(dialog).getByLabelText('模型 API Key')).toHaveValue('')
+    expect(screen.getByText(`${profile.name} · ${profile.model}`)).toBeVisible()
+    expect(screen.queryByDisplayValue('browser-session-test-key')).not.toBeInTheDocument()
   })
 
   it('keeps an AI-written full chapter isolated until the author applies it', async () => {

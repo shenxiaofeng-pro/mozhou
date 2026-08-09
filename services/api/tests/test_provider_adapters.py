@@ -20,7 +20,7 @@ class StructuredFixture(BaseModel):
 
 def openai_client(handler: Callable[[httpx.Request], httpx.Response]) -> OpenAI:
     return OpenAI(
-        api_key="sk-test-provider-adapter-abcdefghijklmnopqrstuvwxyz",
+        api_key="sk-test-abcdefghijklmnopqrstuvwxyz",
         base_url="https://provider.test/v1",
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         max_retries=0,

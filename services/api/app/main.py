@@ -315,6 +315,10 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=422, detail="API Key 格式无效") from error
 
+    @application.post("/api/ai/deactivate", response_model=AiStatus)
+    def deactivate_ai_profile() -> AiStatus:
+        return application.state.ai_manager.deactivate()
+
     @application.delete("/api/ai/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_ai_profile(profile_id: UUID, expected_revision: int) -> Response:
         if expected_revision < 0:
