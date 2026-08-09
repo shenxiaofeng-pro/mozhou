@@ -139,6 +139,8 @@ class UsageFixtureAdapter:
 
     def __init__(self, *, failure: ProviderCallError | None = None) -> None:
         self.failure = failure
+        self.structured_inputs: list[str] = []
+        self.text_inputs: list[str] = []
 
     def generate_text(
         self,
@@ -147,7 +149,8 @@ class UsageFixtureAdapter:
         input_text: str,
         max_output_tokens: int | None = None,
     ) -> ProviderResult[str]:
-        del instructions, input_text, max_output_tokens
+        del instructions, max_output_tokens
+        self.text_inputs.append(input_text)
         return ProviderResult(
             output="一九九八年的梅山坡还没有后来那排高楼。" * 30,
             usage=ProviderUsage(input_tokens=500, output_tokens=800),
@@ -161,7 +164,8 @@ class UsageFixtureAdapter:
         input_text: str,
         output_model: type[AiChapterBriefProposal],
     ) -> ProviderResult[AiChapterBriefProposal]:
-        del instructions, input_text, output_model
+        del instructions, output_model
+        self.structured_inputs.append(input_text)
         if self.failure is not None:
             raise self.failure
         return ProviderResult(
@@ -297,7 +301,8 @@ def test_chapter_attempt_records_usage_duration_and_estimated_cost(tmp_path: Pat
     attempt = detail.attempts[0]
     assert detail.provider_profile_id == "profile-usage-fixture"
     assert attempt.provider_profile_id == "profile-usage-fixture"
-    assert detail.artifacts[0].provider_profile_id == "profile-usage-fixture"
+    brief_artifact = next(item for item in detail.artifacts if item.kind == "chapter_brief")
+    assert brief_artifact.provider_profile_id == "profile-usage-fixture"
     assert attempt.input_tokens == 120
     assert attempt.output_tokens == 80
     assert attempt.duration_ms == 250
@@ -353,7 +358,8 @@ def test_queued_job_keeps_its_bound_gateway_after_active_profile_switch(tmp_path
     detail = jobs.get_job_detail(job.id)
     assert detail.state == JobState.SUCCEEDED
     assert detail.provider_profile_id == "profile-first"
-    assert detail.artifacts[0].provider_profile_id == "profile-first"
+    brief_artifact = next(item for item in detail.artifacts if item.kind == "chapter_brief")
+    assert brief_artifact.provider_profile_id == "profile-first"
 
 
 def test_chapter_task_default_selects_loaded_non_active_profile(tmp_path: Path) -> None:
@@ -407,7 +413,8 @@ def test_chapter_task_default_selects_loaded_non_active_profile(tmp_path: Path) 
     assert manager.status().profile_id == active_profile.id
     assert detail.state == JobState.SUCCEEDED
     assert detail.provider_profile_id == brief_profile.id
-    assert detail.artifacts[0].provider_profile_id == brief_profile.id
+    brief_artifact = next(item for item in detail.artifacts if item.kind == "chapter_brief")
+    assert brief_artifact.provider_profile_id == brief_profile.id
 
 
 def test_streaming_draft_honours_cancel_and_can_retry_without_partial_artifact(
@@ -438,7 +445,7 @@ def test_streaming_draft_honours_cancel_and_can_retry_without_partial_artifact(
     cancelled = jobs.get_job_detail(job.id)
     assert cancelled.state == JobState.CANCELLED
     assert cancelled.attempts[0].error_code == AiErrorCategory.CANCELLED.value
-    assert cancelled.artifacts == []
+    assert [item.kind for item in cancelled.artifacts] == ["context_packet"]
 
     adapter.cancel_between_deltas = None
     jobs.retry_job(job.id)
@@ -447,7 +454,7 @@ def test_streaming_draft_honours_cancel_and_can_retry_without_partial_artifact(
     completed = jobs.get_job_detail(job.id)
     assert completed.state == JobState.SUCCEEDED
     assert len(completed.attempts) == 2
-    assert len(completed.artifacts) == 1
+    assert {item.kind for item in completed.artifacts} == {"context_packet", "chapter_draft"}
 
 
 def test_chapter_attempt_keeps_normalized_provider_failure_actionable(tmp_path: Path) -> None:
@@ -534,7 +541,7 @@ def test_failed_draft_job_retries_without_duplicate_candidate(
 
     runtime.run_once()
     assert jobs.get_job(job.id).state == JobState.FAILED
-    assert jobs.get_job_detail(job.id).artifacts == []
+    assert [item.kind for item in jobs.get_job_detail(job.id).artifacts] == ["context_packet"]
 
     jobs.retry_job(job.id)
     runtime.run_once()
@@ -591,7 +598,10 @@ def test_draft_artifact_survives_materialization_crash_without_second_model_call
 
     runtime.run_once()
     assert jobs.get_job(job.id).state == JobState.FAILED
-    assert len(jobs.get_job_detail(job.id).artifacts) == 1
+    assert {item.kind for item in jobs.get_job_detail(job.id).artifacts} == {
+        "context_packet",
+        "chapter_draft",
+    }
     calls_after_failure = gateway.draft_calls
 
     jobs.retry_job(job.id)
@@ -602,7 +612,7 @@ def test_draft_artifact_survives_materialization_crash_without_second_model_call
     assert service.get_draft_result(job.id).candidate_content
 
 
-def test_job_rejects_changed_context_before_spending_model_call(tmp_path: Path) -> None:
+def test_queued_job_replays_frozen_context_when_story_data_changes(tmp_path: Path) -> None:
     gateway = RecoverableChapterGateway()
     repository, jobs, service, runtime, chapter = build_chapter_runtime(
         tmp_path / "context-change.db",
@@ -626,10 +636,55 @@ def test_job_rejects_changed_context_before_spending_model_call(tmp_path: Path) 
 
     runtime.run_once()
 
-    failed = jobs.get_job(job.id)
-    assert failed.state == JobState.FAILED
-    assert failed.error_code == "context_changed"
-    assert gateway.brief_calls == 0
+    completed = jobs.get_job(job.id)
+    assert completed.state == JobState.SUCCEEDED
+    assert gateway.brief_calls == 1
+    packet_artifact = next(
+        item for item in jobs.get_job_detail(job.id).artifacts
+        if item.kind == "context_packet"
+    )
+    assert "新加入的人物" not in jobs.get_artifact(packet_artifact.id).payload
+
+
+def test_openai_adapter_consumes_exact_previewed_context_packet(tmp_path: Path) -> None:
+    adapter = UsageFixtureAdapter()
+    gateway = OpenAiGateway(
+        "unused-context-packet",
+        "context-fixture",
+        "test",
+        adapter=adapter,
+    )
+    repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "compiled-context.db",
+        gateway,
+    )
+    request = AiChapterBriefRequest(
+        expected_revision=chapter.revision,
+        author_intent="先救下父亲",
+        context_token_budget=8000,
+    )
+    preview = service.preview_brief(chapter.id, request)
+    job = service.submit_brief(
+        chapter.id,
+        request.model_copy(update={"context_packet_id": preview.context_packet.id}),
+    )
+    repository.create_story_entity(
+        chapter.project_id,
+        CreateStoryEntityRequest(
+            kind=StoryEntityKind.CHARACTER,
+            name="提交后加入的人物",
+            role="竞争者",
+            goal="抢下订单",
+            current_state="尚未登场",
+            relationship_notes="",
+        ),
+    )
+
+    runtime.run_once()
+
+    assert jobs.get_job(job.id).state == JobState.SUCCEEDED
+    assert adapter.structured_inputs == [preview.context_packet.rendered_context]
+    assert "提交后加入的人物" not in adapter.structured_inputs[0]
 
 
 def test_chapter_job_api_returns_typed_results(tmp_path: Path) -> None:

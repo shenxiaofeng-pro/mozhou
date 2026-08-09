@@ -28,6 +28,16 @@ from app.archive import (
 )
 from app.chapter_jobs import ChapterJobService
 from app.config import default_database_path
+from app.context import (
+    ContextDirective,
+    ContextDirectiveNotFoundError,
+    ContextDirectiveRequest,
+    ContextPacket,
+    ContextRepository,
+    InvalidContextDirectiveError,
+    InvalidContextPacketError,
+    StaleContextDirectiveError,
+)
 from app.database import Database
 from app.generation import GenerationService
 from app.jobs import (
@@ -131,6 +141,7 @@ def create_app(
         database.initialize()
         application.state.repository = ProjectRepository(database)
         application.state.model_profiles = ModelProfileRepository(database)
+        application.state.context_repository = ContextRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
         application.state.reference_job_service = ReferenceJobService(
@@ -144,6 +155,7 @@ def create_app(
             application.state.job_repository,
             application.state.ai_manager,
             application.state.model_profiles,
+            application.state.context_repository,
         )
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
@@ -230,6 +242,76 @@ def create_app(
             return jobs.list_jobs(str(project_id))
         except JobNotFoundError as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/chapters/{chapter_id}/context-packets",
+        response_model=list[ContextPacket],
+    )
+    def list_context_packets(
+        chapter_id: UUID,
+        contexts: Annotated[ContextRepository, Depends(get_context_repository)],
+    ) -> list[ContextPacket]:
+        return contexts.list_packets(str(chapter_id))
+
+    @application.get("/api/context-packets/{packet_id}", response_model=ContextPacket)
+    def get_context_packet(
+        packet_id: UUID,
+        contexts: Annotated[ContextRepository, Depends(get_context_repository)],
+    ) -> ContextPacket:
+        try:
+            return contexts.get_packet(str(packet_id))
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="上下文包不存在") from error
+
+    @application.get(
+        "/api/chapters/{chapter_id}/context-directives",
+        response_model=list[ContextDirective],
+    )
+    def list_context_directives(
+        chapter_id: UUID,
+        contexts: Annotated[ContextRepository, Depends(get_context_repository)],
+    ) -> list[ContextDirective]:
+        try:
+            return contexts.list_directives(str(chapter_id))
+        except ContextDirectiveNotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+
+    @application.put(
+        "/api/chapters/{chapter_id}/context-directives",
+        response_model=ContextDirective,
+    )
+    def set_context_directive(
+        chapter_id: UUID,
+        body: ContextDirectiveRequest,
+        contexts: Annotated[ContextRepository, Depends(get_context_repository)],
+    ) -> ContextDirective:
+        try:
+            return contexts.set_directive(str(chapter_id), body)
+        except ContextDirectiveNotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except InvalidContextDirectiveError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except StaleContextDirectiveError as error:
+            raise HTTPException(status_code=409, detail="上下文选择已更新，请重新预览") from error
+
+    @application.delete(
+        "/api/context-directives/{directive_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_context_directive(
+        directive_id: UUID,
+        expected_revision: int,
+        contexts: Annotated[ContextRepository, Depends(get_context_repository)],
+    ) -> Response:
+        if expected_revision < 0:
+            raise HTTPException(status_code=422, detail="请求内容格式无效")
+        try:
+            contexts.delete_directive(str(directive_id), expected_revision)
+        except ContextDirectiveNotFoundError as error:
+            raise HTTPException(status_code=404, detail="上下文选择不存在") from error
+        except StaleContextDirectiveError as error:
+            raise HTTPException(status_code=409, detail="上下文选择已更新，请重新预览") from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetail)
     def get_job(
@@ -455,6 +537,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidContextPacketError as error:
+            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
         except AiProviderError as error:
             raise HTTPException(status_code=502, detail="AI 暂时未能生成可用章纲") from error
 
@@ -477,6 +561,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidContextPacketError as error:
+            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-brief-jobs",
@@ -500,6 +586,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidContextPacketError as error:
+            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
 
     @application.get(
         "/api/jobs/{job_id}/chapter-brief-result",
@@ -534,6 +622,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidContextPacketError as error:
+            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
         except AiProviderError as error:
             raise HTTPException(status_code=502, detail="AI 暂时未能生成可用正文") from error
 
@@ -579,6 +669,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidContextPacketError as error:
+            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
 
     @application.get(
         "/api/jobs/{job_id}/chapter-draft-result",
@@ -1135,6 +1227,11 @@ def get_model_profile_repository(request: Request) -> ModelProfileRepository:
     return repository
 
 
+def get_context_repository(request: Request) -> ContextRepository:
+    repository: ContextRepository = request.app.state.context_repository
+    return repository
+
+
 def get_job_runtime_from_repository(
     application: FastAPI,
     repository: JobRepository,
@@ -1154,7 +1251,11 @@ def get_ai_manager(request: Request) -> AiGatewayManager:
 
 
 def get_ai_writing_service(request: Request) -> AiWritingService:
-    return AiWritingService(get_repository(request), get_ai_manager(request))
+    return AiWritingService(
+        get_repository(request),
+        get_ai_manager(request),
+        get_context_repository(request),
+    )
 
 
 def get_reference_analysis_service(request: Request) -> ReferenceAnalysisService:

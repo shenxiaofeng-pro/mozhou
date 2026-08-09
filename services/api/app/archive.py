@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
+from app.context import ContextDirective
 from app.database import CURRENT_SCHEMA_VERSION, Database
 from app.jobs.models import Job, JobArtifact, JobAttempt, JobChunk, JobEvent
 from app.models import (
@@ -84,6 +85,25 @@ ARCHIVE_TABLES = (
         ),
         "project_id = ?",
         (("project_id", "projects", False),),
+    ),
+    ArchiveTable(
+        "context_directives",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "source_kind",
+            "source_id",
+            "action",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", False),
+        ),
     ),
     ArchiveTable(
         "generation_runs",
@@ -520,6 +540,23 @@ def _validate_business_rows(
             Project.model_validate(row)
         for row in tables["chapters"]:
             Chapter.model_validate(row)
+        for row in tables["context_directives"]:
+            directive = ContextDirective.model_validate(row)
+            target_table = {
+                "chapter": "chapters",
+                "fact": "story_facts",
+                "entity": "story_entities",
+                "thread": "story_threads",
+                "timeline": "timeline_events",
+                "future_knowledge": "future_knowledge",
+                "source_card": "source_cards",
+                "blueprint": "reference_pattern_applications",
+            }.get(directive.source_kind)
+            if (
+                target_table is None
+                or directive.source_id not in ids_by_table[target_table]
+            ):
+                raise InvalidProjectArchiveError("external_context_directive_source")
         for row in tables["generation_runs"]:
             GenerationRun.model_validate(row)
         for row in tables["timeline_events"]:
@@ -739,6 +776,11 @@ class ProjectArchiveService:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
+                if table.name == "context_directives":
+                    old_source_id = row["source_id"]
+                    if not isinstance(old_source_id, str) or old_source_id not in id_map:
+                        raise InvalidProjectArchiveError("external_context_directive_source")
+                    row["source_id"] = id_map[old_source_id]
                 if table.name == "job_artifacts" and row["content_type"] == "application/json":
                     embedded_payload = (
                         _parse_json(row["payload"])

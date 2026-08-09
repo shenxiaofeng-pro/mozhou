@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from app.context.models import ContextPacket
+
 
 class ProviderKind(StrEnum):
     OPENAI = "openai"
@@ -74,6 +76,7 @@ class AiOutboundPreview(BaseModel):
     estimated_input_tokens: int = Field(ge=0)
     estimated_output_tokens: int = Field(ge=0)
     estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    context_packet: ContextPacket
 
 
 class ActivateModelProfileRequest(BaseModel):

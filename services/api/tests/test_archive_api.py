@@ -11,6 +11,7 @@ from app.main import create_app
 ARCHIVE_TABLES = {
     "projects",
     "chapters",
+    "context_directives",
     "generation_runs",
     "chapter_events",
     "run_events",
@@ -114,6 +115,26 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             f"/api/chapters/{chapter_id}",
             json={"content": "原稿不可被覆盖。", "expected_revision": 0},
         )
+        source_entity = client.post(
+            f"/api/projects/{project_id}/story-entities",
+            json={
+                "kind": "character",
+                "name": "林川",
+                "role": "主角",
+                "goal": "改变家庭命运",
+                "current_state": "刚回到一九九八年",
+                "relationship_notes": "",
+            },
+        ).json()
+        client.put(
+            f"/api/chapters/{chapter_id}/context-directives",
+            json={
+                "source_kind": "entity",
+                "source_id": source_entity["id"],
+                "action": "pin",
+                "expected_revision": None,
+            },
+        )
         imported_reference = client.post(
             f"/api/projects/{project_id}/reference-works",
             json={
@@ -194,6 +215,9 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
         restored_jobs = client.get(
             f"/api/projects/{restored_response.json()['project']['id']}/jobs"
         ).json()
+        restored_directives = client.get(
+            f"/api/chapters/{restored_response.json()['chapters'][0]['id']}/context-directives"
+        ).json()
 
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -212,6 +236,8 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
     assert restored_card["source_job_id"] == restored_jobs[0]["id"]
     assert restored_card["source_job_id"] != source_job.id
     assert restored["reference_pattern_applications"][0]["pattern_card_id"] == restored_card["id"]
+    assert restored_directives[0]["source_id"] == restored["story_entities"][0]["id"]
+    assert restored_directives[0]["source_id"] != source_entity["id"]
     assert original_after["project"]["title"] == "回到九八年的南平"
     assert original_after["chapters"][0]["id"] == chapter_id
     assert len(projects) == 2

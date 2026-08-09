@@ -16,6 +16,10 @@ class ContextPacketNotFoundError(LookupError):
     pass
 
 
+class InvalidContextPacketError(ValueError):
+    pass
+
+
 class ContextDirectiveNotFoundError(LookupError):
     pass
 

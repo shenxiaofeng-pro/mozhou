@@ -9,9 +9,18 @@ from app.ai import (
     AiGatewayManager,
     AiNotConfiguredError,
     AiProviderError,
+    CompiledContextGateway,
+    StreamingCompiledContextGateway,
     StreamingDraftGateway,
-    build_chapter_context,
     consume_ai_call_metrics,
+)
+from app.context import (
+    ContextCompiler,
+    ContextPacket,
+    ContextPacketNotFoundError,
+    ContextRepository,
+    ContextTaskType,
+    InvalidContextPacketError,
 )
 from app.jobs.models import AttemptState, ChunkState, Job, JobKind
 from app.jobs.repository import JobRepository
@@ -43,7 +52,7 @@ from app.repository import (
     StaleRevisionError,
 )
 
-CHAPTER_JOB_PROMPT_VERSION = "chapter-writing-v1"
+CHAPTER_JOB_PROMPT_VERSION = "chapter-writing-v2"
 
 
 def _estimated_cost(
@@ -87,7 +96,9 @@ class ChapterJobInput(BaseModel):
     chapter_id: str
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
+    context_packet_id: str = Field(min_length=36, max_length=36)
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_compiler_version: str = Field(min_length=1, max_length=80)
     prompt_version: str
 
 
@@ -102,11 +113,15 @@ class ChapterJobService:
         jobs: JobRepository,
         manager: AiGatewayManager,
         profiles: ModelProfileRepository | None = None,
+        contexts: ContextRepository | None = None,
+        compiler: ContextCompiler | None = None,
     ) -> None:
         self.repository = repository
         self.jobs = jobs
         self.manager = manager
         self.profiles = profiles
+        self.contexts = contexts or ContextRepository(repository.database)
+        self.compiler = compiler or ContextCompiler()
 
     def submit_brief(self, chapter_id: str, request: AiChapterBriefRequest) -> Job:
         return self._submit(JobKind.CHAPTER_BRIEF, chapter_id, request)
@@ -169,14 +184,14 @@ class ChapterJobService:
             request.expected_revision,
             require_brief=kind == JobKind.CHAPTER_DRAFT,
         )
-        context_sha256 = sha256(
-            build_chapter_context(workspace, chapter, request.author_intent).encode("utf-8")
-        ).hexdigest()
+        packet = self._resolve_context_packet(kind, workspace, chapter, request)
         input_payload = ChapterJobInput(
             chapter_id=chapter_id,
             expected_revision=request.expected_revision,
             author_intent=request.author_intent,
-            context_sha256=context_sha256,
+            context_packet_id=packet.id,
+            context_sha256=packet.packet_sha256,
+            context_compiler_version=packet.compiler_version,
             prompt_version=CHAPTER_JOB_PROMPT_VERSION,
         ).model_dump(mode="json")
         idempotency_key = sha256(_canonical_json({
@@ -198,6 +213,21 @@ class ChapterJobService:
             progress_total=1,
             estimated_calls=1,
         )
+        self.jobs.put_artifact(
+            job.id,
+            kind="context_packet",
+            artifact_key="context_packet",
+            payload=packet.model_dump_json(),
+            content_type="application/json",
+            provider="local",
+            model=packet.compiler_version,
+            metadata={
+                "context_packet_id": packet.id,
+                "packet_sha256": packet.packet_sha256,
+                "used_tokens": packet.used_tokens,
+                "token_budget": packet.token_budget,
+            },
+        )
         artifact_key = "brief" if kind == JobKind.CHAPTER_BRIEF else "draft"
         self.jobs.ensure_chunk(
             job.id,
@@ -207,7 +237,8 @@ class ChapterJobService:
             input_payload={
                 "chapter_id": chapter.id,
                 "expected_revision": request.expected_revision,
-                "context_sha256": context_sha256,
+                "context_packet_id": packet.id,
+                "context_sha256": packet.packet_sha256,
             },
         )
         return self.jobs.get_job(job.id)
@@ -223,7 +254,8 @@ class ChapterJobService:
             request.expected_revision,
             require_brief=kind == JobKind.CHAPTER_DRAFT,
         )
-        context = build_chapter_context(workspace, chapter, request.author_intent)
+        packet = self._compile_context_packet(kind, workspace, chapter, request)
+        packet = self.contexts.put_packet(packet)
         profile = self._task_profile(kind)
         profile_id: str | None
         if profile is not None:
@@ -257,7 +289,7 @@ class ChapterJobService:
                 if active_profile is not None
                 else None
             )
-        input_tokens = max(1, (len(context) * 11 + 9) // 10)
+        input_tokens = packet.used_tokens
         output_tokens = (
             1_200
             if kind == JobKind.CHAPTER_BRIEF
@@ -271,10 +303,11 @@ class ChapterJobService:
             model=model,
             data_types=_chapter_data_types(workspace, chapter),
             content_scope=(
-                f"第 {chapter.chapter_number} 章章纲、最近 3 章正文摘录、"
-                "最多 50 条正式事实及已确认资料"
+                f"第 {chapter.chapter_number} 章 · 编译器 {packet.compiler_version} · "
+                f"入选 {sum(1 for item in packet.items if item.included)} 项 / "
+                f"排除 {sum(1 for item in packet.items if not item.included)} 项"
             ),
-            character_count=len(context),
+            character_count=len(packet.rendered_context),
             estimated_input_tokens=input_tokens,
             estimated_output_tokens=output_tokens,
             estimated_cost_microusd=_estimated_cost(
@@ -283,7 +316,49 @@ class ChapterJobService:
                 input_rate,
                 output_rate,
             ),
+            context_packet=packet,
         )
+
+    def _compile_context_packet(
+        self,
+        kind: JobKind,
+        workspace: Workspace,
+        chapter: Chapter,
+        request: AiChapterBriefRequest,
+    ) -> ContextPacket:
+        return self.compiler.compile(
+            workspace,
+            chapter,
+            author_intent=request.author_intent,
+            task_type=ContextTaskType(kind.value),
+            token_budget=request.context_token_budget,
+            directives=self.contexts.list_directives(chapter.id),
+        )
+
+    def _resolve_context_packet(
+        self,
+        kind: JobKind,
+        workspace: Workspace,
+        chapter: Chapter,
+        request: AiChapterBriefRequest,
+    ) -> ContextPacket:
+        compiled = self._compile_context_packet(kind, workspace, chapter, request)
+        if request.context_packet_id is None:
+            return self.contexts.put_packet(compiled)
+        try:
+            previewed = self.contexts.get_packet(request.context_packet_id)
+        except ContextPacketNotFoundError as error:
+            raise InvalidContextPacketError("context_packet_not_found") from error
+        if (
+            previewed.project_id != workspace.project.id
+            or previewed.chapter_id != chapter.id
+            or previewed.chapter_revision != chapter.revision
+            or previewed.task_type != ContextTaskType(kind.value)
+            or previewed.id != compiled.id
+            or previewed.packet_sha256 != compiled.packet_sha256
+        ):
+            raise InvalidContextPacketError("context_packet_changed")
+        return previewed
 
     def _task_profile(self, kind: JobKind) -> ModelProfile | None:
         if self.profiles is None:
@@ -344,15 +419,24 @@ class ChapterJobService:
                 "invalid_chapter_state",
                 "当前章节状态或章纲不允许执行该 AI 任务",
             ) from error
-        actual_context = build_chapter_context(
-            workspace,
-            chapter,
-            task_input.author_intent,
-        )
-        if sha256(actual_context.encode("utf-8")).hexdigest() != task_input.context_sha256:
+        try:
+            packet = self.contexts.get_packet(task_input.context_packet_id)
+        except ContextPacketNotFoundError as error:
             raise JobExecutionError(
-                "context_changed",
-                "作品资料已变化，请重新提交以使用最新上下文",
+                "context_packet_missing",
+                "任务冻结的上下文包不存在，无法安全重放",
+            ) from error
+        if (
+            packet.project_id != workspace.project.id
+            or packet.chapter_id != chapter.id
+            or packet.chapter_revision != task_input.expected_revision
+            or packet.task_type != ContextTaskType(expected_kind.value)
+            or packet.packet_sha256 != task_input.context_sha256
+            or packet.compiler_version != task_input.context_compiler_version
+        ):
+            raise JobExecutionError(
+                "context_packet_mismatch",
+                "任务上下文来源校验失败，未调用模型",
             )
 
         artifact_key = "brief" if expected_kind == JobKind.CHAPTER_BRIEF else "draft"
@@ -398,6 +482,7 @@ class ChapterJobService:
                 workspace,
                 chapter,
                 task_input,
+                packet,
                 job,
             )
         except AiProviderError as error:
@@ -481,24 +566,31 @@ class ChapterJobService:
         workspace: Workspace,
         chapter: Chapter,
         task_input: ChapterJobInput,
+        packet: ContextPacket,
         job: Job,
     ) -> tuple[str, dict[str, object]]:
         metadata: dict[str, object] = {
             "chapter_id": chapter.id,
             "expected_revision": task_input.expected_revision,
+            "context_packet_id": packet.id,
             "context_sha256": task_input.context_sha256,
+            "context_compiler_version": packet.compiler_version,
             "prompt_version": task_input.prompt_version,
         }
         if kind == JobKind.CHAPTER_BRIEF:
-            proposal = gateway.propose_brief(
-                workspace,
-                chapter,
-                task_input.author_intent,
+            proposal = (
+                gateway.propose_brief_from_context(packet.rendered_context)
+                if isinstance(gateway, CompiledContextGateway)
+                else gateway.propose_brief(
+                    workspace,
+                    chapter,
+                    task_input.author_intent,
+                )
             )
             if not isinstance(proposal, AiChapterBriefProposal):
                 raise AiProviderError("AI 未返回可用章纲")
             return proposal.model_dump_json(), metadata
-        if isinstance(gateway, StreamingDraftGateway):
+        if isinstance(gateway, (StreamingCompiledContextGateway, StreamingDraftGateway)):
             generated_characters = 0
             checkpoint_characters = 0
 
@@ -523,17 +615,28 @@ class ChapterJobService:
                     step=f"AI 已流式生成 {generated_characters:,} 字",
                 )
 
-            candidate = gateway.draft_chapter_streaming(
-                workspace,
-                chapter,
-                task_input.author_intent,
-                on_delta,
+            candidate = (
+                gateway.draft_chapter_streaming_from_context(
+                    packet.rendered_context,
+                    on_delta,
+                )
+                if isinstance(gateway, StreamingCompiledContextGateway)
+                else gateway.draft_chapter_streaming(
+                    workspace,
+                    chapter,
+                    task_input.author_intent,
+                    on_delta,
+                )
             )
         else:
-            candidate = gateway.draft_chapter(
-                workspace,
-                chapter,
-                task_input.author_intent,
+            candidate = (
+                gateway.draft_chapter_from_context(packet.rendered_context)
+                if isinstance(gateway, CompiledContextGateway)
+                else gateway.draft_chapter(
+                    workspace,
+                    chapter,
+                    task_input.author_intent,
+                )
             )
         if not 300 <= len(candidate) <= 100_000:
             raise AiProviderError("AI 返回的正文长度不符合要求")
