@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -6,22 +8,21 @@ import pytest
 from app.config import default_database_path, platform_data_directory
 
 
-@pytest.mark.parametrize(
-    ("platform_name", "environment", "expected_relative_path"),
-    [
-        ("darwin", {}, Path("Library/Application Support/com.lingjing.mozhou")),
-        ("win32", {"LOCALAPPDATA": "/local-app-data"}, Path("/local-app-data/Mozhou")),
-        ("linux", {"XDG_DATA_HOME": "/xdg-data"}, Path("/xdg-data/mozhou")),
-    ],
-)
+@pytest.mark.parametrize("platform_name", ["darwin", "win32", "linux"])
 def test_platform_data_directory_uses_operating_system_conventions(
     platform_name: str,
-    environment: dict[str, str],
-    expected_relative_path: Path,
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    expected = expected_relative_path if expected_relative_path.is_absolute() else home / expected_relative_path
+    environment = {
+        "LOCALAPPDATA": str(tmp_path / "local-app-data"),
+        "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
+    }
+    expected = {
+        "darwin": home / "Library" / "Application Support" / "com.lingjing.mozhou",
+        "win32": tmp_path / "local-app-data" / "Mozhou",
+        "linux": tmp_path / "xdg-data" / "mozhou",
+    }[platform_name]
 
     assert platform_data_directory(platform_name, home, environment) == expected
 
@@ -36,6 +37,8 @@ def test_default_database_path_is_stable_across_working_directories(
     first_working_directory.mkdir()
     second_working_directory.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local-app-data"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
     monkeypatch.delenv("MOZHOU_DATA_DIR", raising=False)
     monkeypatch.delenv("MOZHOU_LEGACY_DATA_DIR", raising=False)
 
@@ -44,7 +47,7 @@ def test_default_database_path_is_stable_across_working_directories(
     monkeypatch.chdir(second_working_directory)
     second_path = default_database_path()
 
-    expected = home / "Library" / "Application Support" / "com.lingjing.mozhou" / "mozhou.db"
+    expected = platform_data_directory(sys.platform, Path.home(), os.environ) / "mozhou.db"
     assert first_path == expected
     assert second_path == expected
 
