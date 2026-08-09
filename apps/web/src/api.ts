@@ -1,7 +1,10 @@
 import type {
   AiChapterBriefInput,
   AiChapterBriefProposal,
+  AiOutboundPreview,
   AiStatus,
+  AiTaskDefault,
+  AiTaskType,
   ApplyFactChangeSetInput,
   ApplyReferencePatternInput,
   Chapter,
@@ -40,6 +43,7 @@ import type {
   UpdateChapterBriefInput,
   UpdateChapterInput,
   UpdateModelProfileInput,
+  UpdateAiTaskDefaultInput,
   UpdateStoryEntityInput,
   Workspace,
   WorkspaceSummary,
@@ -154,6 +158,21 @@ export const api = {
   listAiProfiles() {
     return request<ModelProfile[]>('/api/ai/profiles')
   },
+  listAiTaskDefaults() {
+    return request<AiTaskDefault[]>('/api/ai/task-defaults')
+  },
+  setAiTaskDefault(taskType: AiTaskType, input: UpdateAiTaskDefaultInput) {
+    return request<AiTaskDefault>(`/api/ai/task-defaults/${encodeURIComponent(taskType)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    })
+  },
+  deleteAiTaskDefault(taskType: AiTaskType, expectedRevision: number) {
+    const query = new URLSearchParams({ expected_revision: String(expectedRevision) })
+    return request<void>(`/api/ai/task-defaults/${encodeURIComponent(taskType)}?${query}`, {
+      method: 'DELETE',
+    })
+  },
   createAiProfile(input: CreateModelProfileInput) {
     return request<ModelProfile>('/api/ai/profiles', {
       method: 'POST',
@@ -193,6 +212,12 @@ export const api = {
       body: JSON.stringify(input),
     })
   },
+  previewAiChapterBrief(chapterId: string, input: AiChapterBriefInput) {
+    return request<AiOutboundPreview>(`/api/chapters/${encodeURIComponent(chapterId)}/ai-brief-preview`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
   getAiChapterBriefJobResult(jobId: string) {
     return request<AiChapterBriefProposal>(`/api/jobs/${encodeURIComponent(jobId)}/chapter-brief-result`)
   },
@@ -204,6 +229,12 @@ export const api = {
   },
   startAiChapterDraftJob(chapterId: string, input: AiChapterBriefInput) {
     return request<Job>(`/api/chapters/${encodeURIComponent(chapterId)}/ai-draft-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  previewAiChapterDraft(chapterId: string, input: AiChapterBriefInput) {
+    return request<AiOutboundPreview>(`/api/chapters/${encodeURIComponent(chapterId)}/ai-draft-preview`, {
       method: 'POST',
       body: JSON.stringify(input),
     })

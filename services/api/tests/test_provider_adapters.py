@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Self
 
@@ -20,6 +21,15 @@ class StructuredFixture(BaseModel):
     title: str
 
 
+REPLAY_FIXTURES = Path(__file__).parent / "fixtures" / "provider_replays"
+
+
+def replay_fixture(name: str) -> dict[str, object]:
+    payload = json.loads((REPLAY_FIXTURES / name).read_text(encoding="utf-8"))
+    assert payload["sanitized"] is True
+    return payload
+
+
 def openai_client(handler: Callable[[httpx.Request], httpx.Response]) -> OpenAI:
     return OpenAI(
         api_key="sk-test-abcdefghijklmnopqrstuvwxyz",
@@ -35,39 +45,8 @@ def test_responses_adapter_returns_text_usage_without_persisting_request() -> No
         assert request.url.path == "/v1/responses"
         assert payload["store"] is False
         assert payload["input"] == "本章资料"
-        return httpx.Response(200, json={
-            "id": "resp_fixture",
-            "object": "response",
-            "created_at": 1,
-            "status": "completed",
-            "error": None,
-            "incomplete_details": None,
-            "instructions": payload["instructions"],
-            "max_output_tokens": None,
-            "model": payload["model"],
-            "output": [{
-                "id": "msg_fixture",
-                "type": "message",
-                "status": "completed",
-                "role": "assistant",
-                "content": [{
-                    "type": "output_text",
-                    "annotations": [],
-                    "logprobs": [],
-                    "text": "一段可用的章节候选",
-                }],
-            }],
-            "parallel_tool_calls": True,
-            "tool_choice": "auto",
-            "tools": [],
-            "usage": {
-                "input_tokens": 120,
-                "input_tokens_details": {"cached_tokens": 0},
-                "output_tokens": 80,
-                "output_tokens_details": {"reasoning_tokens": 0},
-                "total_tokens": 200,
-            },
-        })
+        fixture = replay_fixture("openai_responses_text.json")
+        return httpx.Response(200, json=fixture["response"])
 
     adapter = OpenAiResponsesAdapter(
         "unused-test-key-value-abcdefghijklmnopqrstuvwxyz",
@@ -217,38 +196,8 @@ def test_responses_stream_emits_deltas_usage_and_closes_connection() -> None:
 
 def test_compatible_stream_uses_sse_when_capability_is_enabled() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        events = [
-            {
-                "id": "chatcmpl_stream",
-                "object": "chat.completion.chunk",
-                "created": 1,
-                "model": "compatible-test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": "第一段"},
-                    "finish_reason": None,
-                }],
-            },
-            {
-                "id": "chatcmpl_stream",
-                "object": "chat.completion.chunk",
-                "created": 1,
-                "model": "compatible-test",
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": "第二段"},
-                    "finish_reason": "stop",
-                }],
-            },
-            {
-                "id": "chatcmpl_stream",
-                "object": "chat.completion.chunk",
-                "created": 1,
-                "model": "compatible-test",
-                "choices": [],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 6, "total_tokens": 16},
-            },
-        ]
+        events = replay_fixture("compatible_chat_stream.json")["events"]
+        assert isinstance(events, list)
         body = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
         return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
 

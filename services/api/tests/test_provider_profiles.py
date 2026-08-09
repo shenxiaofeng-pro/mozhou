@@ -165,3 +165,84 @@ def test_profile_activation_binds_runtime_without_echoing_or_persisting_key(tmp_
     assert secret not in activated.text
     assert secret.encode() not in database_path.read_bytes()
     assert delete_active.status_code == 409
+
+
+def test_task_defaults_support_multiple_routes_revision_gates_and_cascade(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "task-defaults.db")) as client:
+        brief_profile = client.post(
+            "/api/ai/profiles",
+            json=openai_profile("章纲线路"),
+        ).json()
+        draft_profile = client.post(
+            "/api/ai/profiles",
+            json=openai_profile("正文线路"),
+        ).json()
+        initially_empty = client.get("/api/ai/task-defaults")
+        brief_default = client.put(
+            "/api/ai/task-defaults/chapter_brief",
+            json={"profile_id": brief_profile["id"], "expected_revision": None},
+        )
+        draft_default = client.put(
+            "/api/ai/task-defaults/chapter_draft",
+            json={"profile_id": draft_profile["id"], "expected_revision": None},
+        )
+        switched_brief = client.put(
+            "/api/ai/task-defaults/chapter_brief",
+            json={"profile_id": draft_profile["id"], "expected_revision": 0},
+        )
+        stale = client.put(
+            "/api/ai/task-defaults/chapter_brief",
+            json={"profile_id": brief_profile["id"], "expected_revision": 0},
+        )
+        deleted_profile = client.delete(
+            f"/api/ai/profiles/{draft_profile['id']}",
+            params={"expected_revision": draft_profile["revision"]},
+        )
+        after_cascade = client.get("/api/ai/task-defaults")
+
+    assert initially_empty.json() == []
+    assert brief_default.status_code == 200
+    assert brief_default.json()["profile_name"] == "章纲线路"
+    assert draft_default.status_code == 200
+    assert switched_brief.json()["profile_id"] == draft_profile["id"]
+    assert switched_brief.json()["revision"] == 1
+    assert stale.status_code == 409
+    assert deleted_profile.status_code == 204
+    assert after_cascade.json() == []
+
+
+def test_outbound_preview_uses_task_default_without_calling_provider(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "outbound-preview.db")) as client:
+        profile = client.post(
+            "/api/ai/profiles",
+            json=openai_profile("低成本章纲"),
+        ).json()
+        client.put(
+            "/api/ai/task-defaults/chapter_brief",
+            json={"profile_id": profile["id"], "expected_revision": None},
+        )
+        project = client.post(
+            "/api/projects",
+            json={
+                "title": "南平回潮",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        chapter = project["chapters"][0]
+        preview = client.post(
+            f"/api/chapters/{chapter['id']}/ai-brief-preview",
+            json={"expected_revision": 0, "author_intent": "先救下父亲"},
+        )
+
+    assert preview.status_code == 200
+    assert preview.json()["profile_id"] == profile["id"]
+    assert preview.json()["profile_name"] == "低成本章纲"
+    assert preview.json()["task_type"] == "chapter_brief"
+    assert preview.json()["data_types"] == ["项目设定", "本章章纲", "作者创作意图"]
+    assert preview.json()["character_count"] > 0
+    assert preview.json()["estimated_input_tokens"] >= preview.json()["character_count"]
+    assert preview.json()["estimated_output_tokens"] == 1_200
+    assert preview.json()["estimated_cost_microusd"] > 0
+    assert "先救下父亲" not in preview.text

@@ -1,0 +1,48 @@
+{
+  "sanitized": true,
+  "provider": "openai_compatible_chat",
+  "events": [
+    {
+      "id": "chatcmpl_stream",
+      "object": "chat.completion.chunk",
+      "created": 1,
+      "model": "compatible-test",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "第一段"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_stream",
+      "object": "chat.completion.chunk",
+      "created": 1,
+      "model": "compatible-test",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "第二段"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl_stream",
+      "object": "chat.completion.chunk",
+      "created": 1,
+      "model": "compatible-test",
+      "choices": [],
+      "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 6,
+        "total_tokens": 16
+      }
+    }
+  ]
+}

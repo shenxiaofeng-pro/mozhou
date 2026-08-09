@@ -283,6 +283,14 @@ CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_task_defaults (
+    task_type TEXT PRIMARY KEY
+        CHECK(task_type IN ('chapter_brief', 'chapter_draft', 'reference_analysis', 'review')),
+    profile_id TEXT NOT NULL REFERENCES ai_provider_profiles(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    updated_at TEXT NOT NULL
+);
 """
 
 class DatabaseIntegrityError(RuntimeError):

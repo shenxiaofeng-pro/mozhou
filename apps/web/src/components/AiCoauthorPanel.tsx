@@ -1,5 +1,6 @@
 import type {
   AiChapterBriefProposal,
+  AiOutboundPreview,
   AiStatus,
   Chapter,
   GenerationRun,
@@ -8,7 +9,7 @@ import type {
 import type { MouseEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { api } from '../api'
+import { aiCredentialStore, api } from '../api'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 
 interface AiCoauthorPanelProps {
@@ -30,6 +31,8 @@ export function AiCoauthorPanel({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [authorIntent, setAuthorIntent] = useState('')
   const [proposal, setProposal] = useState<AiChapterBriefProposal | null>(null)
+  const [outboundPreview, setOutboundPreview] = useState<AiOutboundPreview | null>(null)
+  const [previewing, setPreviewing] = useState<'brief' | 'draft' | null>(null)
   const [activity, setActivity] = useState<'brief' | 'draft' | null>(null)
   const [activeJob, setActiveJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -102,31 +105,58 @@ export function AiCoauthorPanel({
   }, [activeJobId, activeJobState, onDraftGenerated])
 
   async function generateBrief() {
-    if (!status?.configured || activity || !canUseAi) return
-    setActivity('brief')
+    if (!status?.configured || activity || previewing || !canUseAi) return
+    setPreviewing('brief')
     setError(null)
     try {
-      setActiveJob(await api.startAiChapterBriefJob(chapter.id, {
+      setOutboundPreview(await api.previewAiChapterBrief(chapter.id, {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
       }))
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'AI 章纲生成失败')
-      setActivity(null)
+      setError(caught instanceof Error ? caught.message : '无法预览本次外发内容')
+    } finally {
+      setPreviewing(null)
     }
   }
 
   async function generateDraft() {
-    if (!status?.configured || activity || !canGenerateDraft) return
-    setActivity('draft')
+    if (!status?.configured || activity || previewing || !canGenerateDraft) return
+    setPreviewing('draft')
     setError(null)
     try {
-      setActiveJob(await api.startAiChapterDraftJob(chapter.id, {
+      setOutboundPreview(await api.previewAiChapterDraft(chapter.id, {
         expected_revision: chapter.revision,
         author_intent: authorIntent,
       }))
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'AI 正文生成失败')
+      setError(caught instanceof Error ? caught.message : '无法预览本次外发内容')
+    } finally {
+      setPreviewing(null)
+    }
+  }
+
+  async function confirmOutbound() {
+    if (!outboundPreview || activity) return
+    const kind = outboundPreview.task_type === 'chapter_brief' ? 'brief' : 'draft'
+    setActivity(kind)
+    setError(null)
+    try {
+      if (outboundPreview.profile_id && outboundPreview.profile_id !== status?.profile_id) {
+        await aiCredentialStore.activateSaved(outboundPreview.profile_id)
+        setStatus(await api.getAiStatus())
+      }
+      const input = {
+        expected_revision: chapter.revision,
+        author_intent: authorIntent,
+      }
+      const job = kind === 'brief'
+        ? await api.startAiChapterBriefJob(chapter.id, input)
+        : await api.startAiChapterDraftJob(chapter.id, input)
+      setActiveJob(job)
+      setOutboundPreview(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'AI 任务启动失败')
       setActivity(null)
     }
   }
@@ -201,27 +231,30 @@ export function AiCoauthorPanel({
             <textarea
               aria-label="本章创作意图"
               value={authorIntent}
-              onChange={(event) => setAuthorIntent(event.target.value)}
+              onChange={(event) => {
+                setAuthorIntent(event.target.value)
+                setOutboundPreview(null)
+              }}
               maxLength={1000}
               rows={3}
               placeholder="可以留空，让总导演根据上一章悬念、人物状态和开放伏笔自行设计。"
             />
           </label>
           <div>
-            <button type="button" onClick={generateBrief} disabled={activity !== null || !canUseAi}>
-              {activity === 'brief' ? '正在设计章纲…' : 'AI 设计本章'}
+            <button type="button" onClick={generateBrief} disabled={activity !== null || previewing !== null || !canUseAi}>
+              {previewing === 'brief' ? '正在核算外发内容…' : activity === 'brief' ? '正在设计章纲…' : 'AI 设计本章'}
             </button>
             <button
               type="button"
               className="ai-draft-action"
               onClick={generateDraft}
-              disabled={activity !== null || !canGenerateDraft}
+              disabled={activity !== null || previewing !== null || !canGenerateDraft}
             >
-              {activity === 'draft' ? '正在写完整章节…' : 'AI 写完整章节'}
+              {previewing === 'draft' ? '正在核算外发内容…' : activity === 'draft' ? '正在写完整章节…' : 'AI 写完整章节'}
             </button>
           </div>
           <p className="ai-privacy-note">
-            点击生成会把本章章纲、近期正文、正式事实及已确认资料发送给当前模型端点；未确认资料和 API Key 不会进入提示词。
+            点击生成后先展示外发清单、目标线路与费用估算；只有再次确认才会调用模型。未确认资料和 API Key 不会进入提示词。
           </p>
           {!canGenerateDraft ? <p>先采用并保存完整章纲，即可让 AI 写整章。</p> : null}
           {activeJob ? (
@@ -244,6 +277,31 @@ export function AiCoauthorPanel({
           ) : null}
         </div>
       )}
+
+      {outboundPreview ? (
+        <article className="ai-outbound-preview" aria-labelledby="ai-outbound-preview-title">
+          <header>
+            <div><small>OUTBOUND CHECK</small><h4 id="ai-outbound-preview-title">发送前确认</h4></div>
+            <strong>{outboundPreview.profile_name} · {outboundPreview.model}</strong>
+          </header>
+          <p>{outboundPreview.content_scope}</p>
+          <ul aria-label="本次外发数据类型">
+            {outboundPreview.data_types.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+          <dl>
+            <div><dt>上下文字符</dt><dd>{outboundPreview.character_count.toLocaleString('zh-CN')}</dd></div>
+            <div><dt>预计输入</dt><dd>{outboundPreview.estimated_input_tokens.toLocaleString('zh-CN')} Token</dd></div>
+            <div><dt>预计输出</dt><dd>{outboundPreview.estimated_output_tokens.toLocaleString('zh-CN')} Token</dd></div>
+            <div><dt>预计费用</dt><dd>{outboundPreview.estimated_cost_microusd === null ? '线路未填写价格' : `约 $${(outboundPreview.estimated_cost_microusd / 1_000_000).toFixed(4)}`}</dd></div>
+          </dl>
+          <footer>
+            <button type="button" onClick={() => setOutboundPreview(null)}>返回修改</button>
+            <button type="button" onClick={() => { void confirmOutbound() }} disabled={activity !== null}>
+              {activity ? '正在启动…' : '确认外发并开始'}
+            </button>
+          </footer>
+        </article>
+      ) : null}
 
       {proposal ? (
         <article className="ai-proposal">

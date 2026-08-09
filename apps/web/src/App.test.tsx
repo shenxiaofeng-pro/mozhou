@@ -121,6 +121,7 @@ beforeEach(() => {
     profile_name: null,
   })
   vi.spyOn(api, 'listAiProfiles').mockResolvedValue([])
+  vi.spyOn(api, 'listAiTaskDefaults').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -599,6 +600,19 @@ describe('App', () => {
       risk_notes: ['厂办流程需要现实资料校验'],
     }
     const briefJob = queuedJob('chapter_brief', workspace.chapters[0].id)
+    const previewBrief = vi.spyOn(api, 'previewAiChapterBrief').mockResolvedValue({
+      task_type: 'chapter_brief',
+      profile_id: null,
+      profile_name: '当前会话线路',
+      provider: 'openai',
+      model: 'gpt-5.6',
+      data_types: ['项目设定', '本章章纲', '作者创作意图'],
+      content_scope: '第 1 章章纲及正式资料',
+      character_count: 1860,
+      estimated_input_tokens: 2046,
+      estimated_output_tokens: 1200,
+      estimated_cost_microusd: 23115,
+    })
     const startBrief = vi.spyOn(api, 'startAiChapterBriefJob').mockResolvedValue(briefJob)
     vi.spyOn(api, 'getJob').mockResolvedValue({
       ...briefJob,
@@ -620,6 +634,14 @@ describe('App', () => {
     await user.type(await screen.findByLabelText('本章创作意图'), '让主角用信息差救下父亲')
     await user.click(screen.getByRole('button', { name: 'AI 设计本章' }))
 
+    expect(previewBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
+      expected_revision: 0,
+      author_intent: '让主角用信息差救下父亲',
+    })
+    expect(startBrief).not.toHaveBeenCalled()
+    expect(await screen.findByRole('heading', { name: '发送前确认' })).toBeVisible()
+    expect(screen.getByText('项目设定')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '确认外发并开始' }))
     expect(startBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '让主角用信息差救下父亲',
@@ -711,8 +733,55 @@ describe('App', () => {
       expect(activateProfile).toHaveBeenCalledWith(profile.id, 'browser-session-test-key')
     })
     expect(within(dialog).getByLabelText('模型 API Key')).toHaveValue('')
-    expect(screen.getByText(`${profile.name} · ${profile.model}`)).toBeVisible()
+    await user.click(within(dialog).getByRole('button', { name: '关闭模型设置' }))
+    expect(await screen.findByText(`${profile.name} · ${profile.model}`)).toBeVisible()
     expect(screen.queryByDisplayValue('browser-session-test-key')).not.toBeInTheDocument()
+  })
+
+  it('routes chapter briefs to their own saved model profile', async () => {
+    const profile: ModelProfile = {
+      id: '0b4872a9-cba5-45e7-8549-fc31c779e46a',
+      name: '章纲推演线路',
+      provider: 'openai',
+      base_url: 'https://api.openai.com/v1',
+      model: 'gpt-5.6',
+      capabilities: {
+        structured_output: true,
+        streaming: true,
+        server_cancellation: false,
+        usage: true,
+      },
+      input_cost_microusd_per_million: null,
+      output_cost_microusd_per_million: null,
+      revision: 0,
+      created_at: '2026-08-10T00:00:00Z',
+      updated_at: '2026-08-10T00:00:00Z',
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    vi.mocked(api.listAiProfiles).mockResolvedValue([profile])
+    const setDefault = vi.spyOn(api, 'setAiTaskDefault').mockResolvedValue({
+      task_type: 'chapter_brief',
+      profile_id: profile.id,
+      profile_name: profile.name,
+      provider: profile.provider,
+      model: profile.model,
+      revision: 0,
+      updated_at: '2026-08-10T00:00:00Z',
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+    await user.click(await screen.findByRole('button', { name: '打开模型线路台' }))
+    const route = await screen.findByLabelText('章纲设计模型线路')
+    await user.selectOptions(route, profile.id)
+
+    expect(setDefault).toHaveBeenCalledWith('chapter_brief', {
+      profile_id: profile.id,
+      expected_revision: null,
+    })
+    expect(route).toHaveValue(profile.id)
   })
 
   it('keeps an AI-written full chapter isolated until the author applies it', async () => {
@@ -739,6 +808,19 @@ describe('App', () => {
       updated_at: '2026-08-09T00:00:01Z',
     }
     const draftJob = queuedJob('chapter_draft', workspace.chapters[0].id)
+    vi.spyOn(api, 'previewAiChapterDraft').mockResolvedValue({
+      task_type: 'chapter_draft',
+      profile_id: null,
+      profile_name: '当前会话线路',
+      provider: 'openai',
+      model: 'gpt-5.6',
+      data_types: ['项目设定', '本章章纲'],
+      content_scope: '第 1 章章纲及正式资料',
+      character_count: 2000,
+      estimated_input_tokens: 2200,
+      estimated_output_tokens: 3600,
+      estimated_cost_microusd: null,
+    })
     const startDraft = vi.spyOn(api, 'startAiChapterDraftJob').mockResolvedValue(draftJob)
     vi.spyOn(api, 'getJob').mockResolvedValue({
       ...draftJob,
@@ -765,6 +847,9 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'AI 写完整章节' }))
 
+    expect(startDraft).not.toHaveBeenCalled()
+    expect(await screen.findByText('线路未填写价格')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '确认外发并开始' }))
     expect(startDraft).toHaveBeenCalledWith(workspace.chapters[0].id, {
       expected_revision: 0,
       author_intent: '',

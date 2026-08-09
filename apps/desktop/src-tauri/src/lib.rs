@@ -13,12 +13,13 @@ mod credentials;
 
 use credentials::{
     CredentialStatus, SystemCredentialStore, activate_saved, credential_status, delete_credential,
-    restore_active_profile, store_and_activate,
+    restore_saved_profiles, start_job_runtime, store_and_activate,
 };
 
 const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_millis(300);
 const SESSION_TOKEN_ENV: &str = "MOZHOU_API_SESSION_TOKEN";
+const DEFER_JOB_RUNTIME_ENV: &str = "MOZHOU_DEFER_JOB_RUNTIME";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,7 +124,8 @@ fn start_api_sidecar(app: &tauri::App) -> Result<ApiSidecar, String> {
         .sidecar("mozhou-api")
         .map_err(|error| format!("无法定位本地 API：{error}"))?
         .args(["--port", &port.to_string()])
-        .env(SESSION_TOKEN_ENV, &session_token);
+        .env(SESSION_TOKEN_ENV, &session_token)
+        .env(DEFER_JOB_RUNTIME_ENV, "1");
     let (mut events, child) = command
         .spawn()
         .map_err(|error| format!("无法启动本地 API：{error}"))?;
@@ -165,7 +167,15 @@ pub fn run() {
         ])
         .setup(|app| {
             let sidecar = start_api_sidecar(app).map_err(std::io::Error::other)?;
-            let _ = restore_active_profile(&SystemCredentialStore, &sidecar.connection);
+            let _ = restore_saved_profiles(&SystemCredentialStore, &sidecar.connection);
+            if let Err(error) = start_job_runtime(&sidecar.connection) {
+                if let Ok(mut child) = sidecar.child.lock()
+                    && let Some(child) = child.take()
+                {
+                    let _ = child.kill();
+                }
+                return Err(std::io::Error::other(error).into());
+            }
             app.manage(sidecar);
             Ok(())
         })

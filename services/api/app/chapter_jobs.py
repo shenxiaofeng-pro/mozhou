@@ -20,12 +20,22 @@ from app.models import (
     AiChapterBriefProposal,
     AiChapterBriefRequest,
     AiDraftRequest,
+    AiStatus,
     Chapter,
     ChapterStatus,
     GenerationRun,
     Workspace,
 )
-from app.providers import AiErrorCategory, ProviderCallError
+from app.providers import (
+    AiErrorCategory,
+    AiOutboundPreview,
+    AiTaskType,
+    ModelProfile,
+    ModelProfileNotFoundError,
+    ModelProfileRepository,
+    ProviderCallError,
+    ProviderKind,
+)
 from app.repository import (
     InvalidChapterStateError,
     NotFoundError,
@@ -34,6 +44,43 @@ from app.repository import (
 )
 
 CHAPTER_JOB_PROMPT_VERSION = "chapter-writing-v1"
+
+
+def _estimated_cost(
+    input_tokens: int,
+    output_tokens: int,
+    input_rate: int | None,
+    output_rate: int | None,
+) -> int | None:
+    if input_rate is None or output_rate is None:
+        return None
+    return (
+        input_tokens * input_rate
+        + output_tokens * output_rate
+        + 999_999
+    ) // 1_000_000
+
+
+def _chapter_data_types(workspace: Workspace, chapter: Chapter) -> list[str]:
+    data_types = ["项目设定", "本章章纲", "作者创作意图"]
+    if any(
+        item.chapter_number < chapter.chapter_number and item.content.strip()
+        for item in workspace.chapters
+    ):
+        data_types.append("最近章节正文摘录")
+    if workspace.story_facts:
+        data_types.append("正式事实")
+    if workspace.story_entities:
+        data_types.append("人物与资源状态")
+    if any(thread.status.value == "open" for thread in workspace.story_threads):
+        data_types.append("开放伏笔")
+    if workspace.timeline_events or workspace.future_knowledge:
+        data_types.append("时间线与未来知识")
+    if any(card.confirmed for card in workspace.source_cards):
+        data_types.append("已确认现实资料")
+    if workspace.reference_pattern_applications:
+        data_types.append("已应用拆书蓝图")
+    return data_types
 
 
 class ChapterJobInput(BaseModel):
@@ -54,16 +101,32 @@ class ChapterJobService:
         repository: ProjectRepository,
         jobs: JobRepository,
         manager: AiGatewayManager,
+        profiles: ModelProfileRepository | None = None,
     ) -> None:
         self.repository = repository
         self.jobs = jobs
         self.manager = manager
+        self.profiles = profiles
 
     def submit_brief(self, chapter_id: str, request: AiChapterBriefRequest) -> Job:
         return self._submit(JobKind.CHAPTER_BRIEF, chapter_id, request)
 
     def submit_draft(self, chapter_id: str, request: AiDraftRequest) -> Job:
         return self._submit(JobKind.CHAPTER_DRAFT, chapter_id, request)
+
+    def preview_brief(
+        self,
+        chapter_id: str,
+        request: AiChapterBriefRequest,
+    ) -> AiOutboundPreview:
+        return self._preview(JobKind.CHAPTER_BRIEF, chapter_id, request)
+
+    def preview_draft(
+        self,
+        chapter_id: str,
+        request: AiDraftRequest,
+    ) -> AiOutboundPreview:
+        return self._preview(JobKind.CHAPTER_DRAFT, chapter_id, request)
 
     def handle_brief(self, context: JobExecutionContext, job: Job) -> None:
         self._handle(context, job, JobKind.CHAPTER_BRIEF)
@@ -98,7 +161,7 @@ class ChapterJobService:
         chapter_id: str,
         request: AiChapterBriefRequest,
     ) -> Job:
-        status = self.manager.status()
+        _gateway, status = self._selected_gateway(kind)
         if not status.configured:
             raise AiNotConfiguredError
         workspace, chapter = self._load_chapter(
@@ -148,6 +211,101 @@ class ChapterJobService:
             },
         )
         return self.jobs.get_job(job.id)
+
+    def _preview(
+        self,
+        kind: JobKind,
+        chapter_id: str,
+        request: AiChapterBriefRequest,
+    ) -> AiOutboundPreview:
+        workspace, chapter = self._load_chapter(
+            chapter_id,
+            request.expected_revision,
+            require_brief=kind == JobKind.CHAPTER_DRAFT,
+        )
+        context = build_chapter_context(workspace, chapter, request.author_intent)
+        profile = self._task_profile(kind)
+        profile_id: str | None
+        if profile is not None:
+            profile_id = profile.id
+            profile_name = profile.name
+            provider = profile.provider
+            model = profile.model
+            input_rate = profile.input_cost_microusd_per_million
+            output_rate = profile.output_cost_microusd_per_million
+        else:
+            status = self.manager.status()
+            if not status.configured:
+                raise AiNotConfiguredError
+            profile_id = status.profile_id
+            profile_name = status.profile_name or "当前会话线路"
+            provider = ProviderKind(status.provider.value)
+            model = status.model
+            active_profile: ModelProfile | None = None
+            if self.profiles is not None and profile_id is not None:
+                try:
+                    active_profile = self.profiles.get_profile(profile_id)
+                except ModelProfileNotFoundError:
+                    active_profile = None
+            input_rate = (
+                active_profile.input_cost_microusd_per_million
+                if active_profile is not None
+                else None
+            )
+            output_rate = (
+                active_profile.output_cost_microusd_per_million
+                if active_profile is not None
+                else None
+            )
+        input_tokens = max(1, (len(context) * 11 + 9) // 10)
+        output_tokens = (
+            1_200
+            if kind == JobKind.CHAPTER_BRIEF
+            else min(12_000, max(1_000, (workspace.project.chapter_target_words * 12 + 9) // 10))
+        )
+        return AiOutboundPreview(
+            task_type=AiTaskType(kind.value),
+            profile_id=profile_id,
+            profile_name=profile_name,
+            provider=provider,
+            model=model,
+            data_types=_chapter_data_types(workspace, chapter),
+            content_scope=(
+                f"第 {chapter.chapter_number} 章章纲、最近 3 章正文摘录、"
+                "最多 50 条正式事实及已确认资料"
+            ),
+            character_count=len(context),
+            estimated_input_tokens=input_tokens,
+            estimated_output_tokens=output_tokens,
+            estimated_cost_microusd=_estimated_cost(
+                input_tokens,
+                output_tokens,
+                input_rate,
+                output_rate,
+            ),
+        )
+
+    def _task_profile(self, kind: JobKind) -> ModelProfile | None:
+        if self.profiles is None:
+            return None
+        return self.profiles.get_task_profile(AiTaskType(kind.value))
+
+    def _selected_gateway(self, kind: JobKind) -> tuple[AiGateway, AiStatus]:
+        profile = self._task_profile(kind)
+        gateway = (
+            self.manager.gateway_for(profile.id)
+            if profile is not None
+            else self.manager.gateway()
+        )
+        status = gateway.status()
+        if (
+            not status.configured
+            or (profile is not None and (
+                status.profile_id != profile.id or status.model != profile.model
+            ))
+        ):
+            raise AiNotConfiguredError
+        return gateway, status
 
     def _handle(
         self,

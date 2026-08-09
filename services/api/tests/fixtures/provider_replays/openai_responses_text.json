@@ -1,0 +1,45 @@
+{
+  "sanitized": true,
+  "provider": "openai_responses",
+  "response": {
+    "id": "resp_fixture",
+    "object": "response",
+    "created_at": 1,
+    "status": "completed",
+    "error": null,
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": null,
+    "model": "gpt-test",
+    "output": [
+      {
+        "id": "msg_fixture",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "一段可用的章节候选"
+          }
+        ]
+      }
+    ],
+    "parallel_tool_calls": true,
+    "tool_choice": "auto",
+    "tools": [],
+    "usage": {
+      "input_tokens": 120,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 80,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 200
+    }
+  }
+}
