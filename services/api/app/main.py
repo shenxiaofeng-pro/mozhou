@@ -83,6 +83,15 @@ from app.models import (
     Workspace,
     WorkspaceSummary,
 )
+from app.providers import (
+    CreateModelProfileRequest,
+    DuplicateModelProfileError,
+    ModelProfile,
+    ModelProfileNotFoundError,
+    ModelProfileRepository,
+    StaleModelProfileError,
+    UpdateModelProfileRequest,
+)
 from app.reference_jobs import ReferenceJobService
 from app.repository import (
     InvalidChapterStateError,
@@ -113,6 +122,7 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         database.initialize()
         application.state.repository = ProjectRepository(database)
+        application.state.model_profiles = ModelProfileRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
         application.state.reference_job_service = ReferenceJobService(
@@ -254,6 +264,50 @@ def create_app(
         manager: Annotated[AiGatewayManager, Depends(get_ai_manager)],
     ) -> AiStatus:
         return manager.status()
+
+    @application.get("/api/ai/profiles", response_model=list[ModelProfile])
+    def list_ai_profiles() -> list[ModelProfile]:
+        return application.state.model_profiles.list_profiles()
+
+    @application.post(
+        "/api/ai/profiles",
+        response_model=ModelProfile,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_ai_profile(body: CreateModelProfileRequest) -> ModelProfile:
+        try:
+            return application.state.model_profiles.create_profile(body)
+        except DuplicateModelProfileError as error:
+            raise HTTPException(status_code=409, detail="模型配置名称已存在") from error
+
+    @application.put("/api/ai/profiles/{profile_id}", response_model=ModelProfile)
+    def update_ai_profile(
+        profile_id: UUID,
+        body: UpdateModelProfileRequest,
+    ) -> ModelProfile:
+        try:
+            return application.state.model_profiles.update_profile(str(profile_id), body)
+        except ModelProfileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="模型配置不存在") from error
+        except StaleModelProfileError as error:
+            raise HTTPException(status_code=409, detail="模型配置已更新，请刷新后重试") from error
+        except DuplicateModelProfileError as error:
+            raise HTTPException(status_code=409, detail="模型配置名称已存在") from error
+
+    @application.delete("/api/ai/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_ai_profile(profile_id: UUID, expected_revision: int) -> Response:
+        if expected_revision < 0:
+            raise HTTPException(status_code=422, detail="请求内容格式无效")
+        try:
+            application.state.model_profiles.delete_profile(
+                str(profile_id),
+                expected_revision,
+            )
+        except ModelProfileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="模型配置不存在") from error
+        except StaleModelProfileError as error:
+            raise HTTPException(status_code=409, detail="模型配置已更新，请刷新后重试") from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post("/api/ai/configure", response_model=AiStatus)
     def configure_ai(

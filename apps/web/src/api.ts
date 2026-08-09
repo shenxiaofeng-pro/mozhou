@@ -6,6 +6,7 @@ import type {
   ApplyReferencePatternInput,
   Chapter,
   ConfigureAiInput,
+  CreateModelProfileInput,
   CreateChapterInput,
   CreateFutureKnowledgeInput,
   CreateProjectInput,
@@ -21,6 +22,7 @@ import type {
   JobArtifactContent,
   JobDetail,
   KnowledgeReviewAction,
+  ModelProfile,
   Project,
   ProjectArchive,
   ReferenceWork,
@@ -37,6 +39,7 @@ import type {
   TimelineEvent,
   UpdateChapterBriefInput,
   UpdateChapterInput,
+  UpdateModelProfileInput,
   UpdateStoryEntityInput,
   Workspace,
   WorkspaceSummary,
@@ -116,6 +119,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         : '本地服务暂时无法完成操作'
     throw new ApiError(detail, response.status)
   }
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
@@ -145,6 +149,27 @@ export const api = {
     return request<AiStatus>('/api/ai/configure', {
       method: 'POST',
       body: JSON.stringify(input),
+    })
+  },
+  listAiProfiles() {
+    return request<ModelProfile[]>('/api/ai/profiles')
+  },
+  createAiProfile(input: CreateModelProfileInput) {
+    return request<ModelProfile>('/api/ai/profiles', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  updateAiProfile(profileId: string, input: UpdateModelProfileInput) {
+    return request<ModelProfile>(`/api/ai/profiles/${encodeURIComponent(profileId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    })
+  },
+  deleteAiProfile(profileId: string, expectedRevision: number) {
+    const query = new URLSearchParams({ expected_revision: String(expectedRevision) })
+    return request<void>(`/api/ai/profiles/${encodeURIComponent(profileId)}?${query}`, {
+      method: 'DELETE',
     })
   },
   proposeAiChapterBrief(chapterId: string, input: AiChapterBriefInput) {

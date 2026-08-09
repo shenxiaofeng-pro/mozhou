@@ -300,6 +300,42 @@ export interface ConfigureAiInput {
   model: string
 }
 
+export type ProviderKind = 'openai' | 'openai_compatible'
+
+export interface ModelCapabilities {
+  structured_output: boolean
+  streaming: boolean
+  server_cancellation: boolean
+  usage: boolean
+}
+
+export interface ModelProfile {
+  id: string
+  name: string
+  provider: ProviderKind
+  base_url: string
+  model: string
+  capabilities: ModelCapabilities
+  input_cost_microusd_per_million: number | null
+  output_cost_microusd_per_million: number | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateModelProfileInput {
+  name: string
+  provider: ProviderKind
+  base_url: string
+  model: string
+  input_cost_microusd_per_million: number | null
+  output_cost_microusd_per_million: number | null
+}
+
+export interface UpdateModelProfileInput extends CreateModelProfileInput {
+  expected_revision: number
+}
+
 export interface AiChapterBriefInput {
   expected_revision: number
   author_intent: string
