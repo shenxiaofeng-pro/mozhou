@@ -40,7 +40,7 @@ export function findSecretKinds(text) {
 }
 
 export function inspectRepository(root = process.cwd()) {
-  const tracked = execFileSync('git', ['ls-files', '-z'], {
+  const tracked = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
     cwd: root,
     encoding: 'utf8',
   }).split('\0').filter(Boolean)

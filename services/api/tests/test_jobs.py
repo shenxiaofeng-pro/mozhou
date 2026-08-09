@@ -299,7 +299,7 @@ def test_runtime_persists_sanitized_failure_and_closes_open_attempt(
     ) -> None:
         del context, leased_job
         jobs.start_attempt(job.id, provider="openai", model="test-model")
-        raise RuntimeError("sk-sensitive-provider-message")
+        raise RuntimeError("sensitive-provider-message")
 
     runtime = JobRuntime(jobs, {JobKind.REVIEW: fail_after_starting_attempt})
 
