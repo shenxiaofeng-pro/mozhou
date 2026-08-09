@@ -19,7 +19,7 @@
 | pnpm monorepo 与统一 verify | 已交付 | 根脚本、锁文件、Web/API/Rust 检查、双平台 CI | 持续维护发布门 |
 | 稳定数据目录与旧库复制 | 已交付 | config.py、数据库配置测试 | 保持迁移回归 |
 | schema 版本、升级备份、损坏拒绝 | 已交付 | migrations v1→v2→v3→v4、暂存副本、失败注入测试 | 后续结构变更继续追加迁移 |
-| 持久任务基础设施 | 部分交付 | Job/Attempt/Chunk/Artifact/Event、状态机、幂等键、租约；拆书、写章与全局任务中心已接入 | 完成真实桌面中断恢复验收 |
+| 持久任务基础设施 | 已交付 | Job/Attempt/Chunk/Artifact/Event、状态机、幂等键、心跳租约、周期恢复；拆书、写章、任务中心与真实 DMG 强杀恢复已验收 | M3 补用量与成本治理 |
 | 导航前保存与项目书架 | 已交付 | autosave hook、书架和交互测试 | 长篇性能与桌面 E2E |
 | 项目归档与恢复点 | 已交付 | 完整 JSON 归档、校验和、恢复副本 | M5 适配全局参考资产 |
 | Tauri sidecar、动态端口与会话令牌 | 已交付 | 256-bit 启动令牌、统一请求头、PyInstaller、macOS DMG | M10 签名、公证与 Windows |
@@ -91,7 +91,7 @@
 | 层 | 数量 | 状态 |
 |---|---:|---|
 | Web Vitest | 30 | 全部通过 |
-| FastAPI pytest | 107 | 全部通过 |
+| FastAPI pytest | 112 | 全部通过 |
 | Tauri Rust | 4 | 全部通过 |
 | Node 工程脚本 | 10 | 全部通过 |
 

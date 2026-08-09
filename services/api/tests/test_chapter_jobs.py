@@ -34,10 +34,10 @@ from app.repository import ProjectRepository
 
 
 class RecoverableChapterGateway:
-    def __init__(self, *, fail_draft_once: bool = False) -> None:
+    def __init__(self, *, draft_failure: Exception | None = None) -> None:
         self.brief_calls = 0
         self.draft_calls = 0
-        self.fail_draft_once = fail_draft_once
+        self.draft_failure = draft_failure
 
     def status(self) -> AiStatus:
         return AiStatus(
@@ -74,9 +74,9 @@ class RecoverableChapterGateway:
     ) -> str:
         del workspace, chapter, author_intent
         self.draft_calls += 1
-        if self.fail_draft_once:
-            self.fail_draft_once = False
-            raise TimeoutError("injected timeout")
+        if self.draft_failure is not None:
+            failure, self.draft_failure = self.draft_failure, None
+            raise failure
         return "一九九八年的梅山坡还没有后来那排高楼。" * 30
 
     def synthesize_references(
@@ -195,8 +195,20 @@ def test_draft_job_materializes_candidate_but_never_overwrites_body(tmp_path: Pa
     assert applied.revision == chapter.revision + 1
 
 
-def test_failed_draft_job_retries_without_duplicate_candidate(tmp_path: Path) -> None:
-    gateway = RecoverableChapterGateway(fail_draft_once=True)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(ConnectionError("injected disconnect"), id="disconnect"),
+        pytest.param(TimeoutError("injected timeout"), id="timeout"),
+        pytest.param(RuntimeError("injected rate limit"), id="rate-limit"),
+        pytest.param(ValueError("injected malformed response"), id="invalid-format"),
+    ],
+)
+def test_failed_draft_job_retries_without_duplicate_candidate(
+    tmp_path: Path,
+    failure: Exception,
+) -> None:
+    gateway = RecoverableChapterGateway(draft_failure=failure)
     repository, jobs, service, runtime, chapter = build_chapter_runtime(
         tmp_path / "retry.db",
         gateway,

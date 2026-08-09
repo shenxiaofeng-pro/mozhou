@@ -1,6 +1,7 @@
 import threading
 from collections.abc import Callable
 from datetime import timedelta
+from time import monotonic
 from uuid import uuid4
 
 from app.jobs.models import Job, JobKind, JobState
@@ -53,13 +54,25 @@ class JobRuntime:
         repository: JobRepository,
         handlers: dict[JobKind, JobHandler] | None = None,
         *,
-        lease_duration: timedelta = timedelta(minutes=3),
+        lease_duration: timedelta = timedelta(seconds=15),
         poll_interval: float = 0.1,
+        recovery_interval: float | None = None,
     ) -> None:
+        lease_seconds = lease_duration.total_seconds()
+        if lease_seconds <= 0:
+            raise ValueError("lease duration must be positive")
         self.repository = repository
         self.handlers = dict(handlers or {})
         self.lease_duration = lease_duration
         self.poll_interval = poll_interval
+        self.heartbeat_interval = max(0.05, min(5.0, lease_seconds / 3))
+        self.recovery_interval = (
+            recovery_interval
+            if recovery_interval is not None
+            else max(0.1, min(5.0, lease_seconds / 3))
+        )
+        if self.recovery_interval <= 0:
+            raise ValueError("recovery interval must be positive")
         self.owner = f"worker-{uuid4()}"
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -107,9 +120,18 @@ class JobRuntime:
             self.owner,
             self.lease_duration,
         )
+        heartbeat_stop = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._maintain_lease,
+            args=(job.id, heartbeat_stop),
+            name=f"mozhou-job-heartbeat-{job.id}",
+            daemon=True,
+        )
         try:
             context.checkpoint()
+            heartbeat_thread.start()
             handler(context, job)
+            context.checkpoint()
             current = self.repository.get_job(job.id)
             if current.state == JobState.RUNNING:
                 self.repository.transition_job(
@@ -158,11 +180,33 @@ class JobRuntime:
                     JobState.CANCELLED,
                     event_type="cancelled",
                 )
+        finally:
+            heartbeat_stop.set()
+            if heartbeat_thread.is_alive():
+                heartbeat_thread.join(self.heartbeat_interval + 0.1)
         return True
 
+    def _maintain_lease(self, job_id: str, stop: threading.Event) -> None:
+        while not stop.wait(self.heartbeat_interval):
+            try:
+                if not self.repository.heartbeat(
+                    job_id,
+                    self.owner,
+                    lease_duration=self.lease_duration,
+                ):
+                    return
+            except Exception:  # noqa: BLE001 - final checkpoint owns failure handling
+                return
+
     def _run(self) -> None:
+        next_recovery = monotonic() + self.recovery_interval
         while not self._stop.is_set():
+            current_time = monotonic()
+            if current_time >= next_recovery:
+                self.repository.recover_expired()
+                next_recovery = current_time + self.recovery_interval
             if self.run_once():
                 continue
-            self._wake.wait(self.poll_interval)
+            wait_for = min(self.poll_interval, max(0.0, next_recovery - monotonic()))
+            self._wake.wait(wait_for)
             self._wake.clear()
