@@ -2139,6 +2139,433 @@ textarea:focus-visible {
   background: transparent;
 }
 
+.review-workbench {
+  margin-top: 1rem;
+  border: 1px solid #aeb9b6;
+  border-top: 4px solid var(--sage);
+  color: var(--ink);
+  background: #f8f7f1;
+}
+
+.review-workbench-trigger {
+  width: 100%;
+  min-height: 4rem;
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  padding: 0.8rem 0.9rem;
+  color: var(--ink);
+  text-align: left;
+  background: #f8f7f1;
+}
+
+.review-workbench-trigger:hover,
+.review-workbench-trigger:focus-visible {
+  background: #eef2ee;
+}
+
+.review-workbench-trigger > span {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.review-workbench-trigger small {
+  color: var(--sage);
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.review-workbench-trigger strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.review-workbench-trigger b {
+  color: var(--sage);
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+.review-workbench-body {
+  display: grid;
+  gap: 0.8rem;
+  border-top: 1px solid var(--line);
+  padding: 0.85rem;
+}
+
+.review-scope-row,
+.review-preview,
+.review-job,
+.review-findings,
+.review-change-set,
+.review-versions {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.review-dimensions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.review-dimensions label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 0.42rem;
+  background: #fffefa;
+  font-size: 0.58rem;
+  font-weight: 800;
+}
+
+.review-dimensions label:last-child {
+  grid-column: 1 / -1;
+}
+
+.review-dimensions span {
+  min-width: 0;
+  display: flex;
+  gap: 0.25rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.review-dimensions small {
+  color: var(--slate);
+  font-size: 0.45rem;
+  font-weight: 600;
+}
+
+.review-window-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: center;
+  color: var(--slate);
+  font-size: 0.55rem;
+  font-weight: 800;
+}
+
+.review-window-select select,
+.review-change-set textarea {
+  width: 100%;
+  border: 1px solid #b7c1bf;
+  border-radius: 1px;
+  padding: 0.48rem;
+  color: var(--ink);
+  background: #fff;
+  font-size: 0.58rem;
+}
+
+.review-primary,
+.review-workbench-body button {
+  border: 1px solid var(--ink);
+  padding: 0.5rem 0.65rem;
+  color: var(--ink);
+  background: transparent;
+  font-size: 0.56rem;
+  font-weight: 850;
+}
+
+.review-workbench-body button:hover:not(:disabled),
+.review-workbench-body button:focus-visible:not(:disabled),
+.review-workbench-body .review-primary {
+  color: #fff;
+  background: var(--ink);
+}
+
+.review-workbench-body .review-primary:hover:not(:disabled),
+.review-workbench-body .review-primary:focus-visible:not(:disabled) {
+  border-color: var(--rust);
+  background: var(--rust);
+}
+
+.review-workbench-body button:disabled {
+  border-color: #bdc5c3;
+  color: #7b8582;
+  background: #e8ece9;
+}
+
+.review-preview,
+.review-job,
+.review-change-set {
+  border-left: 3px solid var(--sage);
+  padding: 0.7rem;
+  background: #eaf0ec;
+}
+
+.review-preview > div:first-child,
+.review-job > div,
+.review-section-heading,
+.review-change-set article > label,
+.review-versions article > div {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.review-preview p,
+.review-preview small,
+.review-job p,
+.review-change-set > p,
+.review-versions p,
+.review-history-note,
+.review-findings article > p,
+.review-findings article > small {
+  margin: 0;
+  color: var(--slate);
+  font-size: 0.54rem;
+  line-height: 1.55;
+}
+
+.review-preview > div:first-child span,
+.review-section-heading span,
+.review-versions small {
+  color: var(--slate);
+  font-size: 0.49rem;
+}
+
+.review-preview dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-block: 1px solid #ccd5d0;
+}
+
+.review-preview dl div {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.45rem 0.25rem;
+  border-right: 1px solid #ccd5d0;
+}
+
+.review-preview dl div:last-child {
+  border-right: 0;
+}
+
+.review-preview dt {
+  color: var(--slate);
+  font-size: 0.44rem;
+}
+
+.review-preview dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.57rem;
+  font-weight: 850;
+}
+
+.review-actions {
+  display: grid;
+  grid-template-columns: 0.8fr 1.35fr;
+  gap: 0.4rem;
+}
+
+.review-job progress {
+  width: 100%;
+  accent-color: var(--sage);
+}
+
+.review-outcomes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.review-outcomes > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 0.45rem;
+  background: #fffefa;
+  font-size: 0.53rem;
+}
+
+.review-outcomes > div[data-state="failed"] {
+  border-color: #c99c93;
+  background: #f8ebe7;
+}
+
+.review-outcomes button {
+  grid-column: 1 / -1;
+  padding: 0.3rem;
+}
+
+.review-findings,
+.review-versions {
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+
+.review-section-heading strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.72rem;
+}
+
+.review-findings article,
+.review-change-set article,
+.review-versions article {
+  border: 1px solid var(--line);
+  padding: 0.65rem;
+  background: #fffefa;
+}
+
+.review-findings article[data-severity="critical"] {
+  border-left: 4px solid var(--danger);
+}
+
+.review-findings article[data-severity="warning"] {
+  border-left: 4px solid var(--rust-light);
+}
+
+.review-findings article[data-severity="info"] {
+  border-left: 4px solid var(--sage);
+}
+
+.review-findings article > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.45rem;
+}
+
+.review-findings article > header span {
+  grid-column: 1 / -1;
+  color: var(--rust);
+  font-size: 0.46rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.review-findings article > header strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.68rem;
+}
+
+.review-findings article > header small {
+  color: var(--slate);
+  font-size: 0.45rem;
+  white-space: nowrap;
+}
+
+.review-findings blockquote {
+  margin: 0.55rem 0;
+  border-left: 2px solid var(--rust-light);
+  padding: 0.5rem;
+  color: #4a5555;
+  background: #f1eee6;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.58rem;
+  line-height: 1.55;
+}
+
+.review-findings cite {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--slate);
+  font-family: system-ui, sans-serif;
+  font-size: 0.43rem;
+  font-style: normal;
+}
+
+.review-suggestion {
+  margin-top: 0.5rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.45rem;
+  color: var(--ink);
+  font-size: 0.55rem;
+  line-height: 1.55;
+}
+
+.review-suggestion span {
+  margin-right: 0.4rem;
+  color: var(--sage);
+  font-weight: 900;
+}
+
+.review-select-finding {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin-top: 0.55rem;
+  font-size: 0.52rem;
+  font-weight: 800;
+}
+
+.review-change-set article {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.review-change-set article > label {
+  justify-content: flex-start;
+  font-size: 0.52rem;
+  font-weight: 850;
+}
+
+.review-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  align-items: center;
+  color: var(--slate);
+  font-size: 0.54rem;
+}
+
+.review-diff del {
+  padding: 0.35rem;
+  color: #88453d;
+  background: #f6e8e3;
+  overflow-wrap: anywhere;
+}
+
+.review-versions article[data-candidate="true"] {
+  border-style: dashed;
+  background: #eef2ee;
+}
+
+.review-versions article > div {
+  align-items: flex-start;
+}
+
+.review-versions article > div strong {
+  font-size: 0.56rem;
+}
+
+.review-versions article button {
+  width: 100%;
+  padding: 0.38rem;
+}
+
+.review-versions article button[data-confirming="true"] {
+  border-color: var(--danger);
+  color: #fff;
+  background: var(--danger);
+}
+
+.review-error {
+  margin: 0;
+  border-left: 3px solid var(--danger);
+  padding: 0.5rem;
+  color: #82382f;
+  background: #f7e9e5;
+  font-size: 0.54rem;
+  line-height: 1.5;
+}
+
 .ai-coauthor {
   border-left: 4px solid var(--rust-light);
   color: var(--paper);

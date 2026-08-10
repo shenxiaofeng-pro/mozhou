@@ -9,7 +9,9 @@ import type {
   ApplyFactChangeSetInput,
   ApplyDirectorProposalInput,
   ApplyReferencePatternInput,
+  ApplyTextChangeSetInput,
   Chapter,
+  ChapterVersion,
   BookBlueprint,
   BookBlueprintField,
   ConfigureAiInput,
@@ -24,6 +26,7 @@ import type {
   CreateSourceCardInput,
   CreateStoryEntityInput,
   CreateStoryThreadInput,
+  CreateTextChangeSetInput,
   CreateTimelineEventInput,
   FactChangeSet,
   FutureKnowledge,
@@ -45,6 +48,7 @@ import type {
   ReferencePatternApplication,
   ReferencePatternCard,
   ReferenceSynthesisInput,
+  RejectTextChangeSetInput,
   RecoveryPointSummary,
   SourceCard,
   SourceDocument,
@@ -78,6 +82,12 @@ import type {
   Workspace,
   WorkspaceSummary,
   SelectDirectorCandidateInput,
+  ReviewChapterInput,
+  ReviewFinding,
+  ReviewJobResult,
+  ReviewOutboundPreview,
+  RollbackChapterVersionInput,
+  TextChangeSet,
 } from '@mozhou/contracts'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -452,6 +462,57 @@ export const api = {
   },
   getChapter(chapterId: string) {
     return request<Chapter>(`/api/chapters/${encodeURIComponent(chapterId)}`)
+  },
+  listChapterVersions(chapterId: string) {
+    return request<ChapterVersion[]>(`/api/chapters/${encodeURIComponent(chapterId)}/versions`)
+  },
+  rollbackChapterVersion(chapterId: string, versionId: string, input: RollbackChapterVersionInput) {
+    return request<Chapter>(
+      `/api/chapters/${encodeURIComponent(chapterId)}/versions/${encodeURIComponent(versionId)}/rollback`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterReview(chapterId: string, input: ReviewChapterInput) {
+    return request<ReviewOutboundPreview>(`/api/chapters/${encodeURIComponent(chapterId)}/review-preview`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  startChapterReviewJob(chapterId: string, input: ReviewChapterInput) {
+    return request<Job>(`/api/chapters/${encodeURIComponent(chapterId)}/review-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  getChapterReviewJobResult(jobId: string) {
+    return request<ReviewJobResult>(`/api/jobs/${encodeURIComponent(jobId)}/review-result`)
+  },
+  listReviewFindings(chapterId: string, chapterRevision?: number) {
+    const query = chapterRevision === undefined
+      ? ''
+      : `?${new URLSearchParams({ chapter_revision: String(chapterRevision) })}`
+    return request<ReviewFinding[]>(`/api/chapters/${encodeURIComponent(chapterId)}/review-findings${query}`)
+  },
+  listTextChangeSets(chapterId: string) {
+    return request<TextChangeSet[]>(`/api/chapters/${encodeURIComponent(chapterId)}/text-change-sets`)
+  },
+  createTextChangeSet(chapterId: string, input: CreateTextChangeSetInput) {
+    return request<TextChangeSet>(`/api/chapters/${encodeURIComponent(chapterId)}/text-change-sets`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  applyTextChangeSet(changeSetId: string, input: ApplyTextChangeSetInput) {
+    return request<Chapter>(`/api/text-change-sets/${encodeURIComponent(changeSetId)}/apply`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  rejectTextChangeSet(changeSetId: string, input: RejectTextChangeSetInput) {
+    return request<TextChangeSet>(`/api/text-change-sets/${encodeURIComponent(changeSetId)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
   },
   createChapter(projectId: string, input: CreateChapterInput) {
     return request<Chapter>(`/api/projects/${encodeURIComponent(projectId)}/chapters`, {

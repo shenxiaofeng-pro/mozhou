@@ -180,6 +180,54 @@ class ContinuityIssueKind(StrEnum):
     SOURCE_YEAR_MISMATCH = "source_year_mismatch"
 
 
+class ReviewDimension(StrEnum):
+    CONTINUITY = "continuity"
+    SERIAL_RHYTHM = "serial_rhythm"
+    CHARACTER = "character"
+    REALISM = "realism"
+    REBIRTH_LOGIC = "rebirth_logic"
+    STYLE = "style"
+    FORMAT = "format"
+
+
+class ReviewSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class ReviewFindingState(StrEnum):
+    OPEN = "open"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    RESOLVED = "resolved"
+
+
+class ReviewEvidenceKind(StrEnum):
+    BODY = "body"
+    STRUCTURED = "structured"
+
+
+class ReviewDimensionState(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ChapterVersionSource(StrEnum):
+    INITIAL = "initial"
+    MANUAL_SAVE = "manual_save"
+    GENERATION_CANDIDATE = "generation_candidate"
+    GENERATION_APPLY = "generation_apply"
+    CHANGE_SET_APPLY = "change_set_apply"
+    ROLLBACK = "rollback"
+
+
+class TextChangeSetState(StrEnum):
+    CANDIDATE = "candidate"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+
+
 class AiProvider(StrEnum):
     UNAVAILABLE = "unavailable"
     OPENAI = "openai"
@@ -794,6 +842,232 @@ class ContinuityIssue(BaseModel):
     title: str
     detail: str
     source_labels: list[str] = Field(default_factory=list)
+
+
+class ReviewEvidence(BaseModel):
+    kind: ReviewEvidenceKind
+    chapter_id: str | None = None
+    start_char: int | None = Field(default=None, ge=0)
+    end_char: int | None = Field(default=None, ge=0)
+    excerpt: str | None = Field(default=None, min_length=1, max_length=240)
+    source_type: str | None = Field(default=None, min_length=1, max_length=80)
+    source_id: str | None = Field(default=None, min_length=1, max_length=200)
+    label: str = Field(min_length=1, max_length=240)
+
+    @model_validator(mode="after")
+    def validate_evidence_shape(self) -> ReviewEvidence:
+        if self.kind == ReviewEvidenceKind.BODY:
+            if (
+                self.chapter_id is None
+                or self.start_char is None
+                or self.end_char is None
+                or self.excerpt is None
+                or self.end_char <= self.start_char
+            ):
+                raise ValueError("正文证据范围不完整")
+        elif self.source_type is None or self.source_id is None:
+            raise ValueError("结构化证据来源不完整")
+        return self
+
+
+class ReviewFindingDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    code: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9_:-]+$")
+    severity: ReviewSeverity
+    title: str = Field(min_length=1, max_length=160)
+    evidence_text: str = Field(min_length=1, max_length=240)
+    explanation: str = Field(min_length=1, max_length=1200)
+    suggestion: str = Field(min_length=1, max_length=1200)
+    suggested_replacement: str | None = Field(default=None, max_length=2000)
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator(
+        "title",
+        "evidence_text",
+        "explanation",
+        "suggestion",
+        "suggested_replacement",
+    )
+    @classmethod
+    def reject_review_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("审校结果不能包含空字节")
+        return value
+
+
+class ReviewFindingDraftSet(BaseModel):
+    findings: list[ReviewFindingDraft] = Field(default_factory=list, max_length=20)
+
+
+class ReviewFinding(BaseModel):
+    id: str
+    project_id: str
+    chapter_id: str
+    chapter_revision: int = Field(ge=0)
+    review_job_id: str | None = None
+    dimension: ReviewDimension
+    severity: ReviewSeverity
+    code: str
+    title: str
+    evidence: list[ReviewEvidence] = Field(min_length=1, max_length=8)
+    explanation: str
+    suggestion: str
+    suggested_replacement: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    dedupe_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    state: ReviewFindingState
+    created_at: str
+
+
+class ReviewDimensionOutcome(BaseModel):
+    dimension: ReviewDimension
+    state: ReviewDimensionState
+    finding_count: int = Field(ge=0)
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class ReviewJobResult(BaseModel):
+    job_id: str
+    project_id: str
+    chapter_id: str
+    chapter_revision: int = Field(ge=0)
+    window_size: int = Field(ge=1, le=10)
+    outcomes: list[ReviewDimensionOutcome]
+    findings: list[ReviewFinding]
+
+
+class ReviewOutboundPreview(BaseModel):
+    profile_id: str | None
+    profile_name: str
+    provider: str
+    model: str
+    dimensions: list[ReviewDimension]
+    local_dimensions: list[ReviewDimension]
+    external_dimensions: list[ReviewDimension]
+    data_types: list[str]
+    content_scope: str
+    character_count: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_calls: int = Field(ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ReviewChapterRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    window_size: int = Field(default=3, ge=1, le=10)
+    dimensions: list[ReviewDimension] = Field(
+        default_factory=lambda: list(ReviewDimension),
+        min_length=1,
+        max_length=7,
+    )
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    parent_job_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+    @field_validator("dimensions")
+    @classmethod
+    def reject_duplicate_review_dimensions(
+        cls,
+        value: list[ReviewDimension],
+    ) -> list[ReviewDimension]:
+        if len(set(value)) != len(value):
+            raise ValueError("审校维度不能重复")
+        return value
+
+
+class ChapterVersion(BaseModel):
+    id: str
+    chapter_id: str
+    version_number: int = Field(ge=1)
+    chapter_revision: int = Field(ge=0)
+    content: str = Field(max_length=2_000_000)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source: ChapterVersionSource
+    source_id: str | None = None
+    parent_version_id: str | None = None
+    is_candidate: bool = False
+    created_at: str
+
+
+class RollbackChapterVersionRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+
+
+class TextChange(BaseModel):
+    id: str
+    change_set_id: str
+    ordinal: int = Field(ge=1)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(ge=0)
+    original_text: str = Field(max_length=4000)
+    replacement_text: str = Field(max_length=4000)
+    rationale: str = Field(min_length=1, max_length=1200)
+    review_finding_id: str | None = None
+    selected: bool | None = None
+    applied_replacement: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_text_change_range(self) -> TextChange:
+        if self.end_char <= self.start_char:
+            raise ValueError("文本变更范围无效")
+        if "\x00" in self.original_text or "\x00" in self.replacement_text:
+            raise ValueError("文本变更不能包含空字节")
+        return self
+
+
+class TextChangeSet(BaseModel):
+    id: str
+    chapter_id: str
+    base_chapter_revision: int = Field(ge=0)
+    base_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=160)
+    state: TextChangeSetState
+    revision: int = Field(ge=0)
+    changes: list[TextChange] = Field(min_length=1, max_length=50)
+    created_at: str
+    updated_at: str
+
+
+class CreateTextChangeSetRequest(BaseModel):
+    finding_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("finding_ids")
+    @classmethod
+    def validate_finding_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("审校建议不能重复选择")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("审校建议标识无效") from error
+        return value
+
+
+class ApplyTextChangeSetRequest(BaseModel):
+    selected_change_ids: list[str] = Field(min_length=1, max_length=50)
+    edited_replacements: dict[str, str] = Field(default_factory=dict, max_length=50)
+    expected_set_revision: int = Field(ge=0)
+    expected_chapter_revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_text_change_selection(self) -> ApplyTextChangeSetRequest:
+        selected = set(self.selected_change_ids)
+        if len(selected) != len(self.selected_change_ids):
+            raise ValueError("文本变更不能重复选择")
+        if not set(self.edited_replacements) <= selected:
+            raise ValueError("作者编辑只允许作用于已选择变更")
+        if any(len(value) > 4000 or "\x00" in value for value in self.edited_replacements.values()):
+            raise ValueError("作者编辑文本格式无效")
+        return self
+
+
+class RejectTextChangeSetRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
 
 
 class ResumeCardItem(BaseModel):

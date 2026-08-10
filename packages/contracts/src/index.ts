@@ -107,6 +107,33 @@ export type ContinuityIssueKind =
   | 'entity_state_gap'
   | 'source_year_mismatch'
 
+export type ReviewDimension =
+  | 'continuity'
+  | 'serial_rhythm'
+  | 'character'
+  | 'realism'
+  | 'rebirth_logic'
+  | 'style'
+  | 'format'
+
+export type ReviewSeverity = 'info' | 'warning' | 'critical'
+
+export type ReviewFindingState = 'open' | 'accepted' | 'rejected' | 'resolved'
+
+export type ReviewEvidenceKind = 'body' | 'structured'
+
+export type ReviewDimensionState = 'succeeded' | 'failed'
+
+export type ChapterVersionSource =
+  | 'initial'
+  | 'manual_save'
+  | 'generation_candidate'
+  | 'generation_apply'
+  | 'change_set_apply'
+  | 'rollback'
+
+export type TextChangeSetState = 'candidate' | 'applied' | 'rejected'
+
 export interface CreateProjectInput {
   title: string
   genre: Genre
@@ -130,7 +157,7 @@ export interface Project {
 
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1 | 2 | 3 | 4
+  format_version: 1 | 2 | 3 | 4 | 5
   exported_at: string
   source_project_id: string
   source_project_title: string
@@ -410,6 +437,24 @@ export type ChapterSummary = Omit<Chapter, 'content'> & {
   content_characters: number
 }
 
+export interface ChapterVersion {
+  id: string
+  chapter_id: string
+  version_number: number
+  chapter_revision: number
+  content: string
+  content_sha256: string
+  source: ChapterVersionSource
+  source_id: string | null
+  parent_version_id: string | null
+  is_candidate: boolean
+  created_at: string
+}
+
+export interface RollbackChapterVersionInput {
+  expected_revision: number
+}
+
 export interface TimelineEvent {
   id: string
   project_id: string
@@ -598,6 +643,124 @@ export interface ContinuityIssue {
   title: string
   detail: string
   source_labels: string[]
+}
+
+export interface ReviewEvidence {
+  kind: ReviewEvidenceKind
+  chapter_id: string | null
+  start_char: number | null
+  end_char: number | null
+  excerpt: string | null
+  source_type: string | null
+  source_id: string | null
+  label: string
+}
+
+export interface ReviewFinding {
+  id: string
+  project_id: string
+  chapter_id: string
+  chapter_revision: number
+  review_job_id: string | null
+  dimension: ReviewDimension
+  severity: ReviewSeverity
+  code: string
+  title: string
+  evidence: ReviewEvidence[]
+  explanation: string
+  suggestion: string
+  suggested_replacement: string | null
+  confidence: number
+  dedupe_key: string
+  state: ReviewFindingState
+  created_at: string
+}
+
+export interface ReviewDimensionOutcome {
+  dimension: ReviewDimension
+  state: ReviewDimensionState
+  finding_count: number
+  error_code: string | null
+  error_message: string | null
+}
+
+export interface ReviewJobResult {
+  job_id: string
+  project_id: string
+  chapter_id: string
+  chapter_revision: number
+  window_size: number
+  outcomes: ReviewDimensionOutcome[]
+  findings: ReviewFinding[]
+}
+
+export interface ReviewOutboundPreview {
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  dimensions: ReviewDimension[]
+  local_dimensions: ReviewDimension[]
+  external_dimensions: ReviewDimension[]
+  data_types: string[]
+  content_scope: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_calls: number
+  estimated_cost_microusd: number | null
+  context_sha256: string
+}
+
+export interface ReviewChapterInput {
+  expected_revision: number
+  window_size: number
+  dimensions: ReviewDimension[]
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+  parent_job_id?: string | null
+}
+
+export interface TextChange {
+  id: string
+  change_set_id: string
+  ordinal: number
+  start_char: number
+  end_char: number
+  original_text: string
+  replacement_text: string
+  rationale: string
+  review_finding_id: string | null
+  selected: boolean | null
+  applied_replacement: string | null
+}
+
+export interface TextChangeSet {
+  id: string
+  chapter_id: string
+  base_chapter_revision: number
+  base_content_sha256: string
+  title: string
+  state: TextChangeSetState
+  revision: number
+  changes: TextChange[]
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateTextChangeSetInput {
+  finding_ids: string[]
+}
+
+export interface ApplyTextChangeSetInput {
+  selected_change_ids: string[]
+  edited_replacements: Record<string, string>
+  expected_set_revision: number
+  expected_chapter_revision: number
+}
+
+export interface RejectTextChangeSetInput {
+  expected_revision: number
 }
 
 export interface ResumeCardItem {

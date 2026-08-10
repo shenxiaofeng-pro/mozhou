@@ -17,6 +17,7 @@ from app.models import (
     BookBlueprint,
     Chapter,
     ChapterStatus,
+    ChapterVersion,
     FactChange,
     FactChangeSet,
     FutureKnowledge,
@@ -30,6 +31,7 @@ from app.models import (
     ReferencePatternCard,
     ReferenceSegment,
     ReferenceWork,
+    ReviewFinding,
     RollingChapterPlan,
     RollingChapterPlanContent,
     SourceCard,
@@ -37,6 +39,8 @@ from app.models import (
     StoryEntity,
     StoryFact,
     StoryThread,
+    TextChange,
+    TextChangeSet,
     TimelineEvent,
     VolumePlan,
     VolumePlanContent,
@@ -45,7 +49,7 @@ from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 4
+ARCHIVE_FORMAT_VERSION = 5
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -150,6 +154,27 @@ ARCHIVE_TABLES = (
         ),
         "project_id = ?",
         (("project_id", "projects", False),),
+    ),
+    ArchiveTable(
+        "chapter_versions",
+        (
+            "id",
+            "chapter_id",
+            "version_number",
+            "chapter_revision",
+            "content",
+            "content_sha256",
+            "source",
+            "source_id",
+            "parent_version_id",
+            "is_candidate",
+            "created_at",
+        ),
+        "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
+        (
+            ("chapter_id", "chapters", False),
+            ("parent_version_id", "chapter_versions", True),
+        ),
     ),
     ArchiveTable(
         "context_directives",
@@ -325,6 +350,75 @@ ARCHIVE_TABLES = (
         "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
         (("job_id", "jobs", False),),
         ("detail_json",),
+    ),
+    ArchiveTable(
+        "review_findings",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "chapter_revision",
+            "review_job_id",
+            "dimension",
+            "severity",
+            "code",
+            "title",
+            "evidence_json",
+            "explanation",
+            "suggestion",
+            "suggested_replacement",
+            "confidence",
+            "dedupe_key",
+            "state",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", False),
+            ("review_job_id", "jobs", True),
+        ),
+        ("evidence_json",),
+    ),
+    ArchiveTable(
+        "text_change_sets",
+        (
+            "id",
+            "chapter_id",
+            "base_chapter_revision",
+            "base_content_sha256",
+            "title",
+            "state",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
+        (("chapter_id", "chapters", False),),
+    ),
+    ArchiveTable(
+        "text_changes",
+        (
+            "id",
+            "change_set_id",
+            "ordinal",
+            "start_char",
+            "end_char",
+            "original_text",
+            "replacement_text",
+            "rationale",
+            "review_finding_id",
+            "selected",
+            "applied_replacement",
+        ),
+        "change_set_id IN ("
+        "SELECT s.id FROM text_change_sets s "
+        "JOIN chapters c ON c.id = s.chapter_id WHERE c.project_id = ?"
+        ")",
+        (
+            ("change_set_id", "text_change_sets", False),
+            ("review_finding_id", "review_findings", True),
+        ),
     ),
     ArchiveTable(
         "timeline_events",
@@ -728,6 +822,15 @@ def _validate_business_rows(
             })
         for row in tables["chapters"]:
             Chapter.model_validate(row)
+        for row in tables["chapter_versions"]:
+            version = ChapterVersion.model_validate(
+                {**row, "is_candidate": bool(row["is_candidate"])}
+            )
+            if not compare_digest(
+                hashlib.sha256(version.content.encode("utf-8")).hexdigest(),
+                version.content_sha256,
+            ):
+                raise InvalidProjectArchiveError("invalid_chapter_version_hash")
         for row in tables["context_directives"]:
             directive = ContextDirective.model_validate(row)
             target_table = {
@@ -892,6 +995,28 @@ def _validate_business_rows(
                 raise InvalidProjectArchiveError("invalid_job_event_detail")
             JobEvent.model_validate({**row, "detail": detail})
 
+        for row in tables["review_findings"]:
+            ReviewFinding.model_validate(
+                {**row, "evidence": _parse_json(row["evidence_json"])}
+            )
+        text_changes_by_set: dict[str, list[dict[str, Any]]] = {}
+        for row in tables["text_changes"]:
+            TextChange.model_validate(
+                {
+                    **row,
+                    "selected": (
+                        bool(row["selected"])
+                        if row["selected"] is not None
+                        else None
+                    ),
+                }
+            )
+            text_changes_by_set.setdefault(row["change_set_id"], []).append(row)
+        for row in tables["text_change_sets"]:
+            TextChangeSet.model_validate(
+                {**row, "changes": text_changes_by_set.get(row["id"], [])}
+            )
+
         nullable_timestamps = {
             "lease_expires_at",
             "heartbeat_at",
@@ -1035,6 +1160,10 @@ class ProjectArchiveService:
                     if not isinstance(old_source_id, str) or old_source_id not in id_map:
                         raise InvalidProjectArchiveError("external_context_directive_source")
                     row["source_id"] = id_map[old_source_id]
+                if table.name == "chapter_versions":
+                    source_id = row["source_id"]
+                    if isinstance(source_id, str) and source_id in id_map:
+                        row["source_id"] = id_map[source_id]
                 if table.name == "job_artifacts" and row["content_type"] == "application/json":
                     embedded_payload = (
                         _parse_json(row["payload"])
@@ -1192,7 +1321,7 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5}:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1217,6 +1346,8 @@ class ProjectArchiveService:
             value = self._upgrade_v2_archive(value)
         if value["format_version"] == 3:
             value = self._upgrade_v3_archive(value)
+        if value["format_version"] == 4:
+            value = self._upgrade_v4_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1433,6 +1564,57 @@ class ProjectArchiveService:
         upgraded_tables["book_blueprints"] = []
         upgraded_tables["volume_plans"] = []
         upgraded_tables["rolling_chapter_plans"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 4
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v4_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        chapter_rows = tables.get("chapters")
+        if not isinstance(chapter_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        versions: list[dict[str, Any]] = []
+        for row in chapter_rows:
+            if not isinstance(row, dict):
+                raise InvalidProjectArchiveError("invalid_columns")
+            content = row.get("content")
+            chapter_id = row.get("id")
+            revision = row.get("revision")
+            updated_at = row.get("updated_at")
+            if (
+                not isinstance(content, str)
+                or not isinstance(chapter_id, str)
+                or not isinstance(revision, int)
+                or not isinstance(updated_at, str)
+            ):
+                raise InvalidProjectArchiveError("invalid_chapter_version")
+            versions.append(
+                {
+                    "id": str(uuid4()),
+                    "chapter_id": chapter_id,
+                    "version_number": 1,
+                    "chapter_revision": revision,
+                    "content": content,
+                    "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    "source": "initial",
+                    "source_id": None,
+                    "parent_version_id": None,
+                    "is_candidate": 0,
+                    "created_at": updated_at,
+                }
+            )
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["chapter_versions"] = versions
+        upgraded_tables["review_findings"] = []
+        upgraded_tables["text_change_sets"] = []
+        upgraded_tables["text_changes"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

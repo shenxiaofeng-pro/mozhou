@@ -15,6 +15,7 @@ import { BookDirectorPanel } from './BookDirectorPanel'
 import { FactTimelinePanel } from './FactTimelinePanel'
 import { FutureKnowledgePanel } from './FutureKnowledgePanel'
 import { RhythmWindowPanel } from './RhythmWindowPanel'
+import { ReviewWorkbench } from './ReviewWorkbench'
 import { SerialControlPanel } from './SerialControlPanel'
 import { StoryLedgerPanel } from './StoryLedgerPanel'
 import { SourceLibraryPanel } from './SourceLibraryPanel'
@@ -187,6 +188,12 @@ export function DirectorPanel({
         onWorkspaceChanged={onWorkspaceChanged}
         onAdoptBrief={adoptAiProposal}
         onDraftGenerated={setRun}
+      />
+      <ReviewWorkbench
+        key={`${chapter.id}:${chapter.revision}`}
+        chapter={chapter}
+        canReview={canUpdateChapter && wordCount > 0}
+        onChapterUpdated={onChapterUpdated}
       />
       <AiCoauthorPanel
         chapter={chapter}

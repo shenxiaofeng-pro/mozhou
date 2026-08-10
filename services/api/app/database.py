@@ -422,6 +422,96 @@ CREATE TABLE IF NOT EXISTS rolling_chapter_plans (
 CREATE INDEX IF NOT EXISTS idx_rolling_chapter_plans_project_number
 ON rolling_chapter_plans(project_id, chapter_number);
 
+CREATE TABLE IF NOT EXISTS chapter_versions (
+    id TEXT PRIMARY KEY,
+    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL CHECK(version_number > 0),
+    chapter_revision INTEGER NOT NULL CHECK(chapter_revision >= 0),
+    content TEXT NOT NULL CHECK(length(content) <= 2000000),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    source TEXT NOT NULL CHECK(source IN (
+        'initial', 'manual_save', 'generation_candidate',
+        'generation_apply', 'change_set_apply', 'rollback'
+    )),
+    source_id TEXT,
+    parent_version_id TEXT REFERENCES chapter_versions(id) ON DELETE SET NULL,
+    is_candidate INTEGER NOT NULL DEFAULT 0 CHECK(is_candidate IN (0, 1)),
+    created_at TEXT NOT NULL,
+    UNIQUE(chapter_id, version_number)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chapter_versions_source
+ON chapter_versions(chapter_id, source, source_id)
+WHERE source_id IS NOT NULL AND source IN (
+    'generation_candidate', 'generation_apply', 'change_set_apply'
+);
+
+CREATE INDEX IF NOT EXISTS idx_chapter_versions_chapter_number
+ON chapter_versions(chapter_id, version_number DESC);
+
+CREATE TABLE IF NOT EXISTS review_findings (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    chapter_revision INTEGER NOT NULL CHECK(chapter_revision >= 0),
+    review_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+    dimension TEXT NOT NULL CHECK(dimension IN (
+        'continuity', 'serial_rhythm', 'character', 'realism',
+        'rebirth_logic', 'style', 'format'
+    )),
+    severity TEXT NOT NULL CHECK(severity IN ('info', 'warning', 'critical')),
+    code TEXT NOT NULL CHECK(length(code) BETWEEN 1 AND 80),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+    evidence_json TEXT NOT NULL CHECK(length(evidence_json) BETWEEN 2 AND 20000),
+    explanation TEXT NOT NULL CHECK(length(explanation) BETWEEN 1 AND 1200),
+    suggestion TEXT NOT NULL CHECK(length(suggestion) BETWEEN 1 AND 1200),
+    suggested_replacement TEXT CHECK(
+        suggested_replacement IS NULL OR length(suggested_replacement) <= 2000
+    ),
+    confidence REAL NOT NULL CHECK(confidence BETWEEN 0 AND 1),
+    dedupe_key TEXT NOT NULL CHECK(length(dedupe_key) = 64),
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open', 'accepted', 'rejected', 'resolved')),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_findings_chapter_revision
+ON review_findings(chapter_id, chapter_revision, dimension, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS text_change_sets (
+    id TEXT PRIMARY KEY,
+    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    base_chapter_revision INTEGER NOT NULL CHECK(base_chapter_revision >= 0),
+    base_content_sha256 TEXT NOT NULL CHECK(length(base_content_sha256) = 64),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+    state TEXT NOT NULL CHECK(state IN ('candidate', 'applied', 'rejected')),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_text_change_sets_chapter_created
+ON text_change_sets(chapter_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS text_changes (
+    id TEXT PRIMARY KEY,
+    change_set_id TEXT NOT NULL REFERENCES text_change_sets(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+    start_char INTEGER NOT NULL CHECK(start_char >= 0),
+    end_char INTEGER NOT NULL CHECK(end_char > start_char),
+    original_text TEXT NOT NULL CHECK(length(original_text) <= 4000),
+    replacement_text TEXT NOT NULL CHECK(length(replacement_text) <= 4000),
+    rationale TEXT NOT NULL CHECK(length(rationale) BETWEEN 1 AND 1200),
+    review_finding_id TEXT REFERENCES review_findings(id) ON DELETE SET NULL,
+    selected INTEGER CHECK(selected IS NULL OR selected IN (0, 1)),
+    applied_replacement TEXT CHECK(
+        applied_replacement IS NULL OR length(applied_replacement) <= 4000
+    ),
+    UNIQUE(change_set_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_text_changes_set
+ON text_changes(change_set_id, ordinal);
+
 CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 80),
