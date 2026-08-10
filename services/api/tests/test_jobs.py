@@ -416,7 +416,9 @@ def test_runtime_persists_sanitized_failure_and_closes_open_attempt(
 
 
 def test_job_api_lists_details_artifacts_cancel_and_retry(tmp_path: Path) -> None:
-    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+    # This is an API state-transition test. Keep the worker stopped so it cannot
+    # race the explicit cancel request with an intentionally empty review input.
+    with TestClient(create_app(tmp_path / "mozhou.db", defer_job_runtime=True)) as client:
         workspace = client.post(
             "/api/projects",
             json={
