@@ -148,6 +148,68 @@ def test_project_imports_multiple_reference_works_without_returning_original_tex
     assert "乙" * 100 not in loaded.text
 
 
+def test_global_reference_work_is_imported_once_and_linked_to_two_projects(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        first_project = client.post(
+            "/api/projects",
+            json={
+                "title": "南平商战",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()["project"]["id"]
+        second_project = client.post(
+            "/api/projects",
+            json={
+                "title": "闽北风云",
+                "genre": "historical_rebirth",
+                "rebirth_year": 1911,
+                "rebirth_location": "福建南平",
+            },
+        ).json()["project"]["id"]
+
+        imported = client.post(
+            "/api/reference-library/works",
+            json={
+                "title": "公共参考样本",
+                "source_filename": "sample.txt",
+                "rights_basis": "authorized",
+                "segment_target_characters": 100_000,
+                "content": "第一章 起势\n" + "甲" * 120_000,
+            },
+        )
+        work_id = imported.json()["id"]
+        first_link = client.post(
+            f"/api/projects/{first_project}/reference-works/{work_id}"
+        )
+        second_link = client.post(
+            f"/api/projects/{second_project}/reference-works/{work_id}"
+        )
+        library = client.get("/api/reference-library/works")
+        first_workspace = client.get(f"/api/projects/{first_project}")
+        second_workspace = client.get(f"/api/projects/{second_project}")
+        unlinked = client.delete(
+            f"/api/projects/{first_project}/reference-works/{work_id}"
+        )
+        first_after_unlink = client.get(f"/api/projects/{first_project}")
+        library_after_unlink = client.get("/api/reference-library/works")
+
+    assert imported.status_code == 201
+    assert first_link.status_code == 200
+    assert second_link.status_code == 200
+    assert library.status_code == 200
+    assert library.json()[0]["project_ids"] == sorted([first_project, second_project])
+    assert first_workspace.json()["reference_works"][0]["id"] == work_id
+    assert second_workspace.json()["reference_works"][0]["id"] == work_id
+    assert '"content":' not in library.text
+    assert unlinked.status_code == 204
+    assert first_after_unlink.json()["reference_works"] == []
+    assert library_after_unlink.json()[0]["id"] == work_id
+
+
 def test_reference_import_rejects_unsafe_input_without_echoing_original_text(
     tmp_path: Path,
 ) -> None:

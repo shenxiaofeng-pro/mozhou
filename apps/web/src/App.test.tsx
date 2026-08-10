@@ -1369,12 +1369,18 @@ describe('App', () => {
     const existingWork = {
       id: 'reference-alpha',
       project_id: workspace.project.id,
+      project_ids: [workspace.project.id],
       title: '参考甲',
       source_filename: 'alpha.txt',
       source_format: 'txt' as const,
       rights_basis: 'self_owned' as const,
       total_characters: 500_000,
       segment_target_characters: 500_000,
+      content_sha256: 'a'.repeat(64),
+      source_encoding: 'utf-8',
+      encoding_confidence: 1,
+      import_state: 'ready' as const,
+      duplicate_of_id: null,
       segments: [{
         id: 'segment-alpha-1',
         reference_work_id: 'reference-alpha',
@@ -1387,6 +1393,7 @@ describe('App', () => {
         created_at: '2026-08-09T00:00:00Z',
       }],
       created_at: '2026-08-09T00:00:00Z',
+      updated_at: '2026-08-09T00:00:00Z',
     }
     const importedWork = {
       ...existingWork,

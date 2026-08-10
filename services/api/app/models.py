@@ -84,6 +84,7 @@ class SourceConfidence(StrEnum):
 class ReferenceFormat(StrEnum):
     TXT = "txt"
     MARKDOWN = "markdown"
+    PDF = "pdf"
 
 
 class ReferenceRightsBasis(StrEnum):
@@ -314,15 +315,22 @@ class ReferenceSegment(BaseModel):
 
 class ReferenceWork(BaseModel):
     id: str
-    project_id: str
+    project_id: str | None = None
+    project_ids: list[str] = Field(default_factory=list)
     title: str
     source_filename: str
     source_format: ReferenceFormat
     rights_basis: ReferenceRightsBasis
     total_characters: int
     segment_target_characters: int
+    content_sha256: str
+    source_encoding: str
+    encoding_confidence: float
+    import_state: str
+    duplicate_of_id: str | None = None
     segments: list[ReferenceSegment] = Field(default_factory=list)
     created_at: str
+    updated_at: str
 
 
 class ContinuityIssue(BaseModel):

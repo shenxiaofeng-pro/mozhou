@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from hashlib import sha256
 from sqlite3 import Connection, IntegrityError, Row
 from typing import cast
 from uuid import uuid4
@@ -274,9 +275,10 @@ class ProjectRepository:
             ).fetchall()
             reference_work_rows = connection.execute(
                 """
-                SELECT * FROM reference_works
-                WHERE project_id = ?
-                ORDER BY created_at, id
+                SELECT w.* FROM reference_works w
+                JOIN project_reference_works p ON p.reference_work_id = w.id
+                WHERE p.project_id = ?
+                ORDER BY w.created_at, w.id
                 """,
                 (project_id,),
             ).fetchall()
@@ -286,7 +288,7 @@ class ProjectRepository:
                        character_count, chapter_start, chapter_end, created_at
                 FROM reference_segments
                 WHERE reference_work_id IN (
-                    SELECT id FROM reference_works WHERE project_id = ?
+                    SELECT reference_work_id FROM project_reference_works WHERE project_id = ?
                 )
                 ORDER BY reference_work_id, ordinal
                 """,
@@ -334,7 +336,11 @@ class ProjectRepository:
             "story_threads": [self._story_thread(row) for row in thread_rows],
             "source_cards": [self._source_card(row) for row in source_rows],
             "reference_works": [
-                self._reference_work(row, segments_by_work.get(row["id"], []))
+                self._reference_work(
+                    row,
+                    segments_by_work.get(row["id"], []),
+                    project_ids=[project_id],
+                )
                 for row in reference_work_rows
             ],
             "reference_pattern_cards": [
@@ -374,6 +380,25 @@ class ProjectRepository:
         project_id: str,
         request: ImportReferenceWorkRequest,
     ) -> ReferenceWork:
+        content = request.content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+        work = self._create_global_reference_work(request, content)
+        return self.link_reference_work(project_id, work.id)
+
+    def import_global_reference_work(
+        self,
+        request: ImportReferenceWorkRequest,
+    ) -> ReferenceWork:
+        extension = request.source_filename.lower().rsplit(".", 1)[-1]
+        if extension not in {"txt", "md", "markdown"}:
+            raise InvalidReferenceImportError("unsupported_format")
+        content = request.content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+        return self._create_global_reference_work(request, content)
+
+    def _create_global_reference_work(
+        self,
+        request: ImportReferenceWorkRequest,
+        content: str,
+    ) -> ReferenceWork:
         extension = request.source_filename.lower().rsplit(".", 1)[-1]
         if extension == "txt":
             source_format = ReferenceFormat.TXT
@@ -381,34 +406,37 @@ class ProjectRepository:
             source_format = ReferenceFormat.MARKDOWN
         else:
             raise InvalidReferenceImportError("unsupported_format")
-        content = request.content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
         segments = segment_reference_text(content, request.segment_target_characters)
         if not segments:
             raise InvalidReferenceImportError("empty_content")
         work_id = str(uuid4())
         timestamp = now_iso()
+        content_sha256 = sha256(content.encode("utf-8")).hexdigest()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone() is None:
-                raise NotFoundError(project_id)
+            duplicate = connection.execute(
+                "SELECT id FROM reference_works WHERE content_sha256 = ? ORDER BY created_at, id LIMIT 1",
+                (content_sha256,),
+            ).fetchone()
             connection.execute(
                 """
                 INSERT INTO reference_works (
-                    id, project_id, title, source_filename, source_format,
-                    rights_basis, total_characters, segment_target_characters, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, title, source_filename, source_format, rights_basis,
+                    total_characters, segment_target_characters, content_sha256,
+                    source_encoding, encoding_confidence, import_state,
+                    duplicate_of_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'utf-8', 1.0, 'ready', ?, ?, ?)
                 """,
                 (
                     work_id,
-                    project_id,
                     request.title,
                     request.source_filename,
                     source_format.value,
                     request.rights_basis.value,
                     len(content),
                     request.segment_target_characters,
+                    content_sha256,
+                    duplicate["id"] if duplicate is not None else None,
+                    timestamp,
                     timestamp,
                 ),
             )
@@ -435,11 +463,78 @@ class ProjectRepository:
                     for segment in segments
                 ],
             )
+        return self.get_reference_work(work_id)
+
+    def list_reference_works(self) -> list[ReferenceWork]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM reference_works ORDER BY created_at DESC, id DESC"
+            ).fetchall()
+            segment_rows = connection.execute(
+                """
+                SELECT id, reference_work_id, ordinal, start_char, end_char,
+                       character_count, chapter_start, chapter_end, created_at
+                FROM reference_segments ORDER BY reference_work_id, ordinal
+                """
+            ).fetchall()
+            link_rows = connection.execute(
+                "SELECT project_id, reference_work_id FROM project_reference_works ORDER BY project_id"
+            ).fetchall()
+        segments_by_work: dict[str, list[ReferenceSegment]] = {}
+        for row in segment_rows:
+            segments_by_work.setdefault(row["reference_work_id"], []).append(
+                self._reference_segment(row)
+            )
+        projects_by_work: dict[str, list[str]] = {}
+        for row in link_rows:
+            projects_by_work.setdefault(row["reference_work_id"], []).append(row["project_id"])
+        return [
+            self._reference_work(
+                row,
+                segments_by_work.get(row["id"], []),
+                project_ids=projects_by_work.get(row["id"], []),
+            )
+            for row in rows
+        ]
+
+    def link_reference_work(self, project_id: str, work_id: str) -> ReferenceWork:
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            if connection.execute(
+                "SELECT id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone() is None:
+                raise NotFoundError(project_id)
+            if connection.execute(
+                "SELECT id FROM reference_works WHERE id = ?", (work_id,)
+            ).fetchone() is None:
+                raise NotFoundError(work_id)
+            connection.execute(
+                """
+                INSERT INTO project_reference_works(project_id, reference_work_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(project_id, reference_work_id) DO NOTHING
+                """,
+                (project_id, work_id, timestamp),
+            )
             connection.execute(
                 "UPDATE projects SET updated_at = ? WHERE id = ?",
                 (timestamp, project_id),
             )
         return self.get_reference_work(work_id)
+
+    def unlink_reference_work(self, project_id: str, work_id: str) -> None:
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            result = connection.execute(
+                "DELETE FROM project_reference_works WHERE project_id = ? AND reference_work_id = ?",
+                (project_id, work_id),
+            )
+            if result.rowcount == 0:
+                raise NotFoundError(work_id)
+            connection.execute(
+                "UPDATE projects SET updated_at = ? WHERE id = ?",
+                (timestamp, project_id),
+            )
 
     def get_reference_work(self, work_id: str) -> ReferenceWork:
         with self.database.connect() as connection:
@@ -457,11 +552,16 @@ class ProjectRepository:
                 """,
                 (work_id,),
             ).fetchall()
+            project_rows = connection.execute(
+                "SELECT project_id FROM project_reference_works WHERE reference_work_id = ? ORDER BY project_id",
+                (work_id,),
+            ).fetchall()
         if work is None:
             raise NotFoundError(work_id)
         return self._reference_work(
             work,
             [self._reference_segment(row) for row in segment_rows],
+            project_ids=[row["project_id"] for row in project_rows],
         )
 
     def get_reference_segments_for_analysis(
@@ -483,7 +583,8 @@ class ProjectRepository:
                        s.chapter_start, s.chapter_end, s.content
                 FROM reference_segments s
                 JOIN reference_works w ON w.id = s.reference_work_id
-                WHERE w.project_id = ? AND s.id IN ({placeholders})
+                JOIN project_reference_works p ON p.reference_work_id = w.id
+                WHERE p.project_id = ? AND s.id IN ({placeholders})
                 """,
                 (project_id, *segment_ids),
             ).fetchall()
@@ -1776,8 +1877,19 @@ class ProjectRepository:
         return ReferenceSegment.model_validate(dict(row))
 
     @staticmethod
-    def _reference_work(row: Row, segments: list[ReferenceSegment]) -> ReferenceWork:
-        return ReferenceWork.model_validate({**dict(row), "segments": segments})
+    def _reference_work(
+        row: Row,
+        segments: list[ReferenceSegment],
+        *,
+        project_ids: list[str] | None = None,
+    ) -> ReferenceWork:
+        projects = project_ids or []
+        return ReferenceWork.model_validate({
+            **dict(row),
+            "project_id": projects[0] if len(projects) == 1 else None,
+            "project_ids": projects,
+            "segments": segments,
+        })
 
     @staticmethod
     def _reference_pattern_card(row: Row) -> ReferencePatternCard:

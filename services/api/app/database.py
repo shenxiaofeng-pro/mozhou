@@ -208,18 +208,33 @@ ON source_cards(project_id, applicable_year_start, applicable_year_end, confirme
 
 CREATE TABLE IF NOT EXISTS reference_works (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
     source_filename TEXT NOT NULL CHECK(length(source_filename) BETWEEN 1 AND 255),
-    source_format TEXT NOT NULL CHECK(source_format IN ('txt', 'markdown')),
+    source_format TEXT NOT NULL CHECK(source_format IN ('txt', 'markdown', 'pdf')),
     rights_basis TEXT NOT NULL CHECK(rights_basis IN ('self_owned', 'authorized', 'public_domain')),
     total_characters INTEGER NOT NULL CHECK(total_characters BETWEEN 1 AND 20000000),
     segment_target_characters INTEGER NOT NULL CHECK(segment_target_characters BETWEEN 100000 AND 1000000),
-    created_at TEXT NOT NULL
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    source_encoding TEXT NOT NULL CHECK(length(source_encoding) BETWEEN 1 AND 40),
+    encoding_confidence REAL NOT NULL CHECK(encoding_confidence BETWEEN 0 AND 1),
+    import_state TEXT NOT NULL CHECK(import_state IN ('ready', 'needs_review')),
+    duplicate_of_id TEXT REFERENCES reference_works(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_reference_works_project_created
-ON reference_works(project_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_reference_works_hash_created
+ON reference_works(content_sha256, created_at, id);
+
+CREATE TABLE IF NOT EXISTS project_reference_works (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    reference_work_id TEXT NOT NULL REFERENCES reference_works(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, reference_work_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_reference_works_work
+ON project_reference_works(reference_work_id, project_id);
 
 CREATE TABLE IF NOT EXISTS reference_segments (
     id TEXT PRIMARY KEY,
