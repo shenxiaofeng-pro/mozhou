@@ -2,7 +2,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from sqlite3 import Connection
 
-from app.migrations import v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13
+from app.migrations import (
+    v1,
+    v2,
+    v3,
+    v4,
+    v5,
+    v6,
+    v7,
+    v8,
+    v9,
+    v10,
+    v11,
+    v12,
+    v13,
+    v14,
+)
 
 MigrationUpgrade = Callable[[Connection, str], None]
 
@@ -28,6 +43,7 @@ MIGRATIONS = (
     Migration(version=11, name="global_reality_sources", upgrade=v11.upgrade),
     Migration(version=12, name="versioned_originality_blueprints", upgrade=v12.upgrade),
     Migration(version=13, name="book_director_planning", upgrade=v13.upgrade),
+    Migration(version=14, name="review_versions_and_change_sets", upgrade=v14.upgrade),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

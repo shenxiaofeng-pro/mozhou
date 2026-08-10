@@ -22,6 +22,7 @@ from app.models import (
     Chapter,
     ChapterStatus,
     ChapterSummary,
+    ChapterVersionSource,
     CreateChapterRequest,
     CreateFutureKnowledgeRequest,
     CreateProjectRequest,
@@ -75,6 +76,7 @@ from app.models import (
 )
 from app.originality_guard import assess_blueprint
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
+from app.review.repository import ReviewRepository
 from app.safe_import import ParsedReferenceFile
 
 
@@ -195,6 +197,14 @@ class ProjectRepository:
                 ) VALUES (?, ?, 1, 1, ?, '', ?, 0, ?)
                 """,
                 (chapter_id, project_id, "第一章 未命名", ChapterStatus.PLANNED.value, timestamp),
+            )
+            ReviewRepository.append_chapter_version(
+                connection,
+                chapter_id=chapter_id,
+                chapter_revision=0,
+                content="",
+                source=ChapterVersionSource.INITIAL,
+                created_at=timestamp,
             )
         return self.get_workspace(project_id)
 
@@ -2229,6 +2239,14 @@ class ProjectRepository:
             row = connection.execute(
                 "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
             ).fetchone()
+            ReviewRepository.append_chapter_version(
+                connection,
+                chapter_id=chapter_id,
+                chapter_revision=0,
+                content="",
+                source=ChapterVersionSource.INITIAL,
+                created_at=timestamp,
+            )
         if row is None:
             raise NotFoundError(chapter_id)
         return self._chapter(row)
@@ -2274,6 +2292,15 @@ class ProjectRepository:
             row = connection.execute(
                 "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
             ).fetchone()
+            if row is not None:
+                ReviewRepository.append_chapter_version(
+                    connection,
+                    chapter_id=chapter_id,
+                    chapter_revision=int(row["revision"]),
+                    content=str(row["content"]),
+                    source=ChapterVersionSource.MANUAL_SAVE,
+                    created_at=timestamp,
+                )
         if row is None:  # defensive: the row was updated in the same transaction
             raise NotFoundError(chapter_id)
         return self._chapter(row)
@@ -2517,6 +2544,16 @@ class ProjectRepository:
                 "SELECT * FROM generation_runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
+            ReviewRepository.append_chapter_version(
+                connection,
+                chapter_id=chapter_id,
+                chapter_revision=expected_revision,
+                content=candidate_content,
+                source=ChapterVersionSource.GENERATION_CANDIDATE,
+                source_id=run_id,
+                is_candidate=True,
+                created_at=timestamp,
+            )
         if row is None:
             raise NotFoundError(run_id)
         run = self._generation_run(row)
@@ -2594,6 +2631,23 @@ class ProjectRepository:
                     raise NotFoundError(run_id)
                 return self.get_generation_run(run_id)
             self._append_event(connection, run_id, next_state, timestamp)
+            if next_state == GenerationState.DRAFTED and candidate_content is not None:
+                run = connection.execute(
+                    "SELECT chapter_id, expected_chapter_revision FROM generation_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                if run is None:
+                    raise NotFoundError(run_id)
+                ReviewRepository.append_chapter_version(
+                    connection,
+                    chapter_id=str(run["chapter_id"]),
+                    chapter_revision=int(run["expected_chapter_revision"]),
+                    content=candidate_content,
+                    source=ChapterVersionSource.GENERATION_CANDIDATE,
+                    source_id=run_id,
+                    is_candidate=True,
+                    created_at=timestamp,
+                )
         return self.get_generation_run(run_id)
 
     def apply_generation(self, run_id: str, expected_revision: int) -> Chapter:
@@ -2638,6 +2692,16 @@ class ProjectRepository:
                 "SELECT * FROM chapters WHERE id = ?",
                 (run["chapter_id"],),
             ).fetchone()
+            if chapter is not None:
+                ReviewRepository.append_chapter_version(
+                    connection,
+                    chapter_id=str(run["chapter_id"]),
+                    chapter_revision=int(chapter["revision"]),
+                    content=str(chapter["content"]),
+                    source=ChapterVersionSource.GENERATION_APPLY,
+                    source_id=run_id,
+                    created_at=timestamp,
+                )
         if chapter is None:
             raise NotFoundError(run_id)
         return self._chapter(chapter)

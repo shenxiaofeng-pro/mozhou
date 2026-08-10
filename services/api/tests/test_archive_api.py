@@ -8,6 +8,13 @@ from fastapi.testclient import TestClient
 
 from app.jobs import JobKind, JobRepository
 from app.main import create_app
+from app.models import (
+    ReviewDimension,
+    ReviewEvidence,
+    ReviewEvidenceKind,
+    ReviewSeverity,
+)
+from app.review.rules import make_finding
 
 ARCHIVE_TABLES = {
     "projects",
@@ -15,6 +22,7 @@ ARCHIVE_TABLES = {
     "volume_plans",
     "rolling_chapter_plans",
     "chapters",
+    "chapter_versions",
     "context_directives",
     "generation_runs",
     "chapter_events",
@@ -39,6 +47,9 @@ ARCHIVE_TABLES = {
     "reference_pattern_applications",
     "reference_blueprint_versions",
     "originality_reports",
+    "review_findings",
+    "text_change_sets",
+    "text_changes",
 }
 
 
@@ -90,7 +101,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 4
+    assert archive["format_version"] == 5
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -219,7 +230,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 4
+    assert archive["format_version"] == 5
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -231,6 +242,106 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
     assert restored["volume_plans"][0]["locked"] is True
     assert restored["rolling_chapter_plans"][0]["opening_hook"] == "停产名单提前贴出"
     assert restored["rolling_chapter_plans"][0]["revision"] == 3
+
+
+def test_archive_round_trip_preserves_review_versions_and_partial_changes(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "review-archive.db"
+    manuscript = "一九九八年，他掏出智能手机。院外一片寂静。"
+    with TestClient(create_app(database_path)) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "审校归档",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        chapter_id = workspace["chapters"][0]["id"]
+        chapter = client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": manuscript, "expected_revision": 0},
+        ).json()
+        reviews = client.app.state.review_repository
+        excerpts = [
+            ("智能手机", "传呼机", ReviewDimension.REALISM, "年代物件错置"),
+            ("一片寂静", "只剩虫鸣", ReviewDimension.STYLE, "场景感官单薄"),
+        ]
+        findings = []
+        for ordinal, (excerpt, replacement, dimension, title) in enumerate(excerpts):
+            start = manuscript.index(excerpt)
+            finding = make_finding(
+                job_id=f"archive-review-{ordinal}",
+                project_id=project_id,
+                chapter_id=chapter_id,
+                chapter_revision=chapter["revision"],
+                dimension=dimension,
+                severity=ReviewSeverity.WARNING,
+                code=f"archive_{ordinal}",
+                title=title,
+                evidence=[
+                    ReviewEvidence(
+                        kind=ReviewEvidenceKind.BODY,
+                        chapter_id=chapter_id,
+                        start_char=start,
+                        end_char=start + len(excerpt),
+                        excerpt=excerpt,
+                        label="正文原句",
+                    )
+                ],
+                explanation="该处需要作者确认后局部修改。",
+                suggestion="仅替换有证据的正文范围。",
+                suggested_replacement=replacement,
+                confidence=0.95,
+            ).model_copy(update={"review_job_id": None})
+            findings.append(finding)
+        reviews.save_findings(findings)
+
+        change_set = client.post(
+            f"/api/chapters/{chapter_id}/text-change-sets",
+            json={"finding_ids": [item.id for item in findings]},
+        ).json()
+        selected = change_set["changes"][0]
+        applied = client.post(
+            f"/api/text-change-sets/{change_set['id']}/apply",
+            json={
+                "selected_change_ids": [selected["id"]],
+                "edited_replacements": {selected["id"]: "传呼机和公用电话"},
+                "expected_set_revision": change_set["revision"],
+                "expected_chapter_revision": chapter["revision"],
+            },
+        ).json()
+        archive = client.get(f"/api/projects/{project_id}/export").json()
+        restored_response = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+        restored = restored_response.json()
+        restored_chapter_id = restored["chapters"][0]["id"]
+        restored_versions = client.get(
+            f"/api/chapters/{restored_chapter_id}/versions"
+        ).json()
+        restored_findings = client.get(
+            f"/api/chapters/{restored_chapter_id}/review-findings"
+        ).json()
+        restored_sets = client.get(
+            f"/api/chapters/{restored_chapter_id}/text-change-sets"
+        ).json()
+
+    assert restored_response.status_code == 201
+    assert restored["chapters"][0]["content"] == applied["content"]
+    assert [item["source"] for item in restored_versions][:2] == [
+        "change_set_apply",
+        "manual_save",
+    ]
+    assert {item["state"] for item in restored_findings} == {"accepted", "open"}
+    assert restored_sets[0]["state"] == "applied"
+    assert [item["selected"] for item in restored_sets[0]["changes"]] == [True, False]
+    assert restored_sets[0]["changes"][0]["applied_replacement"] == "传呼机和公用电话"
 
 
 def test_reality_source_archive_defaults_to_card_snapshot_and_can_include_raw_asset(

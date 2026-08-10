@@ -57,6 +57,7 @@ from app.jobs import (
     JobRepository,
     JobRuntime,
 )
+from app.jobs.runtime import JobExecutionContext
 from app.models import (
     AcknowledgeOriginalityReportRequest,
     AiChapterBriefProposal,
@@ -67,8 +68,10 @@ from app.models import (
     ApplyFactChangeSetRequest,
     ApplyGenerationRequest,
     ApplyReferencePatternRequest,
+    ApplyTextChangeSetRequest,
     BookBlueprint,
     Chapter,
+    ChapterVersion,
     ConfigureAiRequest,
     CreateChapterRequest,
     CreateFutureKnowledgeRequest,
@@ -77,6 +80,7 @@ from app.models import (
     CreateSourceCardRequest,
     CreateStoryEntityRequest,
     CreateStoryThreadRequest,
+    CreateTextChangeSetRequest,
     CreateTimelineEventRequest,
     DirectorChapterPipelineRequest,
     DirectorChapterPipelineResult,
@@ -107,7 +111,13 @@ from app.models import (
     ReferenceWork,
     ReferenceWorkImpactResponse,
     RejectFactChangeSetRequest,
+    RejectTextChangeSetRequest,
+    ReviewChapterRequest,
+    ReviewFinding,
     ReviewFutureKnowledgeRequest,
+    ReviewJobResult,
+    ReviewOutboundPreview,
+    RollbackChapterVersionRequest,
     RollingChapterPlan,
     SelectDirectorCandidateRequest,
     SetSourceCardConfirmationRequest,
@@ -118,6 +128,7 @@ from app.models import (
     StartGenerationRequest,
     StoryEntity,
     StoryThread,
+    TextChangeSet,
     TimelineEvent,
     TransitionChapterRequest,
     TransitionStoryThreadRequest,
@@ -163,6 +174,13 @@ from app.repository import (
     StaleChapterSequenceError,
     StaleRevisionError,
 )
+from app.review.repository import (
+    InvalidTextChangeError,
+    ReviewNotFoundError,
+    ReviewRepository,
+    StaleReviewRevisionError,
+)
+from app.review.service import REVIEW_WORKFLOW, ReviewService
 from app.safe_import import (
     MAX_PDF_FILE_BYTES,
     ParsedReferenceFile,
@@ -191,6 +209,7 @@ def create_app(
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
         application.state.director_repository = DirectorRepository(database)
+        application.state.review_repository = ReviewRepository(database)
         application.state.reference_job_service = ReferenceJobService(
             application.state.repository,
             application.state.job_repository,
@@ -212,13 +231,28 @@ def create_app(
             application.state.model_profiles,
             application.state.context_repository,
         )
+
+        application.state.review_service = ReviewService(
+            application.state.repository,
+            application.state.review_repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
+
+        def handle_review_job(context: JobExecutionContext, job: Job) -> None:
+            if job.workflow == REVIEW_WORKFLOW:
+                application.state.review_service.handle(context, job)
+            else:
+                application.state.director_service.handle(context, job)
+
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
             {
                 JobKind.REFERENCE_FUSION: application.state.reference_job_service.handle,
                 JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
                 JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
-                JobKind.REVIEW: application.state.director_service.handle,
+                JobKind.REVIEW: handle_review_job,
             },
         )
         if not defer_job_runtime:
@@ -1892,6 +1926,182 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
 
+    @application.get(
+        "/api/chapters/{chapter_id}/versions",
+        response_model=list[ChapterVersion],
+    )
+    def list_chapter_versions(
+        chapter_id: UUID,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+    ) -> list[ChapterVersion]:
+        try:
+            return reviews.list_chapter_versions(str(chapter_id))
+        except ReviewNotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/versions/{version_id}/rollback",
+        response_model=Chapter,
+    )
+    def rollback_chapter_version(
+        chapter_id: UUID,
+        version_id: UUID,
+        body: RollbackChapterVersionRequest,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+    ) -> Chapter:
+        try:
+            return reviews.rollback_chapter_version(
+                str(chapter_id), str(version_id), body
+            )
+        except ReviewNotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节版本不存在") from error
+        except StaleReviewRevisionError as error:
+            raise HTTPException(status_code=409, detail="正文已有新版本，未执行回滚") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/review-preview",
+        response_model=ReviewOutboundPreview,
+    )
+    def preview_chapter_review(
+        chapter_id: UUID,
+        body: ReviewChapterRequest,
+        service: Annotated[ReviewService, Depends(get_review_service)],
+    ) -> ReviewOutboundPreview:
+        try:
+            return service.preview(str(chapter_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="正文已有新版本，请重新预览") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置审校模型线路") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/review-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_chapter_review(
+        chapter_id: UUID,
+        body: ReviewChapterRequest,
+        service: Annotated[ReviewService, Depends(get_review_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit(str(chapter_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="父审校任务不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="正文已有新版本，请重新预览") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置审校模型线路") from error
+        except ValueError as error:
+            messages = {
+                "external_processing_not_confirmed": "请先确认本次审校的外发范围",
+                "estimated_cost_exceeds_limit": "预计费用超过本次上限",
+                "review_parent_mismatch": "父审校任务与当前章节不匹配",
+            }
+            raise HTTPException(
+                status_code=409,
+                detail=messages.get(str(error), "当前审校请求无法提交"),
+            ) from error
+
+    @application.get(
+        "/api/jobs/{job_id}/review-result",
+        response_model=ReviewJobResult,
+    )
+    def get_chapter_review_result(
+        job_id: UUID,
+        service: Annotated[ReviewService, Depends(get_review_service)],
+    ) -> ReviewJobResult:
+        try:
+            return service.get_result(str(job_id))
+        except (JobNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail="审校结果不存在") from error
+
+    @application.get(
+        "/api/chapters/{chapter_id}/review-findings",
+        response_model=list[ReviewFinding],
+    )
+    def list_review_findings(
+        chapter_id: UUID,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+        chapter_revision: int | None = Query(default=None, ge=0),
+    ) -> list[ReviewFinding]:
+        try:
+            return reviews.list_findings(
+                str(chapter_id), chapter_revision=chapter_revision
+            )
+        except ReviewNotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+
+    @application.get(
+        "/api/chapters/{chapter_id}/text-change-sets",
+        response_model=list[TextChangeSet],
+    )
+    def list_text_change_sets(
+        chapter_id: UUID,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+    ) -> list[TextChangeSet]:
+        return reviews.list_text_change_sets(str(chapter_id))
+
+    @application.post(
+        "/api/chapters/{chapter_id}/text-change-sets",
+        response_model=TextChangeSet,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_text_change_set(
+        chapter_id: UUID,
+        body: CreateTextChangeSetRequest,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+    ) -> TextChangeSet:
+        try:
+            return reviews.create_text_change_set(str(chapter_id), body)
+        except ReviewNotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节或审校建议不存在") from error
+        except InvalidTextChangeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post(
+        "/api/text-change-sets/{change_set_id}/apply",
+        response_model=Chapter,
+    )
+    def apply_text_change_set(
+        change_set_id: UUID,
+        body: ApplyTextChangeSetRequest,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+    ) -> Chapter:
+        try:
+            return reviews.apply_text_change_set(str(change_set_id), body)
+        except ReviewNotFoundError as error:
+            raise HTTPException(status_code=404, detail="文本变更集不存在") from error
+        except StaleReviewRevisionError as error:
+            raise HTTPException(status_code=409, detail="正文或变更集已有新版本") from error
+        except InvalidTextChangeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post(
+        "/api/text-change-sets/{change_set_id}/reject",
+        response_model=TextChangeSet,
+    )
+    def reject_text_change_set(
+        change_set_id: UUID,
+        body: RejectTextChangeSetRequest,
+        reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
+    ) -> TextChangeSet:
+        try:
+            return reviews.reject_text_change_set(str(change_set_id), body)
+        except ReviewNotFoundError as error:
+            raise HTTPException(status_code=404, detail="文本变更集不存在") from error
+        except StaleReviewRevisionError as error:
+            raise HTTPException(status_code=409, detail="文本变更集已有新版本") from error
+        except InvalidTextChangeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @application.patch("/api/chapters/{chapter_id}", response_model=Chapter)
     def update_chapter(
         chapter_id: UUID,
@@ -1931,7 +2141,10 @@ def create_app(
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> Chapter:
         try:
-            return repository.transition_chapter(str(chapter_id), body)
+            chapter = repository.transition_chapter(str(chapter_id), body)
+            if chapter.status.value == "approved":
+                repository.create_fact_change_set(chapter.id)
+            return chapter
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
         except StaleRevisionError as error:
@@ -2089,6 +2302,16 @@ def get_director_repository(request: Request) -> DirectorRepository:
 
 def get_director_service(request: Request) -> DirectorService:
     service: DirectorService = request.app.state.director_service
+    return service
+
+
+def get_review_repository(request: Request) -> ReviewRepository:
+    repository: ReviewRepository = request.app.state.review_repository
+    return repository
+
+
+def get_review_service(request: Request) -> ReviewService:
+    service: ReviewService = request.app.state.review_service
     return service
 
 
