@@ -52,6 +52,7 @@ class JobRepository:
         *,
         project_id: str,
         kind: JobKind,
+        workflow: str = "",
         idempotency_key: str,
         input_payload: dict[str, object],
         provider: str,
@@ -63,6 +64,8 @@ class JobRepository:
         estimated_calls: int = 0,
         now: datetime | None = None,
     ) -> tuple[Job, bool]:
+        if len(workflow) > 80 or "\x00" in workflow:
+            raise ValueError("invalid job workflow")
         timestamp = _now(now).isoformat()
         input_json = _canonical_json(input_payload)
         job_id = str(uuid4())
@@ -70,10 +73,10 @@ class JobRepository:
             result = connection.execute(
                 """
                 INSERT INTO jobs (
-                    id, project_id, chapter_id, parent_job_id, kind, state,
+                    id, project_id, chapter_id, parent_job_id, kind, workflow, state,
                     idempotency_key, input_json, progress_total, estimated_calls,
                     provider, provider_profile_id, model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id, kind, idempotency_key) DO NOTHING
                 """,
                 (
@@ -82,6 +85,7 @@ class JobRepository:
                     chapter_id,
                     parent_job_id,
                     kind.value,
+                    workflow,
                     JobState.QUEUED.value,
                     idempotency_key,
                     input_json,
@@ -114,10 +118,10 @@ class JobRepository:
                     """,
                     (project_id, kind.value, idempotency_key),
                 ).fetchone()
-                if row is not None and row["input_json"] != input_json:
-                    raise JobIdempotencyConflictError(
-                        "同一任务幂等键对应了不同输入"
-                    )
+                if row is not None and (
+                    row["input_json"] != input_json or row["workflow"] != workflow
+                ):
+                    raise JobIdempotencyConflictError("同一任务幂等键对应了不同输入")
         if row is None:
             raise JobNotFoundError(job_id)
         return self._job(row), created
@@ -148,13 +152,15 @@ class JobRepository:
                 "SELECT * FROM job_events WHERE job_id = ? ORDER BY sequence",
                 (job_id,),
             ).fetchall()
-        return JobDetail.model_validate({
-            **job.model_dump(mode="json"),
-            "chunks": [self._chunk(row) for row in chunks],
-            "attempts": [self._attempt(row) for row in attempts],
-            "artifacts": [self._artifact(row) for row in artifacts],
-            "events": [self._event(row) for row in events],
-        })
+        return JobDetail.model_validate(
+            {
+                **job.model_dump(mode="json"),
+                "chunks": [self._chunk(row) for row in chunks],
+                "attempts": [self._attempt(row) for row in attempts],
+                "artifacts": [self._artifact(row) for row in artifacts],
+                "events": [self._event(row) for row in events],
+            }
+        )
 
     def list_jobs(self, project_id: str, *, limit: int = 100) -> list[Job]:
         with self.database.connect() as connection:
@@ -598,9 +604,7 @@ class JobRepository:
                 or int(row["ordinal"]) != ordinal
                 or row["kind"] != kind.value
             ):
-                raise JobIdempotencyConflictError(
-                    "同一任务块幂等键对应了不同输入"
-                )
+                raise JobIdempotencyConflictError("同一任务块幂等键对应了不同输入")
         if row is None:
             raise JobNotFoundError(chunk_id)
         return self._chunk(row), created
@@ -691,10 +695,12 @@ class JobRepository:
         timestamp = _now(now).isoformat()
         attempt_id = str(uuid4())
         with self.database.connect() as connection:
-            ordinal = int(connection.execute(
-                "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM job_attempts WHERE job_id = ?",
-                (job_id,),
-            ).fetchone()[0])
+            ordinal = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM job_attempts WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()[0]
+            )
             connection.execute(
                 """
                 INSERT INTO job_attempts (
@@ -913,10 +919,12 @@ class JobRepository:
         detail: dict[str, object],
         timestamp: str,
     ) -> None:
-        sequence = int(connection.execute(
-            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM job_events WHERE job_id = ?",
-            (job_id,),
-        ).fetchone()[0])
+        sequence = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM job_events WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()[0]
+        )
         connection.execute(
             """
             INSERT INTO job_events (
@@ -949,21 +957,27 @@ class JobRepository:
 
     @staticmethod
     def _artifact(row: Row) -> JobArtifact:
-        return JobArtifact.model_validate({
-            **dict(row),
-            "metadata": json.loads(row["metadata_json"]),
-        })
+        return JobArtifact.model_validate(
+            {
+                **dict(row),
+                "metadata": json.loads(row["metadata_json"]),
+            }
+        )
 
     @classmethod
     def _artifact_content(cls, row: Row) -> JobArtifactContent:
-        return JobArtifactContent.model_validate({
-            **cls._artifact(row).model_dump(mode="json"),
-            "payload": row["payload"],
-        })
+        return JobArtifactContent.model_validate(
+            {
+                **cls._artifact(row).model_dump(mode="json"),
+                "payload": row["payload"],
+            }
+        )
 
     @staticmethod
     def _event(row: Row) -> JobEvent:
-        return JobEvent.model_validate({
-            **dict(row),
-            "detail": json.loads(row["detail_json"]),
-        })
+        return JobEvent.model_validate(
+            {
+                **dict(row),
+                "detail": json.loads(row["detail_json"]),
+            }
+        )

@@ -376,6 +376,52 @@ CREATE TABLE IF NOT EXISTS originality_reports (
 CREATE INDEX IF NOT EXISTS idx_originality_reports_application
 ON originality_reports(application_id, blueprint_revision DESC);
 
+CREATE TABLE IF NOT EXISTS book_blueprints (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    idea TEXT NOT NULL CHECK(length(idea) BETWEEN 1 AND 3000),
+    content_json TEXT NOT NULL CHECK(length(content_json) BETWEEN 2 AND 30000),
+    locks_json TEXT NOT NULL CHECK(length(locks_json) BETWEEN 2 AND 3000),
+    field_versions_json TEXT NOT NULL CHECK(length(field_versions_json) BETWEEN 2 AND 3000),
+    stale_fields_json TEXT NOT NULL DEFAULT '[]' CHECK(length(stale_fields_json) BETWEEN 2 AND 3000),
+    plan_stale INTEGER NOT NULL DEFAULT 1 CHECK(plan_stale IN (0, 1)),
+    source_candidate_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS volume_plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    volume_number INTEGER NOT NULL CHECK(volume_number BETWEEN 1 AND 100),
+    content_json TEXT NOT NULL CHECK(length(content_json) BETWEEN 2 AND 30000),
+    locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, volume_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_volume_plans_project_number
+ON volume_plans(project_id, volume_number);
+
+CREATE TABLE IF NOT EXISTS rolling_chapter_plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    volume_plan_id TEXT NOT NULL REFERENCES volume_plans(id) ON DELETE CASCADE,
+    chapter_number INTEGER NOT NULL CHECK(chapter_number BETWEEN 1 AND 10000),
+    content_json TEXT NOT NULL CHECK(length(content_json) BETWEEN 2 AND 100000),
+    locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, chapter_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rolling_chapter_plans_project_number
+ON rolling_chapter_plans(project_id, chapter_number);
+
 CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 80),
@@ -437,6 +483,7 @@ CREATE TABLE IF NOT EXISTS context_directives (
 CREATE INDEX IF NOT EXISTS idx_context_directives_chapter
 ON context_directives(chapter_id, source_kind, source_id);
 """
+
 
 class DatabaseIntegrityError(RuntimeError):
     """Raised when SQLite reports that an existing database is damaged."""
@@ -525,9 +572,7 @@ class Database:
         with closing(sqlite3.connect(self.path, timeout=5)) as connection:
             checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
             if checkpoint is not None and int(checkpoint[0]) != 0:
-                raise DatabaseMigrationError(
-                    "原库仍被其他进程占用，未替换已完成的迁移副本"
-                )
+                raise DatabaseMigrationError("原库仍被其他进程占用，未替换已完成的迁移副本")
         self._remove_sqlite_sidecars(self.path)
 
     def _inspect_existing_database(self) -> int:

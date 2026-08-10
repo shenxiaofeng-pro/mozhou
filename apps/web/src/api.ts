@@ -7,8 +7,11 @@ import type {
   AiTaskType,
   AcknowledgeOriginalityReportInput,
   ApplyFactChangeSetInput,
+  ApplyDirectorProposalInput,
   ApplyReferencePatternInput,
   Chapter,
+  BookBlueprint,
+  BookBlueprintField,
   ConfigureAiInput,
   ContextDirective,
   ContextDirectiveInput,
@@ -36,6 +39,7 @@ import type {
   Project,
   ProjectArchive,
   ReferenceWork,
+  RollingChapterPlan,
   ReferenceWorkImpact,
   ReferenceFilePreview,
   ReferencePatternApplication,
@@ -48,16 +52,32 @@ import type {
   StoryThread,
   TransitionStoryThreadInput,
   GenerationRun,
+  DirectorChapterPipelineRequest,
+  DirectorChapterPipelineResult,
+  DirectorExpansionProposal,
+  DirectorExpansionRequest,
+  DirectorFieldProposal,
+  DirectorFieldRegenerationRequest,
+  DirectorOutboundPreview,
+  DirectorPlanningSnapshot,
+  DirectorRegenerationImpact,
+  DirectorStartupProposalSet,
+  DirectorStartupRequest,
   TransitionChapterInput,
   TimelineEvent,
+  VolumePlan,
   UpdateChapterBriefInput,
   UpdateChapterInput,
+  UpdateBookBlueprintInput,
+  UpdateRollingChapterPlanInput,
+  UpdateVolumePlanInput,
   UpdateModelProfileInput,
   UpdateReferenceBlueprintInput,
   UpdateAiTaskDefaultInput,
   UpdateStoryEntityInput,
   Workspace,
   WorkspaceSummary,
+  SelectDirectorCandidateInput,
 } from '@mozhou/contracts'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -281,6 +301,121 @@ export const api = {
   },
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })
+  },
+  getDirectorSnapshot(projectId: string) {
+    return request<DirectorPlanningSnapshot>(
+      `/api/projects/${encodeURIComponent(projectId)}/director`,
+    )
+  },
+  updateBookBlueprint(projectId: string, input: UpdateBookBlueprintInput) {
+    return request<BookBlueprint>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/book-blueprint`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  getDirectorRegenerationImpact(projectId: string, targetField: BookBlueprintField) {
+    return request<DirectorRegenerationImpact>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/regeneration-impact`,
+      { method: 'POST', body: JSON.stringify({ target_field: targetField }) },
+    )
+  },
+  previewDirectorStartup(projectId: string, input: DirectorStartupRequest) {
+    return request<DirectorOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/startup-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startDirectorStartupJob(projectId: string, input: DirectorStartupRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/startup-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getDirectorStartupResult(jobId: string) {
+    return request<DirectorStartupProposalSet>(
+      `/api/jobs/${encodeURIComponent(jobId)}/director-startup-result`,
+    )
+  },
+  selectDirectorStartupCandidate(projectId: string, input: SelectDirectorCandidateInput) {
+    return request<BookBlueprint>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/startup-selection`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewDirectorExpansion(projectId: string, input: DirectorExpansionRequest) {
+    return request<DirectorOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/expansion-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startDirectorExpansionJob(projectId: string, input: DirectorExpansionRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/expansion-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getDirectorExpansionResult(jobId: string) {
+    return request<DirectorExpansionProposal>(
+      `/api/jobs/${encodeURIComponent(jobId)}/director-expansion-result`,
+    )
+  },
+  applyDirectorExpansion(projectId: string, input: ApplyDirectorProposalInput) {
+    return request<DirectorPlanningSnapshot>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/expansion-application`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewDirectorField(projectId: string, input: DirectorFieldRegenerationRequest) {
+    return request<DirectorOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/field-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startDirectorFieldJob(projectId: string, input: DirectorFieldRegenerationRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/field-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getDirectorFieldResult(jobId: string) {
+    return request<DirectorFieldProposal>(
+      `/api/jobs/${encodeURIComponent(jobId)}/director-field-result`,
+    )
+  },
+  applyDirectorField(projectId: string, input: ApplyDirectorProposalInput) {
+    return request<BookBlueprint>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/field-application`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  updateDirectorVolumePlan(projectId: string, planId: string, input: UpdateVolumePlanInput) {
+    return request<VolumePlan>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/volume-plans/${encodeURIComponent(planId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  updateDirectorRollingPlan(projectId: string, planId: string, input: UpdateRollingChapterPlanInput) {
+    return request<RollingChapterPlan>(
+      `/api/projects/${encodeURIComponent(projectId)}/director/rolling-plans/${encodeURIComponent(planId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewDirectorPipeline(chapterId: string, input: DirectorChapterPipelineRequest) {
+    return request<DirectorOutboundPreview>(
+      `/api/chapters/${encodeURIComponent(chapterId)}/director-pipeline-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startDirectorPipelineJob(chapterId: string, input: DirectorChapterPipelineRequest) {
+    return request<Job>(
+      `/api/chapters/${encodeURIComponent(chapterId)}/director-pipeline-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getDirectorPipelineResult(jobId: string) {
+    return request<DirectorChapterPipelineResult>(
+      `/api/jobs/${encodeURIComponent(jobId)}/director-pipeline-result`,
+    )
   },
   exportProject(projectId: string, includeReferenceAssets = false) {
     const suffix = includeReferenceAssets ? '?include_reference_assets=true' : ''
