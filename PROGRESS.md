@@ -10,11 +10,11 @@
 
 | 决策 | 结论 |
 |---|---|
-| D1 分发与许可 | MVP 先按闭源私有测试推进；保持清洁实现，不复制 MiroFish 源码 |
+| D1 分发与许可 | 源码仓库已转为公开；产品仍按本地 macOS 封闭测试推进，保持清洁实现 |
 | D2 AI 自动化 | 默认一键串联到单章候选稿；写入正文仍需作者确认 |
 | D3 模型范围 | 首轮支持 OpenAI-compatible 与自定义 base URL；Ollama 原生体验放入 P1 |
 | D4 平台顺序 | macOS 先行内测；Windows 在公开 MVP 前完成发布门 |
-| D5 仓库治理 | 不升级 GitHub Pro；保持私有，采用版本化本地 pre-push 门和强制执行的 PR/CI 工作纪律，外部协作前重新评估 |
+| D5 仓库治理 | 公开仓库启用服务端 `main` 保护与 macOS/Windows/security 必需检查；本地 pre-push 和守卫继续保留 |
 
 ## Definition of Done
 
@@ -243,6 +243,7 @@
 - 完整 `pnpm run verify` 通过：仓库守卫、lint、严格类型检查、工程脚本 10/10、Web 35/35、API 152/152、Web 生产构建、独立 sidecar 构建与 Rust desktop check 全部通过。
 - PR #19 首次远端门中 macOS 与 security 通过，Windows 复现了章节 Job 在冻结 Artifact/Chunk 写完前被 worker 领取的真实竞态。处理器现在会幂等补齐上下文 Artifact 和唯一 Chunk；回归通过删除两项初始计划后执行任务，验证仅调用一次 provider 且原冻结上下文不漂移。
 - 竞态修复后重跑完整本地门，Web 35/35、API 152/152 及所有构建仍通过。后续 GitHub Actions run 31337480682 的三项 Job 在 1–2 秒内、执行任何 step 前同时失败；Check Run 注解明确为账户付款失败或 Actions spending limit 需提高。这是仓库外部的 Actions 计费/配额阻断，修复提交未合并，M4 远端门仍不视为通过。
+- 产品负责人已将 GitHub 仓库转为公开，用于恢复标准托管运行器和服务端分支保护；新增 ADR 0009 替代免费私有仓库的阶段性例外。
 - 真实浏览器在隔离数据库中建立人物和已确认现实资料；8,000 Token 预览展示 6 项真实外发内容、4,238 预计输入 Token、53% 用量、稳定来源和字符 0–30 范围。
 - 同一浏览器验收验证现实资料“固定→取消固定→排除→取消排除”都会立即重编译；740×900 抽屉内面板和“确认外发并开始”可达，页面横向滚动宽度等于 740，控制台 warning/error 为 0。验收没有点击最终外发，未调用付费模型。
 
