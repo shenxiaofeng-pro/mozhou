@@ -1,5 +1,5 @@
-import type { CreateProjectInput, Genre, Workspace } from '@mozhou/contracts'
-import { useState, type ChangeEvent, type FormEvent } from 'react'
+import type { BetaTemplate, CreateProjectInput, Genre, Workspace } from '@mozhou/contracts'
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { api } from '../api'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
@@ -19,10 +19,35 @@ const genreLabels: Record<Genre, string> = {
 
 export function CreateProjectForm({ onCreated, onImported, onCancel }: CreateProjectFormProps) {
   const [genre, setGenre] = useState<Genre>('urban_rebirth')
+  const [title, setTitle] = useState('')
+  const [rebirthYear, setRebirthYear] = useState(1998)
+  const [rebirthLocation, setRebirthLocation] = useState('福建南平')
+  const [templates, setTemplates] = useState<BetaTemplate[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<BetaTemplate | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
   const [isManuscriptImportOpen, setIsManuscriptImportOpen] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api.listBetaTemplates()
+      .then((result) => {
+        if (active) setTemplates(result)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const applyTemplate = (template: BetaTemplate) => {
+    setGenre(template.genre)
+    setTitle(template.suggested_title)
+    setRebirthYear(template.rebirth_year)
+    setRebirthLocation(template.rebirth_location)
+    setSelectedTemplate(template)
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -94,9 +119,45 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
           <h2>先钉住重生的那一刻</h2>
         </header>
 
+        {templates.length > 0 ? (
+          <section className="project-beta-templates" aria-labelledby="project-beta-templates-title">
+            <div>
+              <p>封测起航模板</p>
+              <h3 id="project-beta-templates-title">先带入一个可验证的十章目标</h3>
+            </div>
+            <div className="project-beta-template-grid">
+              {templates.map((template) => (
+                <button
+                  type="button"
+                  key={template.id}
+                  data-selected={selectedTemplate?.id === template.id}
+                  onClick={() => applyTemplate(template)}
+                >
+                  <strong>{template.label}</strong>
+                  <span>{template.rebirth_year} · {template.rebirth_location}</span>
+                </button>
+              ))}
+            </div>
+            {selectedTemplate ? (
+              <aside>
+                <strong>十章验证目标</strong>
+                <p>{selectedTemplate.first_ten_chapter_goal}</p>
+                <span>{selectedTemplate.reality_anchor}</span>
+              </aside>
+            ) : null}
+          </section>
+        ) : null}
+
         <label>
           作品名
-          <input name="title" maxLength={120} required placeholder="例如：回到九八年的南平" />
+          <input
+            name="title"
+            maxLength={120}
+            required
+            placeholder="例如：回到九八年的南平"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
         </label>
 
         <fieldset>
@@ -120,11 +181,25 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
         <div className="form-row">
           <label>
             重生年份
-            <input name="rebirthYear" type="number" min="-3000" max="2030" defaultValue="1998" required />
+            <input
+              name="rebirthYear"
+              type="number"
+              min="-3000"
+              max="2030"
+              value={rebirthYear}
+              required
+              onChange={(event) => setRebirthYear(Number(event.target.value))}
+            />
           </label>
           <label>
             重生地点
-            <input name="rebirthLocation" maxLength={100} defaultValue="福建南平" required />
+            <input
+              name="rebirthLocation"
+              maxLength={100}
+              value={rebirthLocation}
+              required
+              onChange={(event) => setRebirthLocation(event.target.value)}
+            />
           </label>
         </div>
 

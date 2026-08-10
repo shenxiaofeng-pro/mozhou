@@ -14,6 +14,10 @@ import type {
   ChapterVersion,
   BookBlueprint,
   BookBlueprintField,
+  BetaEvaluationReport,
+  BetaEventType,
+  BetaFeedback,
+  BetaTemplate,
   ConfigureAiInput,
   ConfirmManuscriptImportInput,
   ContextDirective,
@@ -22,6 +26,7 @@ import type {
   CreateModelProfileInput,
   CreateDirectoryNodeInput,
   CreateChapterInput,
+  CreateBetaFeedbackInput,
   CreateFutureKnowledgeInput,
   CreateProjectInput,
   CreateRecoveryPointInput,
@@ -78,6 +83,7 @@ import type {
   DirectorRegenerationImpact,
   DirectorStartupProposalSet,
   DirectorStartupRequest,
+  DiagnosticSummary,
   TransitionChapterInput,
   TimelineEvent,
   VolumePlan,
@@ -180,7 +186,48 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Blob; filename: string }> {
+  const connection = await resolveApiConnection()
+  const headers = new Headers(init?.headers)
+  if (connection.sessionToken) headers.set('X-Mozhou-Session-Token', connection.sessionToken)
+  const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers })
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null)
+    const detail = payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string'
+      ? payload.detail
+      : '本地服务暂时无法完成操作'
+    throw new ApiError(detail, response.status)
+  }
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'mozhou-diagnostics.zip'
+  return { blob: await response.blob(), filename }
+}
+
 export const api = {
+  getDiagnostics() {
+    return request<DiagnosticSummary>('/api/diagnostics')
+  },
+  exportDiagnosticBundle() {
+    return requestBlob('/api/diagnostics/bundle', { method: 'POST' })
+  },
+  listBetaTemplates() {
+    return request<BetaTemplate[]>('/api/beta/templates')
+  },
+  getBetaReport(projectId: string) {
+    return request<BetaEvaluationReport>(`/api/projects/${encodeURIComponent(projectId)}/beta-report`)
+  },
+  createBetaFeedback(projectId: string, input: CreateBetaFeedbackInput) {
+    return request<BetaFeedback>(`/api/projects/${encodeURIComponent(projectId)}/beta-feedback`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  recordBetaEvent(projectId: string, eventType: BetaEventType) {
+    return request<void>(
+      `/api/projects/${encodeURIComponent(projectId)}/beta-events/${encodeURIComponent(eventType)}`,
+      { method: 'POST' },
+    )
+  },
   listProjects() {
     return request<Project[]>('/api/projects')
   },

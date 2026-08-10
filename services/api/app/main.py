@@ -1,3 +1,4 @@
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,6 +28,14 @@ from app.archive import (
     ProjectArchiveService,
     ProjectArchiveTooLargeError,
 )
+from app.beta import (
+    BetaEvaluationReport,
+    BetaEvaluationService,
+    BetaEventType,
+    BetaFeedback,
+    BetaTemplate,
+    CreateBetaFeedbackRequest,
+)
 from app.chapter_jobs import ChapterJobService
 from app.config import default_database_path
 from app.context import (
@@ -40,6 +49,14 @@ from app.context import (
     StaleContextDirectiveError,
 )
 from app.database import Database
+from app.diagnostics import (
+    DiagnosticService,
+    DiagnosticSummary,
+    classify_sqlite_operational_error,
+    elapsed_milliseconds,
+    request_timer,
+    safe_route_template,
+)
 from app.director.repository import (
     DirectorNotFoundError,
     DirectorRepository,
@@ -220,11 +237,14 @@ def create_app(
     if session_token is not None and fullmatch(r"[0-9a-f]{64}", session_token) is None:
         raise ValueError("session token must be 64 lowercase hexadecimal characters")
     database = Database(database_path or default_database_path())
+    diagnostics = DiagnosticService(database)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         database.initialize()
         application.state.repository = ProjectRepository(database)
+        application.state.beta_evaluation = BetaEvaluationService(database)
+        application.state.diagnostics = diagnostics
         application.state.manuscript_service = ManuscriptService(
             database,
             application.state.repository,
@@ -307,6 +327,42 @@ def create_app(
     ) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": "请求内容格式无效"})
 
+    @application.exception_handler(sqlite3.OperationalError)
+    async def sanitized_database_operational_error(
+        _request: Request,
+        error: sqlite3.OperationalError,
+    ) -> JSONResponse:
+        status_code, detail, code = classify_sqlite_operational_error(error)
+        diagnostics.events.system_event(
+            event="database_operation_failed",
+            level="error",
+            code=code,
+        )
+        headers = {"Retry-After": "1"} if status_code == 503 else None
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": detail, "code": code},
+            headers=headers,
+        )
+
+    @application.exception_handler(sqlite3.DatabaseError)
+    async def sanitized_database_error(
+        _request: Request,
+        _error: sqlite3.DatabaseError,
+    ) -> JSONResponse:
+        diagnostics.events.system_event(
+            event="database_operation_failed",
+            level="error",
+            code="database_error",
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "本地数据库操作失败，请导出诊断包并保留现有数据文件",
+                "code": "database_error",
+            },
+        )
+
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -341,9 +397,81 @@ def create_app(
                 )
         return await call_next(request)
 
+    @application.middleware("http")
+    async def record_sanitized_request_event(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        request_id, started_at = request_timer()
+        response = await call_next(request)
+        diagnostics.events.request_completed(
+            request_id=request_id,
+            method=request.method,
+            route=safe_route_template(request.scope),
+            status_code=response.status_code,
+            duration_ms=elapsed_milliseconds(started_at),
+        )
+        response.headers["X-Mozhou-Request-Id"] = request_id
+        return response
+
     @application.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @application.get("/api/diagnostics", response_model=DiagnosticSummary)
+    def get_diagnostics() -> DiagnosticSummary:
+        return diagnostics.summary()
+
+    @application.post("/api/diagnostics/bundle")
+    def export_diagnostic_bundle() -> Response:
+        filename, payload = diagnostics.bundle()
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @application.get("/api/beta/templates", response_model=list[BetaTemplate])
+    def list_beta_templates() -> list[BetaTemplate]:
+        return application.state.beta_evaluation.list_templates()
+
+    @application.get(
+        "/api/projects/{project_id}/beta-report",
+        response_model=BetaEvaluationReport,
+    )
+    def get_beta_report(project_id: UUID) -> BetaEvaluationReport:
+        try:
+            return application.state.beta_evaluation.report(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/beta-feedback",
+        response_model=BetaFeedback,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_beta_feedback(
+        project_id: UUID,
+        body: CreateBetaFeedbackRequest,
+    ) -> BetaFeedback:
+        try:
+            return application.state.beta_evaluation.create_feedback(str(project_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/beta-events/{event_type}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def record_beta_event(project_id: UUID, event_type: BetaEventType) -> Response:
+        try:
+            application.state.beta_evaluation.record_event(str(project_id), event_type)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post("/api/runtime/start")
     def start_job_runtime(
