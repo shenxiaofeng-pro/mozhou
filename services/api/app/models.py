@@ -295,6 +295,12 @@ class SourceCard(BaseModel):
     applicable_year_end: int
     confidence: SourceConfidence
     excerpt: str
+    source_document_id: str | None = None
+    source_date: str | None = None
+    page_number_start: int | None = None
+    page_number_end: int | None = None
+    start_char: int | None = None
+    end_char: int | None = None
     confirmed: bool
     revision: int
     created_at: str
@@ -313,6 +319,35 @@ class ReferenceSegment(BaseModel):
     created_at: str
 
 
+class ReferenceSourceSpan(BaseModel):
+    page_number: int = Field(ge=1, le=2000)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> ReferenceSourceSpan:
+        if self.end_char <= self.start_char:
+            raise ValueError("来源页码字符范围无效")
+        return self
+
+
+class SourceDocument(BaseModel):
+    id: str
+    title: str
+    source_filename: str
+    source_format: ReferenceFormat
+    source_sha256: str
+    content_sha256: str
+    source_encoding: str
+    encoding_confidence: float
+    import_state: str
+    duplicate_of_id: str | None = None
+    source_spans: list[ReferenceSourceSpan] = Field(default_factory=list)
+    total_characters: int
+    created_at: str
+    updated_at: str
+
+
 class ReferenceWork(BaseModel):
     id: str
     project_id: str | None = None
@@ -324,10 +359,12 @@ class ReferenceWork(BaseModel):
     total_characters: int
     segment_target_characters: int
     content_sha256: str
+    source_sha256: str
     source_encoding: str
     encoding_confidence: float
     import_state: str
     duplicate_of_id: str | None = None
+    source_spans: list[ReferenceSourceSpan] = Field(default_factory=list)
     segments: list[ReferenceSegment] = Field(default_factory=list)
     created_at: str
     updated_at: str
@@ -463,6 +500,27 @@ class ImportReferenceWorkRequest(BaseModel):
         if len(value.encode("utf-8")) > 20 * 1024 * 1024:
             raise ValueError("参考作品不能超过 20 MB")
         return value
+
+
+class ReferenceFilePreview(BaseModel):
+    source_filename: str
+    source_format: ReferenceFormat
+    source_encoding: str
+    encoding_confidence: float = Field(ge=0, le=1)
+    import_state: str
+    source_sha256: str
+    content_sha256: str
+    total_characters: int
+    page_count: int
+    preview: str
+    warnings: list[str] = Field(default_factory=list)
+    source_spans: list[ReferenceSourceSpan] = Field(default_factory=list)
+
+
+class ReferenceWorkImpactResponse(BaseModel):
+    work: ReferenceWork
+    projects: list[Project]
+    cache_entries: int
 
 
 class ReferenceSynthesisRequest(BaseModel):

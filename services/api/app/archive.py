@@ -28,6 +28,7 @@ from app.models import (
     ReferenceSegment,
     ReferenceWork,
     SourceCard,
+    SourceDocument,
     StoryEntity,
     StoryFact,
     StoryThread,
@@ -372,6 +373,28 @@ ARCHIVE_TABLES = (
         ),
     ),
     ArchiveTable(
+        "source_documents",
+        (
+            "id",
+            "title",
+            "source_filename",
+            "source_format",
+            "source_sha256",
+            "content_sha256",
+            "source_encoding",
+            "encoding_confidence",
+            "import_state",
+            "source_spans_json",
+            "duplicate_of_id",
+            "content",
+            "created_at",
+            "updated_at",
+        ),
+        "id IN (SELECT source_document_id FROM source_cards WHERE project_id = ? AND source_document_id IS NOT NULL)",
+        (),
+        ("source_spans_json",),
+    ),
+    ArchiveTable(
         "source_cards",
         (
             "id",
@@ -383,13 +406,22 @@ ARCHIVE_TABLES = (
             "applicable_year_end",
             "confidence",
             "excerpt",
+            "source_document_id",
+            "source_date",
+            "page_number_start",
+            "page_number_end",
+            "start_char",
+            "end_char",
             "confirmed",
             "revision",
             "created_at",
             "updated_at",
         ),
         "project_id = ?",
-        (("project_id", "projects", False),),
+        (
+            ("project_id", "projects", False),
+            ("source_document_id", "source_documents", True),
+        ),
     ),
     ArchiveTable(
         "reference_works",
@@ -402,14 +434,18 @@ ARCHIVE_TABLES = (
             "total_characters",
             "segment_target_characters",
             "content_sha256",
+            "source_sha256",
             "source_encoding",
             "encoding_confidence",
             "import_state",
+            "source_spans_json",
             "duplicate_of_id",
             "created_at",
             "updated_at",
         ),
         "id IN (SELECT reference_work_id FROM project_reference_works WHERE project_id = ?)",
+        (),
+        ("source_spans_json",),
     ),
     ArchiveTable(
         "reference_segments",
@@ -575,6 +611,16 @@ def _validate_business_rows(
             StoryThread.model_validate(row)
         for row in tables["source_cards"]:
             SourceCard.model_validate(row)
+        for row in tables["source_documents"]:
+            spans = _parse_json(row["source_spans_json"])
+            content = row["content"]
+            if not isinstance(spans, list) or not isinstance(content, str) or not content:
+                raise InvalidProjectArchiveError("invalid_source_document")
+            SourceDocument.model_validate({
+                **row,
+                "source_spans": spans,
+                "total_characters": len(content),
+            })
 
         changes_by_set: dict[str, list[dict[str, Any]]] = {}
         for row in tables["fact_changes"]:
@@ -595,7 +641,14 @@ def _validate_business_rows(
             ReferenceSegment.model_validate(row)
             segments_by_work.setdefault(row["reference_work_id"], []).append(row)
         for row in tables["reference_works"]:
-            ReferenceWork.model_validate({**row, "segments": segments_by_work.get(row["id"], [])})
+            spans = _parse_json(row["source_spans_json"])
+            if not isinstance(spans, list):
+                raise InvalidProjectArchiveError("invalid_reference_spans")
+            ReferenceWork.model_validate({
+                **row,
+                "source_spans": spans,
+                "segments": segments_by_work.get(row["id"], []),
+            })
 
         segment_ids = ids_by_table["reference_segments"]
         for row in tables["reference_pattern_cards"]:
@@ -706,7 +759,7 @@ class ProjectArchiveService:
             tables: dict[str, list[dict[str, Any]]] = {}
             for table in ARCHIVE_TABLES:
                 if (
-                    table.name in {"reference_works", "reference_segments"}
+                    table.name in {"reference_works", "reference_segments", "source_documents"}
                     and not include_reference_assets
                 ):
                     tables[table.name] = []
@@ -720,6 +773,12 @@ class ProjectArchiveService:
                 if table.name == "reference_works":
                     for row in table_rows:
                         row["duplicate_of_id"] = None
+                if table.name == "source_documents":
+                    for row in table_rows:
+                        row["duplicate_of_id"] = None
+                if table.name == "source_cards" and not include_reference_assets:
+                    for row in table_rows:
+                        row["source_document_id"] = None
                 tables[table.name] = table_rows
 
         payload: dict[str, Any] = {
@@ -1030,14 +1089,36 @@ class ProjectArchiveService:
                 "content_sha256": hashlib.sha256(
                     contents_by_work.get(work_id, "").encode("utf-8")
                 ).hexdigest(),
+                "source_sha256": hashlib.sha256(
+                    contents_by_work.get(work_id, "").encode("utf-8")
+                ).hexdigest(),
                 "source_encoding": "utf-8",
                 "encoding_confidence": 1.0,
                 "import_state": "ready",
+                "source_spans_json": "[]",
                 "duplicate_of_id": None,
                 "updated_at": created_at,
             })
         upgraded = dict(value)
         upgraded_tables = dict(tables)
+        upgraded_tables["source_documents"] = []
+        source_card_rows = upgraded_tables.get("source_cards")
+        if not isinstance(source_card_rows, list) or any(
+            not isinstance(row, dict) for row in source_card_rows
+        ):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded_tables["source_cards"] = [
+            {
+                **row,
+                "source_document_id": None,
+                "source_date": None,
+                "page_number_start": None,
+                "page_number_end": None,
+                "start_char": None,
+                "end_char": None,
+            }
+            for row in source_card_rows
+        ]
         upgraded_tables["reference_works"] = upgraded_works
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION

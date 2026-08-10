@@ -23,6 +23,8 @@ import type {
   CreateTimelineEventInput,
   FactChangeSet,
   FutureKnowledge,
+  ImportReferenceFileInput,
+  ImportRealitySourceFileInput,
   ImportReferenceWorkInput,
   Job,
   JobArtifactContent,
@@ -32,11 +34,14 @@ import type {
   Project,
   ProjectArchive,
   ReferenceWork,
+  ReferenceWorkImpact,
+  ReferenceFilePreview,
   ReferencePatternApplication,
   ReferencePatternCard,
   ReferenceSynthesisInput,
   RecoveryPointSummary,
   SourceCard,
+  SourceDocument,
   StoryEntity,
   StoryThread,
   TransitionStoryThreadInput,
@@ -110,7 +115,7 @@ async function resolveApiConnection(): Promise<ApiConnection> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const connection = await resolveApiConnection()
   const headers = new Headers(init?.headers)
-  if (init?.body) headers.set('Content-Type', 'application/json')
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (connection.sessionToken) {
     headers.set('X-Mozhou-Session-Token', connection.sessionToken)
   }
@@ -274,8 +279,9 @@ export const api = {
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })
   },
-  exportProject(projectId: string) {
-    return request<ProjectArchive>(`/api/projects/${encodeURIComponent(projectId)}/export`)
+  exportProject(projectId: string, includeReferenceAssets = false) {
+    const suffix = includeReferenceAssets ? '?include_reference_assets=true' : ''
+    return request<ProjectArchive>(`/api/projects/${encodeURIComponent(projectId)}/export${suffix}`)
   },
   importProjectArchive(rawArchive: string) {
     return request<Workspace>('/api/project-imports', {
@@ -430,6 +436,96 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     })
+  },
+  listReferenceWorks() {
+    return request<ReferenceWork[]>('/api/reference-library/works')
+  },
+  previewReferenceFile(file: File) {
+    const query = new URLSearchParams({ source_filename: file.name })
+    return request<ReferenceFilePreview>(`/api/reference-library/file-previews?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+  },
+  importReferenceFile(file: File, input: ImportReferenceFileInput) {
+    const query = new URLSearchParams({
+      source_filename: file.name,
+      title: input.title,
+      rights_basis: input.rights_basis,
+      segment_target_characters: String(input.segment_target_characters),
+      expected_source_sha256: input.expected_source_sha256,
+      confirm_preview: String(input.confirm_preview),
+      confirm_uncertain_encoding: String(input.confirm_uncertain_encoding),
+    })
+    if (input.project_id) query.set('project_id', input.project_id)
+    return request<ReferenceWork>(`/api/reference-library/file-imports?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+  },
+  linkReferenceWork(projectId: string, workId: string) {
+    return request<ReferenceWork>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-works/${encodeURIComponent(workId)}`,
+      { method: 'POST' },
+    )
+  },
+  unlinkReferenceWork(projectId: string, workId: string) {
+    return request<void>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-works/${encodeURIComponent(workId)}`,
+      { method: 'DELETE' },
+    )
+  },
+  getReferenceWorkImpact(workId: string) {
+    return request<ReferenceWorkImpact>(
+      `/api/reference-library/works/${encodeURIComponent(workId)}/impact`,
+    )
+  },
+  purgeReferenceWork(workId: string) {
+    return request<ReferenceWorkImpact>(
+      `/api/reference-library/works/${encodeURIComponent(workId)}?confirm_purge=true`,
+      { method: 'DELETE' },
+    )
+  },
+  listSourceDocuments() {
+    return request<SourceDocument[]>('/api/source-library/documents')
+  },
+  importRealitySourceFile(file: File, input: ImportRealitySourceFileInput) {
+    const query = new URLSearchParams({
+      project_id: input.project_id,
+      source_filename: file.name,
+      title: input.title,
+      source_kind: input.source_kind,
+      source_reference: input.source_reference,
+      applicable_year_start: String(input.applicable_year_start),
+      applicable_year_end: String(input.applicable_year_end),
+      confidence: input.confidence,
+      expected_source_sha256: input.expected_source_sha256,
+      confirm_preview: String(input.confirm_preview),
+      confirm_uncertain_encoding: String(input.confirm_uncertain_encoding),
+    })
+    if (input.source_date) query.set('source_date', input.source_date)
+    return request<SourceCard>(`/api/source-library/file-imports?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+  },
+  applySourceDocument(projectId: string, documentId: string, input: CreateSourceCardInput, sourceDate?: string) {
+    const query = new URLSearchParams()
+    if (sourceDate) query.set('source_date', sourceDate)
+    const suffix = query.size ? `?${query}` : ''
+    return request<SourceCard>(
+      `/api/projects/${encodeURIComponent(projectId)}/source-documents/${encodeURIComponent(documentId)}/cards${suffix}`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  deleteSourceDocument(documentId: string) {
+    return request<{ affected_cards: number }>(
+      `/api/source-library/documents/${encodeURIComponent(documentId)}?confirm_purge=true`,
+      { method: 'DELETE' },
+    )
   },
   synthesizeReferencePatterns(projectId: string, input: ReferenceSynthesisInput) {
     return request<ReferencePatternCard>(`/api/projects/${encodeURIComponent(projectId)}/reference-synthesis-proposals`, {

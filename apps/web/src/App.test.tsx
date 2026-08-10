@@ -206,7 +206,7 @@ describe('App', () => {
     expect(window.localStorage.getItem('mozhou:session:v1')).toContain(workspace.project.id)
   })
 
-  it('exports a complete archive from the project shelf', async () => {
+  it('exports the default project archive without global raw assets', async () => {
     vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
     const archive = {
       format: 'mozhou-project' as const,
@@ -228,11 +228,40 @@ describe('App', () => {
     render(<App />)
     await user.click(await screen.findByRole('button', { name: `导出《${workspace.project.title}》归档` }))
 
-    expect(exportProject).toHaveBeenCalledWith(workspace.project.id)
+    expect(exportProject).toHaveBeenCalledWith(workspace.project.id, false)
     expect(objectUrl).toHaveBeenCalledOnce()
     expect(click).toHaveBeenCalledOnce()
     expect(revokeUrl).toHaveBeenCalledWith('blob:mozhou-archive')
     expect(screen.getByRole('status')).toHaveTextContent('归档已导出')
+  })
+
+  it('explicitly exports a full archive with linked reference assets', async () => {
+    vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
+    const archive = {
+      format: 'mozhou-project' as const,
+      format_version: 2 as const,
+      exported_at: '2026-08-10T00:00:00Z',
+      source_project_id: workspace.project.id,
+      source_project_title: workspace.project.title,
+      schema_version: 11,
+      tables: { projects: [{ ...workspace.project }], reference_works: [] },
+      checksum_sha256: 'b'.repeat(64),
+    }
+    const exportProject = vi.spyOn(api, 'exportProject').mockResolvedValue(archive)
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:mozhou-assets-archive'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', {
+      name: `导出《${workspace.project.title}》含资料原文的完整归档`,
+    }))
+
+    expect(exportProject).toHaveBeenCalledWith(workspace.project.id, true)
+    expect(screen.getByRole('status')).toHaveTextContent('包含关联资料原文')
   })
 
   it('imports an archive as a new project copy without opening it', async () => {
@@ -1148,6 +1177,12 @@ describe('App', () => {
       applicable_year_end: 1999,
       confidence: 'high' as const,
       excerpt: '先岗位摸底，再公布分流方案。',
+      source_document_id: null,
+      source_date: null,
+      page_number_start: null,
+      page_number_end: null,
+      start_char: null,
+      end_char: null,
       confirmed: false,
       revision: 0,
       created_at: '2026-08-08T00:00:00Z',
@@ -1377,10 +1412,12 @@ describe('App', () => {
       total_characters: 500_000,
       segment_target_characters: 500_000,
       content_sha256: 'a'.repeat(64),
+      source_sha256: 'a'.repeat(64),
       source_encoding: 'utf-8',
       encoding_confidence: 1,
       import_state: 'ready' as const,
       duplicate_of_id: null,
+      source_spans: [],
       segments: [{
         id: 'segment-alpha-1',
         reference_work_id: 'reference-alpha',
@@ -1417,7 +1454,22 @@ describe('App', () => {
       ...workspace,
       reference_works: [existingWork],
     })
-    const importWork = vi.spyOn(api, 'importReferenceWork').mockResolvedValue(importedWork)
+    const filePreview = {
+      source_filename: 'beta.md',
+      source_format: 'markdown' as const,
+      source_encoding: 'utf-8',
+      encoding_confidence: 0.99,
+      import_state: 'ready' as const,
+      source_sha256: 'b'.repeat(64),
+      content_sha256: 'c'.repeat(64),
+      total_characters: 12,
+      page_count: 0,
+      preview: '第一章 新局\n新的结构',
+      warnings: [],
+      source_spans: [],
+    }
+    vi.spyOn(api, 'previewReferenceFile').mockResolvedValue(filePreview)
+    const importWork = vi.spyOn(api, 'importReferenceFile').mockResolvedValue(importedWork)
     const sourceSegmentIds = [existingWork.segments[0].id, importedWork.segments[0].id]
     const dimension = (summary: string) => ({
       summary,
@@ -1512,14 +1564,18 @@ describe('App', () => {
     if (!file.text) Object.defineProperty(file, 'text', { value: async () => '第一章 新局\n新的结构' })
     await user.upload(screen.getByLabelText('选择参考小说文件'), file)
     await user.selectOptions(screen.getByLabelText('作品权利基础'), 'public_domain')
+    await user.click(screen.getByRole('button', { name: '检测编码并查看预览' }))
+    expect(await screen.findByLabelText('参考文件预览')).toHaveTextContent('第一章 新局 新的结构')
     await user.click(screen.getByRole('button', { name: '导入并按 50 万字切段' }))
 
-    expect(importWork).toHaveBeenCalledWith(workspace.project.id, {
+    expect(importWork).toHaveBeenCalledWith(file, {
       title: 'beta',
-      source_filename: 'beta.md',
       rights_basis: 'public_domain',
       segment_target_characters: 500_000,
-      content: '第一章 新局\n新的结构',
+      expected_source_sha256: filePreview.source_sha256,
+      confirm_preview: true,
+      confirm_uncertain_encoding: false,
+      project_id: workspace.project.id,
     })
     await user.click(await screen.findByRole('checkbox', { name: '选择参考甲第 1 段' }))
     await user.click(screen.getByRole('checkbox', { name: '选择beta第 1 段' }))

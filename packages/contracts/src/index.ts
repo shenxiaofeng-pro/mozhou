@@ -45,7 +45,7 @@ export type SourceKind = 'historical_record' | 'news' | 'industry' | 'personal_n
 
 export type SourceConfidence = 'high' | 'medium' | 'low'
 
-export type ReferenceFormat = 'txt' | 'markdown'
+export type ReferenceFormat = 'txt' | 'markdown' | 'pdf'
 
 export type ReferenceRightsBasis = 'self_owned' | 'authorized' | 'public_domain'
 
@@ -92,7 +92,7 @@ export interface Project {
 
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1
+  format_version: 1 | 2
   exported_at: string
   source_project_id: string
   source_project_title: string
@@ -229,8 +229,31 @@ export interface SourceCard {
   applicable_year_end: number
   confidence: SourceConfidence
   excerpt: string
+  source_document_id: string | null
+  source_date: string | null
+  page_number_start: number | null
+  page_number_end: number | null
+  start_char: number | null
+  end_char: number | null
   confirmed: boolean
   revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SourceDocument {
+  id: string
+  title: string
+  source_filename: string
+  source_format: ReferenceFormat
+  source_sha256: string
+  content_sha256: string
+  source_encoding: string
+  encoding_confidence: number
+  import_state: 'ready' | 'needs_review'
+  duplicate_of_id: string | null
+  source_spans: ReferenceSourceSpan[]
+  total_characters: number
   created_at: string
   updated_at: string
 }
@@ -247,6 +270,12 @@ export interface ReferenceSegment {
   created_at: string
 }
 
+export interface ReferenceSourceSpan {
+  page_number: number
+  start_char: number
+  end_char: number
+}
+
 export interface ReferenceWork {
   id: string
   project_id: string | null
@@ -258,13 +287,36 @@ export interface ReferenceWork {
   total_characters: number
   segment_target_characters: number
   content_sha256: string
+  source_sha256: string
   source_encoding: string
   encoding_confidence: number
   import_state: 'ready' | 'needs_review'
   duplicate_of_id: string | null
+  source_spans: ReferenceSourceSpan[]
   segments: ReferenceSegment[]
   created_at: string
   updated_at: string
+}
+
+export interface ReferenceFilePreview {
+  source_filename: string
+  source_format: ReferenceFormat
+  source_encoding: string
+  encoding_confidence: number
+  import_state: 'ready' | 'needs_review'
+  source_sha256: string
+  content_sha256: string
+  total_characters: number
+  page_count: number
+  preview: string
+  warnings: string[]
+  source_spans: ReferenceSourceSpan[]
+}
+
+export interface ReferenceWorkImpact {
+  work: ReferenceWork
+  projects: Project[]
+  cache_entries: number
 }
 
 export interface ContinuityIssue {
@@ -567,6 +619,30 @@ export interface ImportReferenceWorkInput {
   rights_basis: ReferenceRightsBasis
   segment_target_characters: number
   content: string
+}
+
+export interface ImportReferenceFileInput {
+  title: string
+  rights_basis: ReferenceRightsBasis
+  segment_target_characters: number
+  expected_source_sha256: string
+  confirm_preview: boolean
+  confirm_uncertain_encoding: boolean
+  project_id?: string
+}
+
+export interface ImportRealitySourceFileInput {
+  project_id: string
+  title: string
+  source_kind: SourceKind
+  source_reference: string
+  applicable_year_start: number
+  applicable_year_end: number
+  confidence: SourceConfidence
+  source_date?: string
+  expected_source_sha256: string
+  confirm_preview: boolean
+  confirm_uncertain_encoding: boolean
 }
 
 export interface ReferenceSynthesisInput {

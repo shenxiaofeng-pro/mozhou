@@ -200,6 +200,53 @@ def submit_reference_job(
     ))
 
 
+def test_reference_analysis_cache_is_reused_across_projects(tmp_path: Path) -> None:
+    gateway = RecoverableReferenceGateway()
+    repository, jobs, service, runtime, first_project_id, segment_ids = build_reference_job(
+        tmp_path / "cross-project-cache.db",
+        gateway,
+        characters_per_work=100_000,
+    )
+    first_job = submit_reference_job(service, first_project_id, segment_ids)
+    assert runtime.run_once() is True
+    assert jobs.get_job(first_job.id).state == JobState.SUCCEEDED
+    first_call_count = gateway.call_count
+    assert first_call_count == 7
+
+    second_project = repository.create_project(CreateProjectRequest(
+        title="复用拆书资产",
+        genre=Genre.HISTORICAL_REBIRTH,
+        rebirth_year=1911,
+        rebirth_location="福建南平",
+    ))
+    for work in repository.list_reference_works():
+        repository.link_reference_work(second_project.project.id, work.id)
+    second_job = submit_reference_job(service, second_project.project.id, segment_ids)
+
+    assert runtime.run_once() is True
+    assert jobs.get_job(second_job.id).state == JobState.SUCCEEDED
+    assert gateway.call_count == first_call_count
+    with repository.database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM reference_analysis_cache"
+        ).fetchone()[0] == 7
+    work_to_purge = repository.list_reference_works()[0]
+    impact = repository.purge_reference_work(work_to_purge.id)
+
+    assert len(impact.projects) == 2
+    assert impact.cache_entries > 0
+    assert repository.get_workspace(first_project_id).reference_pattern_cards
+    with repository.database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM reference_segments WHERE reference_work_id = ?",
+            (work_to_purge.id,),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM reference_analysis_cache_sources WHERE reference_work_id = ?",
+            (work_to_purge.id,),
+        ).fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("fail_once_at", [1, 20, 39, 40, 41, 43])
 def test_reference_job_reuses_every_artifact_before_failed_call(
     tmp_path: Path,

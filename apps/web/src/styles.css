@@ -594,7 +594,7 @@ textarea:focus-visible {
 
 .project-volume-actions {
   display: grid;
-  grid-template-rows: 1fr auto auto;
+  grid-template-rows: 1fr auto auto auto;
   border-left: 1px solid var(--line);
 }
 
@@ -1115,6 +1115,417 @@ textarea:focus-visible {
 .reference-library-content .reference-shelf {
   grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
   max-height: none;
+}
+
+.global-library-page {
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    linear-gradient(90deg, transparent 0 6.8rem, rgb(138 79 53 / 16%) 6.8rem 6.88rem, transparent 6.88rem),
+    #dfe5e3;
+}
+
+.global-library-bar {
+  min-height: 4.5rem;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  color: #edf1ed;
+  background: #17282f;
+}
+
+.global-library-bar > div {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0 1.4rem;
+}
+
+.global-library-bar span {
+  width: 2.2rem;
+  height: 2.2rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid #7d9698;
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.global-library-bar p {
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.global-library-bar button {
+  border: 0;
+  border-left: 1px solid #496066;
+  padding: 0 1.6rem;
+  color: #edf1ed;
+  background: #29424b;
+  font-weight: 800;
+}
+
+.global-library-hero {
+  max-width: 88rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2.5rem;
+  align-items: end;
+  margin: 0 auto;
+  padding: clamp(2.8rem, 7vw, 6.5rem) clamp(1.4rem, 4vw, 4rem) 2.2rem;
+}
+
+.global-library-hero p,
+.global-library-hero h1,
+.global-library-hero span {
+  margin: 0;
+}
+
+.global-library-hero p,
+.global-intake small,
+.global-harbor-grid > * > header small {
+  color: var(--rust);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
+.global-library-hero h1 {
+  margin-top: 0.55rem;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: clamp(2.8rem, 5.5vw, 5.6rem);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.global-library-hero > div > span {
+  display: block;
+  margin-top: 1rem;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.global-library-hero dl {
+  min-width: 24rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0;
+  border-block: 1px solid #9facab;
+}
+
+.global-library-hero dl div {
+  padding: 0.8rem 1rem;
+  border-right: 1px solid #b4bfbd;
+}
+
+.global-library-hero dl div:last-child {
+  border-right: 0;
+}
+
+.global-library-hero dt {
+  color: var(--slate);
+  font-size: 0.6rem;
+}
+
+.global-library-hero dd {
+  margin: 0.2rem 0 0;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 1.55rem;
+  font-weight: 850;
+}
+
+.global-intake,
+.global-harbor-grid {
+  max-width: 88rem;
+  margin: 0 auto;
+}
+
+.global-intake {
+  border: 1px solid #aebbb9;
+  padding: clamp(1.2rem, 3vw, 2.2rem);
+  background: var(--paper);
+  box-shadow: 0.45rem 0.5rem 0 rgb(23 33 38 / 7%);
+}
+
+.global-intake > header {
+  display: flex;
+  gap: 1rem;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.global-intake h2,
+.global-harbor-grid h2 {
+  margin: 0.25rem 0 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.35rem;
+}
+
+.global-kind-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--ink);
+}
+
+.global-kind-switch button {
+  min-width: 7rem;
+  border: 0;
+  padding: 0.65rem 0.9rem;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.global-kind-switch button[data-active="true"] {
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.global-intake-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 1.4rem;
+}
+
+.global-intake-grid label,
+.global-target-project {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--slate);
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
+.global-intake-grid input,
+.global-intake-grid select,
+.global-target-project select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #c3ccca;
+  padding: 0.7rem 0.75rem;
+  color: var(--ink);
+  background: #fffefa;
+}
+
+.global-intake-grid .reference-file-field {
+  position: relative;
+  min-height: 4.45rem;
+  border: 1px dashed #9caeaa;
+  padding: 0.65rem 0.75rem;
+  background: #edf1ed;
+}
+
+.global-primary-action {
+  min-width: 16rem;
+  margin-top: 1rem;
+  border: 1px solid var(--rust);
+  padding: 0.78rem 1.2rem;
+  color: var(--paper);
+  background: var(--rust);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.global-primary-action:disabled {
+  border-color: #abb3b0;
+  background: #abb3b0;
+}
+
+.global-preview-passport,
+.global-asset-passport {
+  display: grid;
+  grid-template-columns: 4.2rem minmax(0, 1fr);
+  margin-top: 1rem;
+  border: 1px solid #b8c2bd;
+  background: #fffefa;
+}
+
+.passport-spine {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.8rem 0.35rem;
+  color: #dce7e4;
+  background: #20363e;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.passport-spine span,
+.passport-spine small {
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+}
+
+.passport-spine strong {
+  color: #d39a6a;
+  font-size: 1rem;
+}
+
+.global-preview-passport > div:nth-child(2) {
+  min-width: 0;
+  padding: 0.9rem 1rem;
+}
+
+.global-preview-passport pre {
+  max-height: 8rem;
+  overflow: auto;
+  margin: 0.55rem 0;
+  white-space: pre-wrap;
+  color: var(--ink-soft);
+  font: 0.66rem/1.65 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.global-preview-passport p,
+.global-preview-passport > label {
+  margin: 0;
+  color: var(--slate);
+  font-size: 0.62rem;
+}
+
+.global-preview-passport > label,
+.global-preview-passport > button {
+  grid-column: 2;
+  margin: 0 1rem 0.8rem;
+}
+
+.global-library-notice {
+  margin: 1rem 0 0;
+  color: #315a46;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.global-harbor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(18rem, 0.7fr);
+  gap: 1.2rem;
+  padding: 2.2rem 0 5rem;
+}
+
+.global-asset-column,
+.global-source-column {
+  min-width: 0;
+  border-top: 3px solid var(--ink);
+  padding: 1.2rem;
+  background: rgb(247 245 239 / 64%);
+}
+
+.global-target-project {
+  max-width: 24rem;
+  margin: 1rem 0;
+}
+
+.global-asset-passport {
+  margin-top: 0.75rem;
+}
+
+.passport-body {
+  min-width: 0;
+  padding: 1rem;
+}
+
+.passport-body > header {
+  display: flex;
+  gap: 1rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.passport-body h3,
+.global-source-column h3 {
+  margin: 0.2rem 0 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1rem;
+}
+
+.passport-body > p,
+.global-source-column article p {
+  margin: 0.6rem 0;
+  color: var(--slate);
+  font-size: 0.62rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.passport-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.passport-projects span {
+  padding: 0.25rem 0.45rem;
+  color: #3e5a50;
+  background: #e1e9e2;
+  font-size: 0.58rem;
+}
+
+.passport-body footer {
+  display: flex;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.passport-body footer button,
+.danger-quiet,
+.global-source-column article button {
+  border: 1px solid var(--ink);
+  padding: 0.52rem 0.7rem;
+  color: var(--paper);
+  background: var(--ink);
+  font-size: 0.61rem;
+  font-weight: 800;
+}
+
+.passport-body footer .danger-quiet,
+.global-source-column article .danger-quiet {
+  border-color: #c9aaa4;
+  color: var(--danger);
+  background: transparent;
+}
+
+.global-source-column article .danger-quiet {
+  margin-left: 0.4rem;
+}
+
+.duplicate-candidate {
+  border-left: 3px solid var(--rust-light);
+  padding-left: 0.55rem;
+  color: var(--rust) !important;
+}
+
+.global-source-column article {
+  margin-top: 0.75rem;
+  border: 1px solid #bdc6c2;
+  padding: 0.9rem;
+  background: #fffefa;
+}
+
+.global-source-column article > div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--rust);
+  font-size: 0.57rem;
+  font-weight: 800;
+}
+
+.global-source-column code {
+  display: block;
+  margin-bottom: 0.75rem;
+  color: var(--slate);
+  font-size: 0.58rem;
+}
+
+.global-empty {
+  color: var(--slate);
+  font-size: 0.68rem;
 }
 
 .story-tree {
@@ -4482,6 +4893,31 @@ textarea:focus-visible {
 }
 
 @media (max-width: 1050px) {
+  .global-library-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .global-library-hero dl {
+    min-width: 0;
+  }
+
+  .global-intake,
+  .global-harbor-grid {
+    margin-inline: 1.4rem;
+  }
+
+  .global-intake-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .global-intake-grid .reference-file-field {
+    grid-column: 1 / -1;
+  }
+
+  .global-harbor-grid {
+    grid-template-columns: 1fr;
+  }
+
   .reference-library-hero {
     grid-template-columns: 1fr;
   }
@@ -4647,6 +5083,75 @@ textarea:focus-visible {
 }
 
 @media (max-width: 760px) {
+  .global-library-page {
+    background: #dfe5e3;
+  }
+
+  .global-library-bar p {
+    font-size: 0.72rem;
+  }
+
+  .global-library-hero {
+    padding-top: 3rem;
+  }
+
+  .global-library-hero dl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .global-intake-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .global-intake,
+  .global-harbor-grid {
+    margin-inline: 0.8rem;
+  }
+
+  .global-intake > header,
+  .passport-body > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .global-kind-switch {
+    width: 100%;
+  }
+
+  .global-kind-switch button {
+    min-width: 0;
+  }
+
+  .global-primary-action {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .global-preview-passport,
+  .global-asset-passport {
+    grid-template-columns: 3.25rem minmax(0, 1fr);
+  }
+
+  .passport-body footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .global-source-column article > button {
+    width: 100%;
+  }
+
+  .global-source-column article .danger-quiet {
+    margin-top: 0.4rem;
+    margin-left: 0;
+  }
+
+  .global-preview-passport > label,
+  .global-preview-passport > button {
+    margin-left: 0.65rem;
+    margin-right: 0.65rem;
+  }
+
   .model-settings-layer {
     align-items: stretch;
     padding: 0;
@@ -4749,7 +5254,7 @@ textarea:focus-visible {
 
   .project-volume-actions {
     grid-column: 1 / -1;
-    grid-template-columns: 1.5fr 1fr 1fr;
+    grid-template-columns: 1.5fr repeat(3, 1fr);
     grid-template-rows: 1fr;
     border-top: 1px solid var(--line);
     border-left: 0;
