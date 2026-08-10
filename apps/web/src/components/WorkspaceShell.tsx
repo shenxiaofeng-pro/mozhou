@@ -10,6 +10,8 @@ import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
 import { DirectorPanel } from './DirectorPanel'
+import { ManuscriptDirectoryDialog } from './ManuscriptDirectoryDialog'
+import { SerialWorkspaceDialog } from './SerialWorkspaceDialog'
 
 interface WorkspaceShellProps {
   workspace: WorkspaceSummary
@@ -50,7 +52,7 @@ const genreLabels = {
   urban_rebirth: '都市重生',
 } as const
 
-const CHAPTER_PREFIX = /^第(?:一|\d+)章\s*/
+const CHAPTER_PREFIX = /^第[零〇一二三四五六七八九十百千万两\d]+章\s*/
 
 export function WorkspaceShell({
   workspace,
@@ -157,12 +159,28 @@ function ActiveChapterWorkspace({
   )
   const [isNavigating, setIsNavigating] = useState(false)
   const [isDirectorOpen, setIsDirectorOpen] = useState(false)
+  const [isDirectoryOpen, setIsDirectoryOpen] = useState(false)
+  const [serialDialogMode, setSerialDialogMode] = useState<'dashboard' | 'search' | null>(null)
+  const [isFocusMode, setIsFocusMode] = useState(false)
   const directorTriggerRef = useRef<HTMLButtonElement>(null)
   const directorCloseRef = useRef<HTMLButtonElement>(null)
   const deferredDraft = useDeferredValue(draft)
   const wordCount = deferredDraft.replace(/\s/g, '').length
   const progress = Math.min(100, Math.round((wordCount / workspace.project.chapter_target_words) * 100))
   const isApproved = chapter.status === 'approved'
+  const treeVolumes = (workspace.manuscript_volumes?.length ?? 0) > 0
+    ? workspace.manuscript_volumes!.map((volume) => ({
+      id: volume.id,
+      title: volume.title,
+      volumeNumber: volume.volume_number,
+      stable: true,
+    }))
+    : Array.from(new Set(workspace.chapters.map((item) => item.volume_number))).map((volumeNumber) => ({
+      id: `legacy-volume-${volumeNumber}`,
+      title: `第 ${volumeNumber} 卷`,
+      volumeNumber,
+      stable: false,
+    }))
 
   useEffect(() => {
     if (saveStatus === 'saved') return
@@ -193,16 +211,63 @@ function ActiveChapterWorkspace({
     directorTriggerRef.current?.focus()
   }
 
-  async function navigateAfterSave(action: () => void | Promise<void>) {
-    if (isNavigating) return
+  async function navigateAfterSave(action: () => void | Promise<void>): Promise<boolean> {
+    if (isNavigating) return false
     setIsNavigating(true)
     try {
       const saved = await flushNow()
-      if (saved) await action()
+      if (!saved) return false
+      await action()
+      return true
     } finally {
       setIsNavigating(false)
     }
   }
+
+  async function commitDirectory(action: () => Promise<WorkspaceSummary>) {
+    const completed = await navigateAfterSave(async () => {
+      onWorkspaceChanged(await action())
+    })
+    if (!completed) throw new Error('正文尚未保存，目录操作未执行')
+  }
+
+  async function openSerialChapter(chapterId: string) {
+    const completed = await navigateAfterSave(() => onSelectChapter(chapterId))
+    if (!completed) throw new Error('正文尚未保存，未切换章节')
+  }
+
+  useEffect(() => {
+    function handleWorkspaceShortcut(event: KeyboardEvent) {
+      const command = event.metaKey || event.ctrlKey
+      if (command && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void flushNow()
+        return
+      }
+      if (command && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        void flushNow().then((saved) => {
+          if (saved) setSerialDialogMode('search')
+        })
+        return
+      }
+      if (command && event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        setIsFocusMode((current) => !current)
+        return
+      }
+      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return
+      if (isDirectorOpen || isDirectoryOpen || serialDialogMode) return
+      const index = workspace.chapters.findIndex((item) => item.id === chapter.id)
+      const nextIndex = index + (event.key === 'ArrowUp' ? -1 : 1)
+      const next = workspace.chapters[nextIndex]
+      if (!next) return
+      event.preventDefault()
+      void navigateAfterSave(() => onSelectChapter(next.id))
+    }
+    window.addEventListener('keydown', handleWorkspaceShortcut)
+    return () => window.removeEventListener('keydown', handleWorkspaceShortcut)
+  })
 
   function handleChapterUpdated(updated: Chapter) {
     adoptServerVersion(updated)
@@ -210,7 +275,7 @@ function ActiveChapterWorkspace({
   }
 
   return (
-    <main className="workspace-shell">
+    <main className="workspace-shell" data-focus-mode={isFocusMode}>
       <header className="workspace-header">
         <div className="compact-brand">
           <span aria-hidden="true">墨</span>
@@ -223,6 +288,13 @@ function ActiveChapterWorkspace({
         <div className="header-metrics" aria-label="连载状态">
           <span><small>本章</small>{wordCount.toLocaleString()} / {workspace.project.chapter_target_words.toLocaleString()}</span>
           <span><small>当前状态</small>{chapterStatusLabels[chapter.status]}</span>
+          <button
+            className="library-action serial-action"
+            type="button"
+            aria-label="打开连载工作台"
+            disabled={isNavigating}
+            onClick={() => { void navigateAfterSave(() => setSerialDialogMode('dashboard')) }}
+          >连载台</button>
           <button
             className="library-action task-action"
             type="button"
@@ -260,23 +332,33 @@ function ActiveChapterWorkspace({
         </section>
         <nav aria-label="章节目录">
           <div className="tree-section-title">
-            <span>第一卷</span>
-            <button type="button" aria-label="添加下一章" onClick={onCreateChapter} disabled={isCreatingChapter}>＋</button>
+            <span>作品目录</span>
+            <div>
+              <button type="button" aria-label="管理卷章场景" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setIsDirectoryOpen(true)) }}>管理</button>
+              <button type="button" aria-label="添加下一章" onClick={onCreateChapter} disabled={isCreatingChapter}>＋</button>
+            </div>
           </div>
-          {workspace.chapters.map((item) => (
-            <button
-              className="chapter-item"
-              data-active={item.id === chapter.id}
-              type="button"
-              key={item.id}
-              aria-label={`打开第 ${item.chapter_number} 章：${item.title}`}
-              disabled={isNavigating}
-              onClick={() => { void navigateAfterSave(() => onSelectChapter(item.id)) }}
-            >
-              <span>{String(item.chapter_number).padStart(2, '0')}</span>
-              <strong>{item.title.replace(CHAPTER_PREFIX, '')}</strong>
-              <small>{chapterStatusLabels[item.status]}</small>
-            </button>
+          {treeVolumes.map((volume) => (
+            <section className="story-tree-volume" key={volume.id} aria-label={volume.title}>
+              <h3>{volume.title}</h3>
+              {workspace.chapters.filter((item) => volume.stable
+                ? item.volume_id === volume.id
+                : item.volume_number === volume.volumeNumber).map((item) => (
+                <button
+                  className="chapter-item"
+                  data-active={item.id === chapter.id}
+                  type="button"
+                  key={item.id}
+                  aria-label={`打开第 ${item.chapter_number} 章：${item.title}`}
+                  disabled={isNavigating}
+                  onClick={() => { void navigateAfterSave(() => onSelectChapter(item.id)) }}
+                >
+                  <span>{String(item.chapter_number).padStart(2, '0')}</span>
+                  <strong>{item.title.replace(CHAPTER_PREFIX, '')}</strong>
+                  <small>{chapterStatusLabels[item.status]}</small>
+                </button>
+              ))}
+            </section>
           ))}
         </nav>
         <section className="rolling-plan" aria-labelledby="rolling-plan-title">
@@ -310,7 +392,7 @@ function ActiveChapterWorkspace({
       <section className="editor-panel" aria-labelledby="chapter-title">
         <header className="editor-heading">
           <div>
-            <p>第一卷 · 第 {chapter.chapter_number} 章</p>
+            <p>{(workspace.manuscript_volumes ?? []).find((volume) => volume.id === chapter.volume_id)?.title ?? `第 ${chapter.volume_number} 卷`} · 第 {chapter.chapter_number} 章</p>
             <h2 id="chapter-title">{chapter.title}</h2>
           </div>
           <span className="save-state" data-status={saveStatus} role="status">
@@ -352,6 +434,22 @@ function ActiveChapterWorkspace({
         <span aria-hidden="true">AI</span>
         <strong aria-hidden="true">导演</strong>
       </button>
+      {isDirectoryOpen ? (
+        <ManuscriptDirectoryDialog
+          workspace={workspace}
+          activeChapterId={chapter.id}
+          onClose={() => setIsDirectoryOpen(false)}
+          onCommit={commitDirectory}
+        />
+      ) : null}
+      {serialDialogMode ? (
+        <SerialWorkspaceDialog
+          projectId={workspace.project.id}
+          initialMode={serialDialogMode}
+          onClose={() => setSerialDialogMode(null)}
+          onOpenChapter={openSerialChapter}
+        />
+      ) : null}
       <button
         className="director-drawer-backdrop"
         type="button"

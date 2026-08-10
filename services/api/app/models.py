@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -637,8 +638,10 @@ class RecoveryPointSummary(BaseModel):
 class Chapter(BaseModel):
     id: str
     project_id: str
+    volume_id: str | None = None
     volume_number: int
     chapter_number: int
+    sort_key: int = 0
     title: str
     content: str
     reader_promise: str
@@ -654,8 +657,10 @@ class Chapter(BaseModel):
 class ChapterSummary(BaseModel):
     id: str
     project_id: str
+    volume_id: str | None = None
     volume_number: int
     chapter_number: int
+    sort_key: int = 0
     title: str
     reader_promise: str
     opening_hook: str
@@ -667,6 +672,206 @@ class ChapterSummary(BaseModel):
     updated_at: str
     has_content: bool
     content_characters: int
+
+
+class ManuscriptVolume(BaseModel):
+    id: str
+    project_id: str
+    volume_number: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=120)
+    sort_key: int = Field(gt=0)
+    revision: int = Field(ge=0)
+    created_at: str
+    updated_at: str
+
+
+class ManuscriptScene(BaseModel):
+    id: str
+    project_id: str
+    chapter_id: str
+    title: str = Field(min_length=1, max_length=120)
+    summary: str = Field(default="", max_length=2000)
+    sort_key: int = Field(gt=0)
+    revision: int = Field(ge=0)
+    created_at: str
+    updated_at: str
+
+
+class ManuscriptImportChapter(BaseModel):
+    client_id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=120)
+    content: str = Field(max_length=2_000_000)
+    heading_confidence: float = Field(ge=0, le=1)
+    warnings: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator("title", "content")
+    @classmethod
+    def reject_import_chapter_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("稿件章节不能包含空字节")
+        return value
+
+
+class ManuscriptImportVolume(BaseModel):
+    client_id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=120)
+    chapters: list[ManuscriptImportChapter] = Field(min_length=1, max_length=10_000)
+
+
+class ManuscriptImportPreview(BaseModel):
+    source_filename: str
+    source_format: str
+    source_encoding: str
+    encoding_confidence: float = Field(ge=0, le=1)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    inferred_project_title: str = Field(min_length=1, max_length=120)
+    volumes: list[ManuscriptImportVolume] = Field(min_length=1, max_length=500)
+    unrecognized_text: str = Field(default="", max_length=2_000_000)
+    total_characters: int = Field(ge=0, le=20_000_000)
+    chapter_count: int = Field(ge=1, le=10_000)
+    warnings: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ConfirmManuscriptImportRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=120)
+    genre: Genre
+    rebirth_year: int = Field(ge=-3000, le=2030)
+    rebirth_location: str = Field(min_length=1, max_length=100)
+    chapter_target_words: int = Field(default=3000, ge=500, le=20000)
+    safety_buffer_chapters: int = Field(default=3, ge=0, le=100)
+    source_filename: str = Field(min_length=1, max_length=255)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_encoding: str = Field(min_length=1, max_length=40)
+    warnings: list[str] = Field(default_factory=list, max_length=100)
+    volumes: list[ManuscriptImportVolume] = Field(min_length=1, max_length=500)
+    unrecognized_text: str = Field(default="", max_length=2_000_000)
+    unrecognized_action: Literal["prepend_first_chapter", "omit"] | None = None
+    confirm_warnings: bool = False
+
+    @model_validator(mode="after")
+    def validate_import_tree(self) -> ConfirmManuscriptImportRequest:
+        volume_ids = [volume.client_id for volume in self.volumes]
+        chapter_ids = [
+            chapter.client_id
+            for volume in self.volumes
+            for chapter in volume.chapters
+        ]
+        if len(set(volume_ids)) != len(volume_ids) or len(set(chapter_ids)) != len(chapter_ids):
+            raise ValueError("稿件预览节点标识不能重复")
+        if len(chapter_ids) > 10_000:
+            raise ValueError("稿件章节数量超过上限")
+        total = len(self.unrecognized_text) + sum(
+            len(chapter.content)
+            for volume in self.volumes
+            for chapter in volume.chapters
+        )
+        if total > 20_000_000:
+            raise ValueError("稿件总字符数超过上限")
+        if self.unrecognized_text and self.unrecognized_action is None:
+            raise ValueError("必须决定如何处理未识别段落")
+        has_warnings = bool(self.warnings) or any(
+            chapter.warnings
+            for volume in self.volumes
+            for chapter in volume.chapters
+        )
+        if has_warnings and not self.confirm_warnings:
+            raise ValueError("必须确认空章、超长章或低置信度结构")
+        return self
+
+
+class ManuscriptExport(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content: str = Field(max_length=20_000_000)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    volume_count: int = Field(ge=1)
+    chapter_count: int = Field(ge=1)
+
+
+class CreateDirectoryNodeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    kind: Literal["volume", "chapter", "scene"]
+    title: str = Field(min_length=1, max_length=120)
+    parent_id: str | None = Field(default=None, max_length=80)
+    summary: str = Field(default="", max_length=2000)
+
+
+class RenameDirectoryNodeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=120)
+    summary: str | None = Field(default=None, max_length=2000)
+    expected_revision: int = Field(ge=0)
+
+
+class MoveDirectoryNodeRequest(BaseModel):
+    parent_id: str | None = Field(default=None, max_length=80)
+    before_id: str | None = Field(default=None, max_length=80)
+    expected_revision: int = Field(ge=0)
+
+
+class DeleteDirectoryNodeRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    confirm_impact: bool = False
+
+
+class DirectoryDeleteImpact(BaseModel):
+    node_kind: Literal["volume", "chapter", "scene"]
+    node_id: str
+    title: str
+    descendant_chapters: int = Field(ge=0)
+    descendant_scenes: int = Field(ge=0)
+    references: dict[str, int]
+    can_delete: bool
+    reason: str | None = None
+
+
+class DirectoryEvent(BaseModel):
+    id: str
+    project_id: str
+    action: Literal["create", "rename", "move", "delete"]
+    node_kind: Literal["volume", "chapter", "scene"]
+    node_id: str
+    undone_at: str | None
+    created_at: str
+
+
+class SetSerialDailyGoalRequest(BaseModel):
+    target_characters: int = Field(ge=0, le=100_000)
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class SerialDailyGoal(BaseModel):
+    project_id: str
+    goal_date: str
+    target_characters: int
+    actual_characters: int
+    revision: int
+    updated_at: str
+
+
+class SerialDashboard(BaseModel):
+    project_id: str
+    goal: SerialDailyGoal
+    total_characters: int
+    chapter_count: int
+    planned_chapters: int
+    drafted_chapters: int
+    reviewing_chapters: int
+    approved_chapters: int
+    stockpile_chapters: int
+    pending_review_chapters: int
+    ready_to_publish_chapters: int
+
+
+class WorkspaceSearchResult(BaseModel):
+    kind: Literal["project", "chapter", "character", "resource", "thread"]
+    id: str
+    title: str
+    snippet: str
+    chapter_id: str | None = None
 
 
 class TimelineEvent(BaseModel):
@@ -1493,6 +1698,8 @@ class AcknowledgeOriginalityReportRequest(BaseModel):
 class Workspace(BaseModel):
     project: Project
     chapters: list[Chapter]
+    manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
+    manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
     volume_plans: list[VolumePlan] = Field(default_factory=list)
     rolling_chapter_plans: list[RollingChapterPlan] = Field(default_factory=list)
@@ -1513,6 +1720,8 @@ class Workspace(BaseModel):
 class WorkspaceSummary(BaseModel):
     project: Project
     chapters: list[ChapterSummary]
+    manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
+    manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
     volume_plans: list[VolumePlan] = Field(default_factory=list)
     rolling_chapter_plans: list[RollingChapterPlan] = Field(default_factory=list)

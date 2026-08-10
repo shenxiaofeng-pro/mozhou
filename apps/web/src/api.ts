@@ -15,10 +15,12 @@ import type {
   BookBlueprint,
   BookBlueprintField,
   ConfigureAiInput,
+  ConfirmManuscriptImportInput,
   ContextDirective,
   ContextDirectiveInput,
   ContextPacket,
   CreateModelProfileInput,
+  CreateDirectoryNodeInput,
   CreateChapterInput,
   CreateFutureKnowledgeInput,
   CreateProjectInput,
@@ -28,6 +30,10 @@ import type {
   CreateStoryThreadInput,
   CreateTextChangeSetInput,
   CreateTimelineEventInput,
+  DeleteDirectoryNodeInput,
+  DirectoryDeleteImpact,
+  DirectoryEvent,
+  DirectoryNodeKind,
   FactChangeSet,
   FutureKnowledge,
   ImportReferenceFileInput,
@@ -38,6 +44,9 @@ import type {
   JobDetail,
   KnowledgeReviewAction,
   ModelProfile,
+  ManuscriptExport,
+  ManuscriptImportPreview,
+  MoveDirectoryNodeInput,
   OriginalityReport,
   Project,
   ProjectArchive,
@@ -49,7 +58,9 @@ import type {
   ReferencePatternCard,
   ReferenceSynthesisInput,
   RejectTextChangeSetInput,
+  RenameDirectoryNodeInput,
   RecoveryPointSummary,
+  SerialDashboard,
   SourceCard,
   SourceDocument,
   StoryEntity,
@@ -81,6 +92,7 @@ import type {
   UpdateStoryEntityInput,
   Workspace,
   WorkspaceSummary,
+  WorkspaceSearchResult,
   SelectDirectorCandidateInput,
   ReviewChapterInput,
   ReviewFinding,
@@ -311,6 +323,85 @@ export const api = {
   },
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })
+  },
+  previewManuscript(file: File) {
+    const query = new URLSearchParams({ source_filename: file.name })
+    return request<ManuscriptImportPreview>(`/api/manuscript-imports/preview?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+  },
+  confirmManuscriptImport(input: ConfirmManuscriptImportInput) {
+    return request<Workspace>('/api/manuscript-imports', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  exportManuscript(projectId: string) {
+    return request<ManuscriptExport>(
+      `/api/projects/${encodeURIComponent(projectId)}/manuscript-export`,
+    )
+  },
+  createDirectoryNode(projectId: string, input: CreateDirectoryNodeInput) {
+    return request<WorkspaceSummary>(
+      `/api/projects/${encodeURIComponent(projectId)}/directory-nodes`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  renameDirectoryNode(kind: DirectoryNodeKind, nodeId: string, input: RenameDirectoryNodeInput) {
+    return request<WorkspaceSummary>(
+      `/api/directory-nodes/${encodeURIComponent(kind)}/${encodeURIComponent(nodeId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  moveDirectoryNode(kind: DirectoryNodeKind, nodeId: string, input: MoveDirectoryNodeInput) {
+    return request<WorkspaceSummary>(
+      `/api/directory-nodes/${encodeURIComponent(kind)}/${encodeURIComponent(nodeId)}/move`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getDirectoryDeleteImpact(kind: DirectoryNodeKind, nodeId: string) {
+    return request<DirectoryDeleteImpact>(
+      `/api/directory-nodes/${encodeURIComponent(kind)}/${encodeURIComponent(nodeId)}/delete-impact`,
+    )
+  },
+  deleteDirectoryNode(kind: DirectoryNodeKind, nodeId: string, input: DeleteDirectoryNodeInput) {
+    return request<WorkspaceSummary>(
+      `/api/directory-nodes/${encodeURIComponent(kind)}/${encodeURIComponent(nodeId)}`,
+      { method: 'DELETE', body: JSON.stringify(input) },
+    )
+  },
+  listDirectoryEvents(projectId: string) {
+    return request<DirectoryEvent[]>(`/api/projects/${encodeURIComponent(projectId)}/directory-events`)
+  },
+  undoDirectoryEvent(projectId: string) {
+    return request<WorkspaceSummary>(
+      `/api/projects/${encodeURIComponent(projectId)}/directory-events/undo`,
+      { method: 'POST' },
+    )
+  },
+  getSerialDashboard(projectId: string, goalDate?: string) {
+    const query = new URLSearchParams()
+    if (goalDate) query.set('goal_date', goalDate)
+    return request<SerialDashboard>(
+      `/api/projects/${encodeURIComponent(projectId)}/serial-dashboard${query.size ? `?${query}` : ''}`,
+    )
+  },
+  setSerialDailyGoal(projectId: string, goalDate: string, targetCharacters: number, expectedRevision: number | null) {
+    return request<SerialDashboard>(
+      `/api/projects/${encodeURIComponent(projectId)}/serial-goals/${encodeURIComponent(goalDate)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ target_characters: targetCharacters, expected_revision: expectedRevision }),
+      },
+    )
+  },
+  searchWorkspace(projectId: string, query: string, limit = 50) {
+    const params = new URLSearchParams({ q: query, limit: String(limit) })
+    return request<WorkspaceSearchResult[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/search?${params}`,
+    )
   },
   getDirectorSnapshot(projectId: string) {
     return request<DirectorPlanningSnapshot>(

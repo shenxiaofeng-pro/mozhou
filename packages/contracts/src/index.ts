@@ -157,7 +157,7 @@ export interface Project {
 
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1 | 2 | 3 | 4 | 5
+  format_version: 1 | 2 | 3 | 4 | 5 | 6
   exported_at: string
   source_project_id: string
   source_project_title: string
@@ -418,8 +418,10 @@ export interface RecoveryPointSummary {
 export interface Chapter {
   id: string
   project_id: string
+  volume_id?: string | null
   volume_number: number
   chapter_number: number
+  sort_key?: number
   title: string
   content: string
   reader_promise: string
@@ -430,6 +432,160 @@ export interface Chapter {
   status: ChapterStatus
   revision: number
   updated_at: string
+}
+
+export interface ManuscriptVolume {
+  id: string
+  project_id: string
+  volume_number: number
+  title: string
+  sort_key: number
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ManuscriptScene {
+  id: string
+  project_id: string
+  chapter_id: string
+  title: string
+  summary: string
+  sort_key: number
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ManuscriptImportChapter {
+  client_id: string
+  title: string
+  content: string
+  heading_confidence: number
+  warnings: string[]
+}
+
+export interface ManuscriptImportVolume {
+  client_id: string
+  title: string
+  chapters: ManuscriptImportChapter[]
+}
+
+export interface ManuscriptImportPreview {
+  source_filename: string
+  source_format: 'txt' | 'markdown'
+  source_sha256: string
+  source_encoding: string
+  encoding_confidence: number
+  inferred_project_title: string
+  volumes: ManuscriptImportVolume[]
+  unrecognized_text: string
+  warnings: string[]
+  total_characters: number
+  chapter_count: number
+}
+
+export interface ConfirmManuscriptImportInput {
+  title: string
+  genre: Genre
+  rebirth_year: number
+  rebirth_location: string
+  chapter_target_words: number
+  safety_buffer_chapters: number
+  source_filename: string
+  source_sha256: string
+  source_encoding: string
+  warnings: string[]
+  volumes: ManuscriptImportVolume[]
+  unrecognized_text: string
+  unrecognized_action: 'prepend_first_chapter' | 'omit' | null
+  confirm_warnings: boolean
+}
+
+export interface ManuscriptExport {
+  filename: string
+  content: string
+  content_sha256: string
+  volume_count: number
+  chapter_count: number
+}
+
+export type DirectoryNodeKind = 'volume' | 'chapter' | 'scene'
+
+export interface CreateDirectoryNodeInput {
+  kind: DirectoryNodeKind
+  title: string
+  parent_id?: string | null
+  summary?: string
+}
+
+export interface RenameDirectoryNodeInput {
+  title: string
+  summary?: string | null
+  expected_revision: number
+}
+
+export interface MoveDirectoryNodeInput {
+  parent_id?: string | null
+  before_id?: string | null
+  expected_revision: number
+}
+
+export interface DeleteDirectoryNodeInput {
+  expected_revision: number
+  confirm_impact: boolean
+}
+
+export interface DirectoryDeleteImpact {
+  node_kind: DirectoryNodeKind
+  node_id: string
+  title: string
+  descendant_chapters: number
+  descendant_scenes: number
+  references: Record<string, number>
+  can_delete: boolean
+  reason: string | null
+}
+
+export interface DirectoryEvent {
+  id: string
+  project_id: string
+  action: 'create' | 'rename' | 'move' | 'delete'
+  node_kind: DirectoryNodeKind
+  node_id: string
+  undone_at: string | null
+  created_at: string
+}
+
+export interface SerialDailyGoal {
+  project_id: string
+  goal_date: string
+  target_characters: number
+  actual_characters: number
+  revision: number
+  updated_at: string
+}
+
+export interface SerialDashboard {
+  project_id: string
+  goal: SerialDailyGoal
+  total_characters: number
+  chapter_count: number
+  planned_chapters: number
+  drafted_chapters: number
+  reviewing_chapters: number
+  approved_chapters: number
+  stockpile_chapters: number
+  pending_review_chapters: number
+  ready_to_publish_chapters: number
+}
+
+export interface WorkspaceSearchResult {
+  kind: 'project' | 'chapter' | 'character' | 'resource' | 'thread'
+  id: string
+  title: string
+  snippet: string
+  chapter_id: string | null
 }
 
 export type ChapterSummary = Omit<Chapter, 'content'> & {
@@ -989,6 +1145,8 @@ export interface AiChapterBriefProposal {
 export interface Workspace {
   project: Project
   chapters: Chapter[]
+  manuscript_volumes?: ManuscriptVolume[]
+  manuscript_scenes?: ManuscriptScene[]
   book_blueprint: BookBlueprint | null
   volume_plans: VolumePlan[]
   rolling_chapter_plans: RollingChapterPlan[]

@@ -3,10 +3,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from re import fullmatch
 from secrets import compare_digest
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -58,6 +59,14 @@ from app.jobs import (
     JobRuntime,
 )
 from app.jobs.runtime import JobExecutionContext
+from app.manuscript.directory import (
+    DirectoryConfirmationRequiredError,
+    DirectoryConflictError,
+    DirectoryService,
+)
+from app.manuscript.importer import preview_manuscript_file
+from app.manuscript.serial import SerialService
+from app.manuscript.service import ManuscriptService
 from app.models import (
     AcknowledgeOriginalityReportRequest,
     AiChapterBriefProposal,
@@ -73,7 +82,9 @@ from app.models import (
     Chapter,
     ChapterVersion,
     ConfigureAiRequest,
+    ConfirmManuscriptImportRequest,
     CreateChapterRequest,
+    CreateDirectoryNodeRequest,
     CreateFutureKnowledgeRequest,
     CreateProjectRequest,
     CreateRecoveryPointRequest,
@@ -82,6 +93,7 @@ from app.models import (
     CreateStoryThreadRequest,
     CreateTextChangeSetRequest,
     CreateTimelineEventRequest,
+    DeleteDirectoryNodeRequest,
     DirectorChapterPipelineRequest,
     DirectorChapterPipelineResult,
     DirectorExpansionProposal,
@@ -94,10 +106,15 @@ from app.models import (
     DirectorRegenerationImpactRequest,
     DirectorStartupProposalSet,
     DirectorStartupRequest,
+    DirectoryDeleteImpact,
+    DirectoryEvent,
     FactChangeSet,
     FutureKnowledge,
     GenerationRun,
     ImportReferenceWorkRequest,
+    ManuscriptExport,
+    ManuscriptImportPreview,
+    MoveDirectoryNodeRequest,
     OriginalityReport,
     Project,
     RecoveryPointSummary,
@@ -112,6 +129,7 @@ from app.models import (
     ReferenceWorkImpactResponse,
     RejectFactChangeSetRequest,
     RejectTextChangeSetRequest,
+    RenameDirectoryNodeRequest,
     ReviewChapterRequest,
     ReviewFinding,
     ReviewFutureKnowledgeRequest,
@@ -120,6 +138,8 @@ from app.models import (
     RollbackChapterVersionRequest,
     RollingChapterPlan,
     SelectDirectorCandidateRequest,
+    SerialDashboard,
+    SetSerialDailyGoalRequest,
     SetSourceCardConfirmationRequest,
     SourceCard,
     SourceConfidence,
@@ -141,6 +161,7 @@ from app.models import (
     UpdateVolumePlanRequest,
     VolumePlan,
     Workspace,
+    WorkspaceSearchResult,
     WorkspaceSummary,
 )
 from app.providers import (
@@ -204,6 +225,15 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         database.initialize()
         application.state.repository = ProjectRepository(database)
+        application.state.manuscript_service = ManuscriptService(
+            database,
+            application.state.repository,
+        )
+        application.state.directory_service = DirectoryService(
+            database,
+            application.state.repository,
+        )
+        application.state.serial_service = SerialService(database)
         application.state.model_profiles = ModelProfileRepository(database)
         application.state.context_repository = ContextRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
@@ -1255,6 +1285,21 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
 
+    @application.get(
+        "/api/projects/{project_id}/manuscript-export",
+        response_model=ManuscriptExport,
+    )
+    def export_manuscript_markdown(
+        project_id: UUID,
+        service: Annotated[ManuscriptService, Depends(get_manuscript_service)],
+    ) -> ManuscriptExport:
+        try:
+            return service.export_markdown(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="项目不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="作品没有可导出的正文") from error
+
     @application.post(
         "/api/project-imports",
         response_model=Workspace,
@@ -1459,6 +1504,47 @@ def create_app(
                 for span in parsed.spans
             ],
         )
+
+    @application.post(
+        "/api/manuscript-imports/preview",
+        response_model=ManuscriptImportPreview,
+    )
+    async def preview_manuscript_import(
+        request: Request,
+        source_filename: Annotated[str, Query(min_length=1, max_length=255)],
+    ) -> ManuscriptImportPreview:
+        try:
+            return preview_manuscript_file(
+                source_filename,
+                await read_reference_upload(request),
+            )
+        except UnsafeImportError as error:
+            code = str(error)
+            if code == "file_too_large":
+                raise HTTPException(status_code=413, detail="稿件文件不能超过 20 MiB") from error
+            if code in {"unsupported_format", "unsupported_manuscript_format"}:
+                raise HTTPException(status_code=415, detail="请选择 TXT 或 Markdown 稿件") from error
+            messages = {
+                "empty_content": "稿件没有可导入的正文",
+                "unsupported_or_mixed_encoding": "稿件编码混杂或不受支持",
+                "null_byte": "稿件包含不安全的空字节",
+                "unsafe_control_characters": "稿件包含过多控制字符",
+            }
+            raise HTTPException(
+                status_code=422,
+                detail=messages.get(code, "稿件无法安全解析"),
+            ) from error
+
+    @application.post(
+        "/api/manuscript-imports",
+        response_model=Workspace,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def confirm_manuscript_import(
+        body: ConfirmManuscriptImportRequest,
+        service: Annotated[ManuscriptService, Depends(get_manuscript_service)],
+    ) -> Workspace:
+        return service.confirm_import(body)
 
     @application.post(
         "/api/reference-library/file-imports",
@@ -1797,6 +1883,165 @@ def create_app(
             raise HTTPException(status_code=404, detail="项目不存在") from error
         except StaleChapterSequenceError as error:
             raise HTTPException(status_code=409, detail="章节目录已有更新，请重新载入") from error
+
+    @application.post(
+        "/api/projects/{project_id}/directory-nodes",
+        response_model=WorkspaceSummary,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_directory_node(
+        project_id: UUID,
+        body: CreateDirectoryNodeRequest,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> WorkspaceSummary:
+        try:
+            return service.create_node(str(project_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或父级目录不存在") from error
+        except DirectoryConflictError as error:
+            raise HTTPException(status_code=409, detail="目录层级不允许此操作") from error
+
+    @application.patch(
+        "/api/directory-nodes/{node_kind}/{node_id}",
+        response_model=WorkspaceSummary,
+    )
+    def rename_directory_node(
+        node_kind: Literal["volume", "chapter", "scene"],
+        node_id: UUID,
+        body: RenameDirectoryNodeRequest,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> WorkspaceSummary:
+        try:
+            return service.rename_node(node_kind, str(node_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="目录节点不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="目录节点已有新版本") from error
+
+    @application.post(
+        "/api/directory-nodes/{node_kind}/{node_id}/move",
+        response_model=WorkspaceSummary,
+    )
+    def move_directory_node(
+        node_kind: Literal["volume", "chapter", "scene"],
+        node_id: UUID,
+        body: MoveDirectoryNodeRequest,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> WorkspaceSummary:
+        try:
+            return service.move_node(node_kind, str(node_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="目录节点或目标父级不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="目录节点已有新版本") from error
+        except DirectoryConflictError as error:
+            raise HTTPException(status_code=409, detail="移动目标不在同一层级") from error
+
+    @application.get(
+        "/api/directory-nodes/{node_kind}/{node_id}/delete-impact",
+        response_model=DirectoryDeleteImpact,
+    )
+    def get_directory_delete_impact(
+        node_kind: Literal["volume", "chapter", "scene"],
+        node_id: UUID,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> DirectoryDeleteImpact:
+        try:
+            return service.delete_impact(node_kind, str(node_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="目录节点不存在") from error
+
+    @application.delete(
+        "/api/directory-nodes/{node_kind}/{node_id}",
+        response_model=WorkspaceSummary,
+    )
+    def delete_directory_node(
+        node_kind: Literal["volume", "chapter", "scene"],
+        node_id: UUID,
+        body: DeleteDirectoryNodeRequest,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> WorkspaceSummary:
+        try:
+            return service.delete_node(node_kind, str(node_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="目录节点不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="目录节点已有新版本") from error
+        except DirectoryConfirmationRequiredError as error:
+            raise HTTPException(status_code=409, detail="请先查看影响并确认删除") from error
+        except DirectoryConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.get(
+        "/api/projects/{project_id}/directory-events",
+        response_model=list[DirectoryEvent],
+    )
+    def list_directory_events(
+        project_id: UUID,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> list[DirectoryEvent]:
+        return service.list_events(str(project_id))
+
+    @application.post(
+        "/api/projects/{project_id}/directory-events/undo",
+        response_model=WorkspaceSummary,
+    )
+    def undo_directory_event(
+        project_id: UUID,
+        service: Annotated[DirectoryService, Depends(get_directory_service)],
+    ) -> WorkspaceSummary:
+        try:
+            return service.undo_latest(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="没有可撤销的目录操作") from error
+        except DirectoryConflictError as error:
+            raise HTTPException(status_code=409, detail="目录已发生后续修改，不能撤销") from error
+
+    @application.get(
+        "/api/projects/{project_id}/serial-dashboard",
+        response_model=SerialDashboard,
+    )
+    def get_serial_dashboard(
+        project_id: UUID,
+        service: Annotated[SerialService, Depends(get_serial_service)],
+        goal_date: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+    ) -> SerialDashboard:
+        try:
+            return service.dashboard(str(project_id), goal_date)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.put(
+        "/api/projects/{project_id}/serial-goals/{goal_date}",
+        response_model=SerialDashboard,
+    )
+    def set_serial_daily_goal(
+        project_id: UUID,
+        goal_date: Annotated[str, PathParam(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+        body: SetSerialDailyGoalRequest,
+        service: Annotated[SerialService, Depends(get_serial_service)],
+    ) -> SerialDashboard:
+        try:
+            return service.set_goal(str(project_id), goal_date, body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="日更目标已有新版本") from error
+
+    @application.get(
+        "/api/projects/{project_id}/search",
+        response_model=list[WorkspaceSearchResult],
+    )
+    def search_workspace(
+        project_id: UUID,
+        query: Annotated[str, Query(alias="q", min_length=1, max_length=100)],
+        service: Annotated[SerialService, Depends(get_serial_service)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> list[WorkspaceSearchResult]:
+        try:
+            return service.search(str(project_id), query, limit)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
 
     @application.post(
         "/api/projects/{project_id}/timeline-events",
@@ -2278,6 +2523,21 @@ def create_app(
 def get_repository(request: Request) -> ProjectRepository:
     repository: ProjectRepository = request.app.state.repository
     return repository
+
+
+def get_manuscript_service(request: Request) -> ManuscriptService:
+    service: ManuscriptService = request.app.state.manuscript_service
+    return service
+
+
+def get_directory_service(request: Request) -> DirectoryService:
+    service: DirectoryService = request.app.state.directory_service
+    return service
+
+
+def get_serial_service(request: Request) -> SerialService:
+    service: SerialService = request.app.state.serial_service
+    return service
 
 
 def get_job_repository(request: Request) -> JobRepository:

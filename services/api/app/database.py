@@ -512,6 +512,62 @@ CREATE TABLE IF NOT EXISTS text_changes (
 CREATE INDEX IF NOT EXISTS idx_text_changes_set
 ON text_changes(change_set_id, ordinal);
 
+CREATE TABLE IF NOT EXISTS manuscript_volumes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    volume_number INTEGER NOT NULL CHECK(volume_number > 0),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 120),
+    sort_key INTEGER NOT NULL CHECK(sort_key > 0),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    deleted_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, volume_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_manuscript_volumes_project_sort
+ON manuscript_volumes(project_id, deleted_at, sort_key, id);
+
+CREATE TABLE IF NOT EXISTS manuscript_scenes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 120),
+    summary TEXT NOT NULL DEFAULT '' CHECK(length(summary) <= 2000),
+    sort_key INTEGER NOT NULL CHECK(sort_key > 0),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    deleted_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_manuscript_scenes_chapter_sort
+ON manuscript_scenes(chapter_id, deleted_at, sort_key, id);
+
+CREATE TABLE IF NOT EXISTS directory_events (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    action TEXT NOT NULL CHECK(action IN ('create', 'rename', 'move', 'delete')),
+    node_kind TEXT NOT NULL CHECK(node_kind IN ('volume', 'chapter', 'scene')),
+    node_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK(length(payload_json) BETWEEN 2 AND 2000000),
+    undone_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_directory_events_project_created
+ON directory_events(project_id, undone_at, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS serial_daily_goals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    goal_date TEXT NOT NULL CHECK(length(goal_date) = 10),
+    target_characters INTEGER NOT NULL CHECK(target_characters BETWEEN 0 AND 100000),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, goal_date)
+);
+
 CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 80),
