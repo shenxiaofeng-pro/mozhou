@@ -23,6 +23,8 @@ from app.models import (
     FutureKnowledge,
     GenerationRun,
     GenerationState,
+    ManuscriptScene,
+    ManuscriptVolume,
     OriginalityReport,
     Project,
     RecoveryPointSummary,
@@ -49,7 +51,7 @@ from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 5
+ARCHIVE_FORMAT_VERSION = 6
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -135,12 +137,30 @@ ARCHIVE_TABLES = (
         ("content_json",),
     ),
     ArchiveTable(
-        "chapters",
+        "manuscript_volumes",
         (
             "id",
             "project_id",
             "volume_number",
+            "title",
+            "sort_key",
+            "revision",
+            "deleted_at",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+    ),
+    ArchiveTable(
+        "chapters",
+        (
+            "id",
+            "project_id",
+            "volume_id",
+            "volume_number",
             "chapter_number",
+            "sort_key",
             "title",
             "content",
             "reader_promise",
@@ -149,6 +169,59 @@ ARCHIVE_TABLES = (
             "emotional_payoff",
             "ending_cliffhanger",
             "status",
+            "revision",
+            "deleted_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("volume_id", "manuscript_volumes", False),
+        ),
+    ),
+    ArchiveTable(
+        "manuscript_scenes",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "title",
+            "summary",
+            "sort_key",
+            "revision",
+            "deleted_at",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", False),
+        ),
+    ),
+    ArchiveTable(
+        "directory_events",
+        (
+            "id",
+            "project_id",
+            "action",
+            "node_kind",
+            "node_id",
+            "payload_json",
+            "undone_at",
+            "created_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("payload_json",),
+    ),
+    ArchiveTable(
+        "serial_daily_goals",
+        (
+            "id",
+            "project_id",
+            "goal_date",
+            "target_characters",
             "revision",
             "updated_at",
         ),
@@ -820,8 +893,34 @@ def _validate_business_rows(
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             })
+        for row in tables["manuscript_volumes"]:
+            ManuscriptVolume.model_validate(row)
         for row in tables["chapters"]:
             Chapter.model_validate(row)
+        for row in tables["manuscript_scenes"]:
+            ManuscriptScene.model_validate(row)
+        directory_target_tables = {
+            "volume": "manuscript_volumes",
+            "chapter": "chapters",
+            "scene": "manuscript_scenes",
+        }
+        for row in tables["directory_events"]:
+            target_table = directory_target_tables.get(row["node_kind"])
+            if (
+                target_table is None
+                or row["node_id"] not in ids_by_table[target_table]
+                or not isinstance(_parse_json(row["payload_json"]), dict)
+            ):
+                raise InvalidProjectArchiveError("invalid_directory_event")
+        for row in tables["serial_daily_goals"]:
+            if (
+                not isinstance(row["target_characters"], int)
+                or not 0 <= row["target_characters"] <= 100_000
+                or not isinstance(row["revision"], int)
+                or row["revision"] < 0
+            ):
+                raise InvalidProjectArchiveError("invalid_serial_goal")
+            datetime.fromisoformat(row["goal_date"])
         for row in tables["chapter_versions"]:
             version = ChapterVersion.model_validate(
                 {**row, "is_candidate": bool(row["is_candidate"])}
@@ -1023,6 +1122,8 @@ def _validate_business_rows(
             "started_at",
             "completed_at",
             "viewed_at",
+            "deleted_at",
+            "undone_at",
         }
         for table in ARCHIVE_TABLES:
             for row in tables[table.name]:
@@ -1155,6 +1256,11 @@ class ProjectArchiveService:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
+                if table.name == "directory_events":
+                    old_node_id = row["node_id"]
+                    if not isinstance(old_node_id, str) or old_node_id not in id_map:
+                        raise InvalidProjectArchiveError("external_directory_node")
+                    row["node_id"] = id_map[old_node_id]
                 if table.name == "context_directives":
                     old_source_id = row["source_id"]
                     if not isinstance(old_source_id, str) or old_source_id not in id_map:
@@ -1321,7 +1427,7 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5, 6}:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1348,6 +1454,8 @@ class ProjectArchiveService:
             value = self._upgrade_v3_archive(value)
         if value["format_version"] == 4:
             value = self._upgrade_v4_archive(value)
+        if value["format_version"] == 5:
+            value = self._upgrade_v5_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1615,6 +1723,66 @@ class ProjectArchiveService:
         upgraded_tables["review_findings"] = []
         upgraded_tables["text_change_sets"] = []
         upgraded_tables["text_changes"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 5
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v5_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        chapter_rows = tables.get("chapters")
+        project_rows = tables.get("projects")
+        if (
+            not isinstance(chapter_rows, list)
+            or not isinstance(project_rows, list)
+            or len(project_rows) != 1
+        ):
+            raise InvalidProjectArchiveError("invalid_tables")
+        project_id = project_rows[0].get("id")
+        created_at = project_rows[0].get("created_at")
+        updated_at = project_rows[0].get("updated_at")
+        if not all(isinstance(item, str) for item in (project_id, created_at, updated_at)):
+            raise InvalidProjectArchiveError("invalid_project")
+        volume_ids: dict[int, str] = {}
+        volume_rows: list[dict[str, Any]] = []
+        for ordinal, volume_number in enumerate(
+            sorted({int(row["volume_number"]) for row in chapter_rows}),
+            start=1,
+        ):
+            volume_id = str(uuid4())
+            volume_ids[volume_number] = volume_id
+            volume_rows.append({
+                "id": volume_id,
+                "project_id": project_id,
+                "volume_number": volume_number,
+                "title": f"第{volume_number}卷",
+                "sort_key": ordinal * 1024,
+                "revision": 0,
+                "deleted_at": None,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            })
+        upgraded_chapters = [
+            {
+                **row,
+                "volume_id": volume_ids[int(row["volume_number"])],
+                "sort_key": (index + 1) * 1024,
+                "deleted_at": None,
+            }
+            for index, row in enumerate(chapter_rows)
+        ]
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["manuscript_volumes"] = volume_rows
+        upgraded_tables["chapters"] = upgraded_chapters
+        upgraded_tables["manuscript_scenes"] = []
+        upgraded_tables["directory_events"] = []
+        upgraded_tables["serial_daily_goals"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

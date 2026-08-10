@@ -2,6 +2,7 @@ import type { CreateProjectInput, Genre, Workspace } from '@mozhou/contracts'
 import { useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { api } from '../api'
+import { ManuscriptImportDialog } from './ManuscriptImportDialog'
 
 interface CreateProjectFormProps {
   onCreated: (workspace: Workspace) => void
@@ -21,6 +22,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
   const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
+  const [isManuscriptImportOpen, setIsManuscriptImportOpen] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -142,19 +144,28 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
           {isCreating ? '正在铺开稿纸…' : '创建作品并进入工作台'}
         </button>
         {onImported ? (
-          <label className="project-form-import">
-            <input
-              type="file"
-              accept="application/json,.json,.mozhou.json"
-              aria-label="从本机导入墨舟项目归档"
-              disabled={isImporting || isCreating}
-              onChange={(event) => { void handleArchiveImport(event) }}
-            />
-            {isImporting ? '正在校验并恢复…' : '已有归档？恢复为新副本'}
-          </label>
+          <>
+            <button className="project-form-manuscript-import" type="button" disabled={isImporting || isCreating} onClick={() => setIsManuscriptImportOpen(true)}>已有 TXT / Markdown 稿件？识别卷章后接续</button>
+            <label className="project-form-import">
+              <input
+                type="file"
+                accept="application/json,.json,.mozhou.json"
+                aria-label="从本机导入墨舟项目归档"
+                disabled={isImporting || isCreating}
+                onChange={(event) => { void handleArchiveImport(event) }}
+              />
+              {isImporting ? '正在校验并恢复…' : '已有墨舟归档？恢复为新副本'}
+            </label>
+          </>
         ) : null}
         <p className="privacy-note">正文与设定保存在这台设备上。当前步骤不会调用外部模型。</p>
       </form>
+      {isManuscriptImportOpen && onImported ? (
+        <ManuscriptImportDialog
+          onClose={() => setIsManuscriptImportOpen(false)}
+          onImported={onImported}
+        />
+      ) : null}
     </main>
   )
 }

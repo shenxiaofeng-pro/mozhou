@@ -2,6 +2,7 @@ import type { Project, RecoveryPointSummary, Workspace } from '@mozhou/contracts
 import { type ChangeEvent, useState } from 'react'
 
 import { api } from '../api'
+import { ManuscriptImportDialog } from './ManuscriptImportDialog'
 
 interface ProjectLibraryPageProps {
   projects: Project[]
@@ -50,6 +51,7 @@ export function ProjectLibraryPage({
   const [openRecoveryProjectId, setOpenRecoveryProjectId] = useState<string | null>(null)
   const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPointSummary[]>([])
   const [recoveryLabel, setRecoveryLabel] = useState('')
+  const [isManuscriptImportOpen, setIsManuscriptImportOpen] = useState(false)
 
   const reportError = (failure: unknown, fallback: string) => {
     setOperationError(failure instanceof Error ? failure.message : fallback)
@@ -106,6 +108,30 @@ export function ProjectLibraryPage({
       reportError(failure, '项目归档导入失败')
     } finally {
       input.value = ''
+      setBusyAction(null)
+    }
+  }
+
+  const exportManuscript = async (project: Project) => {
+    const action = `export-manuscript:${project.id}`
+    setBusyAction(action)
+    setOperationError(null)
+    setNotice(null)
+    try {
+      const exported = await api.exportManuscript(project.id)
+      const blob = new Blob([exported.content], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = exported.filename
+      document.body.append(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      setNotice(`《${project.title}》正文已按 UTF-8 Markdown 导出。`)
+    } catch (failure) {
+      reportError(failure, '正文导出失败')
+    } finally {
       setBusyAction(null)
     }
   }
@@ -183,6 +209,7 @@ export function ProjectLibraryPage({
         </div>
         <div className="project-library-hero-actions">
           <button type="button" onClick={onCreate}>新建一部作品</button>
+          <button type="button" onClick={() => setIsManuscriptImportOpen(true)}>导入已有稿件</button>
           <button type="button" onClick={onOpenGlobalLibrary}>打开全局资料码头</button>
           <label className={busyAction === 'import' ? 'is-disabled' : undefined}>
             <input
@@ -221,6 +248,14 @@ export function ProjectLibraryPage({
               </dl>
             </div>
             <div className="project-volume-actions">
+              <button
+                type="button"
+                aria-label={`导出《${project.title}》Markdown 正文`}
+                disabled={busyAction !== null}
+                onClick={() => { void exportManuscript(project) }}
+              >
+                {busyAction === `export-manuscript:${project.id}` ? '正在排版…' : '导出正文'}
+              </button>
               <button
                 type="button"
                 aria-label={`打开《${project.title}》`}
@@ -315,6 +350,15 @@ export function ProjectLibraryPage({
           </article>
         ))}
       </section>
+      {isManuscriptImportOpen ? (
+        <ManuscriptImportDialog
+          onClose={() => setIsManuscriptImportOpen(false)}
+          onImported={(workspace) => {
+            onProjectAdded(workspace)
+            setNotice(`《${workspace.project.title}》已从稿件创建。`)
+          }}
+        />
+      ) : null}
     </main>
   )
 }

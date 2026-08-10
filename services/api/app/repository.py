@@ -40,6 +40,8 @@ from app.models import (
     ImportReferenceWorkRequest,
     KnowledgeReviewAction,
     KnowledgeStatus,
+    ManuscriptScene,
+    ManuscriptVolume,
     OriginalityAssessment,
     OriginalityReport,
     OriginalityRiskLevel,
@@ -167,6 +169,7 @@ class ProjectRepository:
 
     def create_project(self, request: CreateProjectRequest) -> Workspace:
         project_id = str(uuid4())
+        volume_id = str(uuid4())
         chapter_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
@@ -191,12 +194,28 @@ class ProjectRepository:
             )
             connection.execute(
                 """
-                INSERT INTO chapters (
-                    id, project_id, volume_number, chapter_number, title,
-                    content, status, revision, updated_at
-                ) VALUES (?, ?, 1, 1, ?, '', ?, 0, ?)
+                INSERT INTO manuscript_volumes (
+                    id, project_id, volume_number, title, sort_key,
+                    revision, deleted_at, created_at, updated_at
+                ) VALUES (?, ?, 1, '第一卷', 1024, 0, NULL, ?, ?)
                 """,
-                (chapter_id, project_id, "第一章 未命名", ChapterStatus.PLANNED.value, timestamp),
+                (volume_id, project_id, timestamp, timestamp),
+            )
+            connection.execute(
+                """
+                INSERT INTO chapters (
+                    id, project_id, volume_id, volume_number, chapter_number,
+                    sort_key, title, content, status, revision, updated_at
+                ) VALUES (?, ?, ?, 1, 1, 1024, ?, '', ?, 0, ?)
+                """,
+                (
+                    chapter_id,
+                    project_id,
+                    volume_id,
+                    "第一章 未命名",
+                    ChapterStatus.PLANNED.value,
+                    timestamp,
+                ),
             )
             ReviewRepository.append_chapter_version(
                 connection,
@@ -246,19 +265,21 @@ class ProjectRepository:
                 raise NotFoundError(project_id)
             if include_chapter_content:
                 chapter_rows = connection.execute(
-                    "SELECT * FROM chapters WHERE project_id = ? ORDER BY chapter_number",
+                    "SELECT * FROM chapters WHERE project_id = ? AND deleted_at IS NULL "
+                    "ORDER BY chapter_number",
                     (project_id,),
                 ).fetchall()
             else:
                 chapter_rows = connection.execute(
                     """
-                    SELECT id, project_id, volume_number, chapter_number, title,
+                    SELECT id, project_id, volume_id, volume_number, chapter_number,
+                           sort_key, title,
                            reader_promise, opening_hook, state_change, emotional_payoff,
                            ending_cliffhanger, status, revision, updated_at,
                            CASE WHEN LENGTH(TRIM(content)) > 0 THEN 1 ELSE 0 END AS has_content,
                            LENGTH(content) AS content_characters
                     FROM chapters
-                    WHERE project_id = ?
+                    WHERE project_id = ? AND deleted_at IS NULL
                     ORDER BY chapter_number
                     """,
                     (project_id,),
@@ -382,6 +403,25 @@ class ProjectRepository:
                 "SELECT * FROM rolling_chapter_plans WHERE project_id = ? ORDER BY chapter_number",
                 (project_id,),
             ).fetchall()
+            manuscript_volume_rows = connection.execute(
+                """
+                SELECT * FROM manuscript_volumes
+                WHERE project_id = ? AND deleted_at IS NULL
+                ORDER BY sort_key, id
+                """,
+                (project_id,),
+            ).fetchall()
+            manuscript_scene_rows = connection.execute(
+                """
+                SELECT * FROM manuscript_scenes
+                WHERE project_id = ? AND deleted_at IS NULL
+                  AND chapter_id IN (
+                    SELECT id FROM chapters WHERE project_id = ? AND deleted_at IS NULL
+                  )
+                ORDER BY chapter_id, sort_key, id
+                """,
+                (project_id, project_id),
+            ).fetchall()
         changes_by_set: dict[str, list[FactChange]] = {}
         for row in change_rows:
             changes_by_set.setdefault(row["change_set_id"], []).append(self._fact_change(row))
@@ -397,6 +437,14 @@ class ProjectRepository:
                 if include_chapter_content
                 else [self._chapter_summary(row) for row in chapter_rows]
             ),
+            "manuscript_volumes": [
+                ManuscriptVolume.model_validate(dict(row))
+                for row in manuscript_volume_rows
+            ],
+            "manuscript_scenes": [
+                ManuscriptScene.model_validate(dict(row))
+                for row in manuscript_scene_rows
+            ],
             "timeline_events": [self._timeline_event(row) for row in timeline_rows],
             "story_facts": [self._story_fact(row) for row in fact_rows],
             "fact_change_sets": [
@@ -438,7 +486,7 @@ class ProjectRepository:
     def get_workspace_for_chapter(self, chapter_id: str) -> Workspace:
         with self.database.connect() as connection:
             row = connection.execute(
-                "SELECT project_id FROM chapters WHERE id = ?",
+                "SELECT project_id FROM chapters WHERE id = ? AND deleted_at IS NULL",
                 (chapter_id,),
             ).fetchone()
         if row is None:
@@ -448,7 +496,7 @@ class ProjectRepository:
     def get_chapter(self, chapter_id: str) -> Chapter:
         with self.database.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM chapters WHERE id = ?",
+                "SELECT * FROM chapters WHERE id = ? AND deleted_at IS NULL",
                 (chapter_id,),
             ).fetchone()
         if row is None:
@@ -2209,19 +2257,40 @@ class ProjectRepository:
                 raise StaleChapterSequenceError(str(last_number))
             next_number = last_number + 1
             title = request.title or f"第{next_number}章 未命名"
+            volume = connection.execute(
+                """
+                SELECT id, volume_number FROM manuscript_volumes
+                WHERE project_id = ? AND deleted_at IS NULL
+                ORDER BY sort_key DESC, id DESC LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            if volume is None:
+                raise NotFoundError(project_id)
+            last_sort_key = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(sort_key), 0) FROM chapters "
+                    "WHERE volume_id = ?",
+                    (volume["id"],),
+                ).fetchone()[0]
+            )
             connection.execute(
                 """
                 INSERT INTO chapters (
-                    id, project_id, volume_number, chapter_number, title, content,
+                    id, project_id, volume_id, volume_number, chapter_number,
+                    sort_key, title, content,
                     reader_promise, opening_hook, state_change, emotional_payoff,
                     ending_cliffhanger,
                     status, revision, updated_at
-                ) VALUES (?, ?, 1, ?, ?, '', ?, ?, ?, ?, ?, ?, 0, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 0, ?)
                 """,
                 (
                     chapter_id,
                     project_id,
+                    volume["id"],
+                    volume["volume_number"],
                     next_number,
+                    last_sort_key + 1024,
                     title,
                     request.reader_promise,
                     request.opening_hook,

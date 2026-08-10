@@ -269,7 +269,8 @@ textarea:focus-visible {
   background: #743f2c;
 }
 
-.project-form-import {
+.project-form-import,
+.project-form-manuscript-import {
   min-height: 2.75rem;
   display: grid;
   place-items: center;
@@ -283,7 +284,15 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
-.project-form-import:hover {
+.project-form-manuscript-import {
+  width: 100%;
+  border-color: var(--rust);
+  color: var(--rust);
+  background: #fff8e9;
+}
+
+.project-form-import:hover,
+.project-form-manuscript-import:hover {
   border-color: var(--rust);
   color: var(--rust);
 }
@@ -513,6 +522,220 @@ textarea:focus-visible {
   padding: 0 1.5rem;
   color: #314e42;
   font-weight: 750;
+}
+
+.manuscript-import-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(18 27 31 / 66%);
+  backdrop-filter: blur(4px);
+}
+
+.manuscript-import-dialog {
+  width: min(68rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #9ca8aa;
+  background: var(--paper);
+  box-shadow: 0.5rem 0.6rem 0 rgb(14 24 28 / 22%);
+}
+
+.manuscript-import-dialog > header,
+.manuscript-import-dialog > footer {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.manuscript-import-dialog > header p,
+.manuscript-import-dialog > header h2,
+.manuscript-import-dialog > header span {
+  margin: 0;
+}
+
+.manuscript-import-dialog > header p {
+  color: var(--rust);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.manuscript-import-dialog > header h2 {
+  margin-top: 0.2rem;
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.manuscript-import-dialog > header span {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--slate);
+  font-size: 0.78rem;
+}
+
+.manuscript-import-dialog > header > button {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  font-size: 1.6rem;
+}
+
+.manuscript-import-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.9rem 1.2rem;
+  background: var(--mist);
+}
+
+.manuscript-import-file input {
+  min-width: 0;
+}
+
+.manuscript-import-file small {
+  grid-column: 1 / -1;
+  color: var(--slate);
+}
+
+.manuscript-import-file button,
+.manuscript-import-dialog > footer button:last-child {
+  border-color: var(--rust);
+  color: var(--paper);
+  background: var(--rust);
+}
+
+.manuscript-import-error {
+  margin: 0;
+  padding: 0.7rem 1.2rem;
+  color: var(--danger);
+  background: #fff0ed;
+}
+
+.manuscript-import-preview {
+  min-height: 0;
+  overflow: auto;
+  padding: 1.2rem;
+}
+
+.manuscript-import-settings {
+  display: grid;
+  grid-template-columns: 2fr 1fr repeat(4, minmax(7rem, 1fr));
+  gap: 0.65rem;
+}
+
+.manuscript-import-settings label,
+.manuscript-import-tree label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.manuscript-import-settings span,
+.manuscript-import-tree label > span {
+  color: var(--slate);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.manuscript-import-settings input,
+.manuscript-import-settings select,
+.manuscript-import-tree input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 0.55rem 0.6rem;
+  color: var(--ink);
+  background: #fff;
+}
+
+.manuscript-import-summary {
+  display: flex;
+  justify-content: space-between;
+  margin: 1rem 0;
+  padding: 0.8rem 0;
+  border-block: 1px solid var(--line);
+}
+
+.manuscript-import-summary span {
+  color: var(--slate);
+}
+
+.manuscript-import-preamble,
+.manuscript-import-warnings {
+  margin: 0 0 1rem;
+  border: 1px solid #d2b58d;
+  padding: 0.8rem;
+  background: #fff8e9;
+}
+
+.manuscript-import-preamble p {
+  max-height: 5rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.manuscript-import-preamble label + label {
+  margin-left: 1rem;
+}
+
+.manuscript-import-tree,
+.manuscript-import-tree ol {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manuscript-import-tree > li {
+  border-left: 0.22rem solid var(--rust);
+  padding: 0.7rem;
+  background: var(--mist);
+}
+
+.manuscript-import-tree > li > label {
+  grid-template-columns: 5rem minmax(0, 1fr);
+  align-items: center;
+}
+
+.manuscript-import-tree ol {
+  margin-top: 0.5rem;
+  padding-left: 1rem;
+}
+
+.manuscript-import-tree ol label {
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.manuscript-import-tree small {
+  color: var(--slate);
+}
+
+.manuscript-import-warnings ul {
+  margin: 0.5rem 0;
+  padding-left: 1.2rem;
+}
+
+.manuscript-import-dialog > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.manuscript-import-dialog > footer button {
+  min-width: 8rem;
+  min-height: 2.6rem;
 }
 
 .project-shelf {
@@ -764,6 +987,16 @@ textarea:focus-visible {
   grid-template-rows: 4.5rem minmax(0, 1fr);
   overflow: hidden;
   background: var(--paper);
+}
+
+.workspace-shell[data-focus-mode="true"] {
+  grid-template-columns: minmax(30rem, 1fr);
+}
+
+.workspace-shell[data-focus-mode="true"] .story-tree,
+.workspace-shell[data-focus-mode="true"] .director-surface,
+.workspace-shell[data-focus-mode="true"] .director-drawer-trigger {
+  display: none;
 }
 
 .workspace-header {
@@ -1577,6 +1810,19 @@ textarea:focus-visible {
   background: transparent;
 }
 
+.tree-section-title > div {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.story-tree-volume > h3 {
+  margin: 0;
+  padding: 0.5rem 1rem 0.25rem;
+  color: #68777a;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.72rem;
+}
+
 .chapter-item {
   width: 100%;
   display: grid;
@@ -1608,6 +1854,442 @@ textarea:focus-visible {
   font-size: 0.78rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.directory-dialog-backdrop {
+  position: fixed;
+  z-index: 75;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(18 27 31 / 68%);
+  backdrop-filter: blur(4px);
+}
+
+.directory-dialog {
+  width: min(74rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
+  overflow: hidden;
+  border: 1px solid #99a6a7;
+  background: var(--paper);
+  box-shadow: 0.55rem 0.65rem 0 rgb(12 22 26 / 24%);
+}
+
+.directory-dialog > header {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.directory-dialog > header p,
+.directory-dialog > header h2,
+.directory-dialog > header span {
+  margin: 0;
+}
+
+.directory-dialog > header p {
+  color: var(--rust);
+  font: 850 0.68rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.directory-dialog > header h2 {
+  margin-top: 0.2rem;
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.directory-dialog > header span {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+
+.directory-dialog > header > button {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  font-size: 1.5rem;
+}
+
+.directory-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.7rem 1.2rem;
+  background: var(--mist);
+}
+
+.directory-toolbar span {
+  margin-left: auto;
+  color: #315a46;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.directory-error {
+  margin: 0;
+  padding: 0.7rem 1.2rem;
+  color: var(--danger);
+  background: #fff0ed;
+}
+
+.directory-tree-manager {
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem 1.2rem;
+}
+
+.directory-volume {
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--line);
+  border-left: 0.24rem solid var(--rust);
+  background: #fffefa;
+}
+
+.directory-volume > header {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.7rem;
+  background: #e8ecea;
+}
+
+.directory-volume > ol,
+.directory-scenes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.directory-volume > ol > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.directory-chapter-row,
+.directory-scenes > li {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) minmax(8rem, 12rem) auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.65rem 0.7rem;
+}
+
+.directory-scenes {
+  margin: 0 0.7rem 0.7rem 3.2rem;
+  border-left: 2px solid #b8c4c0;
+  background: var(--mist);
+}
+
+.directory-scenes > li {
+  grid-template-columns: 4rem minmax(0, 1fr) auto;
+}
+
+.directory-node-editor {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+}
+
+.directory-node-editor input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 0.48rem 0.55rem;
+  background: #fff;
+}
+
+.directory-scenes .directory-node-editor {
+  grid-template-columns: minmax(8rem, 0.8fr) minmax(10rem, 1.2fr) auto;
+}
+
+.directory-volume header > div:last-child,
+.directory-chapter-row > div:last-child,
+.directory-scenes > li > div:last-child {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.directory-volume button,
+.directory-dialog button,
+.directory-chapter-row select {
+  min-height: 2rem;
+}
+
+.directory-create-bar,
+.directory-delete-impact {
+  display: flex;
+  gap: 0.6rem;
+  align-items: end;
+  padding: 0.8rem 1.2rem;
+  border-top: 1px solid var(--line);
+  background: #fff8e9;
+}
+
+.directory-create-bar label {
+  flex: 1;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.directory-create-bar input {
+  border: 1px solid var(--line);
+  padding: 0.55rem;
+}
+
+.directory-delete-impact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.directory-delete-impact h3,
+.directory-delete-impact p,
+.directory-delete-impact ul {
+  grid-column: 1;
+  margin: 0;
+}
+
+.directory-delete-impact button {
+  grid-row: 1 / span 3;
+}
+
+.directory-delete-impact button:last-child {
+  grid-column: 3;
+}
+
+.directory-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.7rem 1.2rem;
+  border-top: 1px solid var(--line);
+}
+
+.serial-dialog-backdrop {
+  position: fixed;
+  z-index: 76;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(18 27 31 / 68%);
+  backdrop-filter: blur(4px);
+}
+
+.serial-dialog {
+  width: min(58rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #98a5a6;
+  background: var(--paper);
+  box-shadow: 0.55rem 0.65rem 0 rgb(12 22 26 / 24%);
+}
+
+.serial-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.serial-dialog > header p,
+.serial-dialog > header h2 {
+  margin: 0;
+}
+
+.serial-dialog > header p {
+  color: var(--rust);
+  font: 850 0.68rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.serial-dialog > header h2 {
+  margin-top: 0.2rem;
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.serial-dialog > header button {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  font-size: 1.5rem;
+}
+
+.serial-dialog > nav {
+  display: flex;
+  padding: 0 1.2rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--mist);
+}
+
+.serial-dialog > nav button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 0.8rem 1rem;
+  background: transparent;
+}
+
+.serial-dialog > nav button[aria-current="page"] {
+  border-bottom-color: var(--rust);
+  color: var(--rust);
+  font-weight: 850;
+}
+
+.serial-dialog kbd {
+  color: var(--slate);
+  font-size: 0.62rem;
+}
+
+.serial-dialog-error {
+  margin: 0;
+  padding: 0.65rem 1.2rem;
+  color: var(--danger);
+  background: #fff0ed;
+}
+
+.serial-dashboard,
+.workspace-search {
+  min-height: 0;
+  overflow: auto;
+  padding: 1.2rem;
+}
+
+.serial-today {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) minmax(12rem, 1fr) auto;
+  gap: 0.8rem;
+  align-items: end;
+  border-left: 0.28rem solid var(--rust);
+  padding: 1rem;
+  background: #e8ecea;
+}
+
+.serial-today > div:first-child {
+  grid-row: 1 / span 2;
+  display: grid;
+}
+
+.serial-today strong {
+  margin-top: 0.3rem;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 2rem;
+}
+
+.serial-today label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.serial-today input {
+  border: 1px solid var(--line);
+  padding: 0.55rem;
+}
+
+.serial-progress {
+  height: 0.55rem;
+  overflow: hidden;
+  background: #cbd4d1;
+}
+
+.serial-progress span {
+  height: 100%;
+  display: block;
+  background: var(--rust);
+}
+
+.serial-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 1rem 0 0;
+}
+
+.serial-metrics > div {
+  display: grid;
+  border: 1px solid var(--line);
+  padding: 0.9rem;
+}
+
+.serial-metrics dt,
+.serial-metrics small {
+  color: var(--slate);
+}
+
+.serial-metrics dd {
+  margin: 0.25rem 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.8rem;
+}
+
+.workspace-search form > label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 800;
+}
+
+.workspace-search form > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workspace-search form input {
+  min-width: 0;
+  border: 1px solid var(--ink);
+  padding: 0.8rem;
+}
+
+.workspace-search form button {
+  min-width: 6rem;
+  border-color: var(--ink);
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.workspace-search > ul {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-search > ul li {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
+  gap: 0.35rem 0.7rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 0.75rem;
+}
+
+.workspace-search > ul li > span {
+  color: var(--rust);
+  font-size: 0.65rem;
+  font-weight: 850;
+}
+
+.workspace-search > ul li p {
+  grid-column: 2;
+  margin: 0;
+  color: var(--slate);
+  font-size: 0.72rem;
+}
+
+.workspace-search > ul li button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
 }
 
 .tree-footer {
@@ -6220,10 +6902,47 @@ textarea:focus-visible {
 
   .project-volume-actions {
     grid-column: 1 / -1;
-    grid-template-columns: 1.5fr repeat(3, 1fr);
+    grid-template-columns: 1.5fr repeat(4, 1fr);
     grid-template-rows: 1fr;
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+
+  .manuscript-import-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .directory-volume > header,
+  .directory-chapter-row,
+  .directory-scenes > li {
+    grid-template-columns: 1fr;
+  }
+
+  .directory-scenes {
+    margin-left: 1rem;
+  }
+
+  .directory-scenes .directory-node-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .serial-today,
+  .serial-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .serial-today > div:first-child {
+    grid-row: auto;
+  }
+
+  .workspace-search > ul li {
+    grid-template-columns: 3rem minmax(0, 1fr);
+  }
+
+  .workspace-search > ul li button {
+    grid-column: 2;
+    grid-row: auto;
+    justify-self: start;
   }
 
   .project-volume-actions button,
