@@ -4,6 +4,7 @@ import { type ChangeEvent, useState } from 'react'
 import { api } from '../api'
 import { BetaEvaluationDialog } from './BetaEvaluationDialog'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
+import { NarrativeSandboxDialog } from './NarrativeSandboxDialog'
 import { SystemDiagnosticsDialog } from './SystemDiagnosticsDialog'
 
 interface ProjectLibraryPageProps {
@@ -56,6 +57,7 @@ export function ProjectLibraryPage({
   const [isManuscriptImportOpen, setIsManuscriptImportOpen] = useState(false)
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
   const [betaProject, setBetaProject] = useState<Project | null>(null)
+  const [sandboxProject, setSandboxProject] = useState<Project | null>(null)
 
   const reportError = (failure: unknown, fallback: string) => {
     setOperationError(failure instanceof Error ? failure.message : fallback)
@@ -307,6 +309,14 @@ export function ProjectLibraryPage({
               >
                 封测报告
               </button>
+              <button
+                type="button"
+                aria-label={`打开《${project.title}》剧情沙盘`}
+                disabled={busyAction !== null}
+                onClick={() => setSandboxProject(project)}
+              >
+                剧情沙盘
+              </button>
             </div>
             {openRecoveryProjectId === project.id ? (
               <section className="project-recovery-drawer" aria-label={`《${project.title}》恢复点`}>
@@ -382,6 +392,9 @@ export function ProjectLibraryPage({
       ) : null}
       {betaProject ? (
         <BetaEvaluationDialog project={betaProject} onClose={() => setBetaProject(null)} />
+      ) : null}
+      {sandboxProject ? (
+        <NarrativeSandboxDialog project={sandboxProject} onClose={() => setSandboxProject(null)} />
       ) : null}
     </main>
   )

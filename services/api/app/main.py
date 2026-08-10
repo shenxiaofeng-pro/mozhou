@@ -225,6 +225,25 @@ from app.safe_import import (
     UnsafeImportError,
     parse_reference_file,
 )
+from app.sandbox import (
+    CompareSandboxRunsRequest,
+    CreateSandboxBranchRequest,
+    CreateSandboxCandidateRequest,
+    CreateSandboxRunRequest,
+    CreateSandboxSnapshotRequest,
+    NarrativeSandboxService,
+    SandboxBranch,
+    SandboxCandidate,
+    SandboxComparison,
+    SandboxConflictError,
+    SandboxInterview,
+    SandboxReport,
+    SandboxRun,
+    SandboxSnapshot,
+    SandboxTemplate,
+    SandboxValidationError,
+    SandboxWorkspace,
+)
 
 
 def create_app(
@@ -244,6 +263,7 @@ def create_app(
         database.initialize()
         application.state.repository = ProjectRepository(database)
         application.state.beta_evaluation = BetaEvaluationService(database)
+        application.state.narrative_sandbox = NarrativeSandboxService(database)
         application.state.diagnostics = diagnostics
         application.state.manuscript_service = ManuscriptService(
             database,
@@ -472,6 +492,190 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.get("/api/sandbox/templates", response_model=list[SandboxTemplate])
+    def list_sandbox_templates() -> list[SandboxTemplate]:
+        return application.state.narrative_sandbox.list_templates()
+
+    @application.get(
+        "/api/projects/{project_id}/sandbox",
+        response_model=SandboxWorkspace,
+    )
+    def get_sandbox_workspace(project_id: UUID) -> SandboxWorkspace:
+        try:
+            return application.state.narrative_sandbox.workspace(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/sandbox/snapshots",
+        response_model=SandboxSnapshot,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_sandbox_snapshot(
+        project_id: UUID,
+        body: CreateSandboxSnapshotRequest,
+    ) -> SandboxSnapshot:
+        try:
+            return application.state.narrative_sandbox.create_snapshot(
+                str(project_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except SandboxValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @application.post(
+        "/api/sandbox/snapshots/{snapshot_id}/branches",
+        response_model=SandboxBranch,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_sandbox_branch(
+        snapshot_id: UUID,
+        body: CreateSandboxBranchRequest,
+    ) -> SandboxBranch:
+        try:
+            return application.state.narrative_sandbox.create_branch(
+                str(snapshot_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘快照不存在") from error
+        except SandboxValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post(
+        "/api/sandbox/branches/{branch_id}/runs",
+        response_model=SandboxRun,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_sandbox_run(
+        branch_id: UUID,
+        body: CreateSandboxRunRequest,
+    ) -> SandboxRun:
+        try:
+            return application.state.narrative_sandbox.create_run(str(branch_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘分支不存在") from error
+        except SandboxValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.get("/api/sandbox/runs/{run_id}", response_model=SandboxRun)
+    def get_sandbox_run(run_id: UUID) -> SandboxRun:
+        try:
+            return application.state.narrative_sandbox.get_run(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+
+    @application.post("/api/sandbox/runs/{run_id}/advance", response_model=SandboxRun)
+    def advance_sandbox_run(run_id: UUID) -> SandboxRun:
+        try:
+            return application.state.narrative_sandbox.advance_run(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except SandboxValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post("/api/sandbox/runs/{run_id}/cancel", response_model=SandboxRun)
+    def cancel_sandbox_run(run_id: UUID) -> SandboxRun:
+        try:
+            return application.state.narrative_sandbox.cancel_run(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post(
+        "/api/sandbox/runs/{run_id}/replay",
+        response_model=SandboxRun,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def replay_sandbox_run(run_id: UUID) -> SandboxRun:
+        try:
+            return application.state.narrative_sandbox.replay_run(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except (SandboxValidationError, SandboxConflictError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.get(
+        "/api/sandbox/runs/{run_id}/report",
+        response_model=SandboxReport,
+    )
+    def get_sandbox_report(run_id: UUID) -> SandboxReport:
+        try:
+            return application.state.narrative_sandbox.report(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.get(
+        "/api/sandbox/runs/{run_id}/interviews/{actor_id}",
+        response_model=SandboxInterview,
+    )
+    def get_sandbox_interview(run_id: UUID, actor_id: str) -> SandboxInterview:
+        try:
+            return application.state.narrative_sandbox.interview(str(run_id), actor_id)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行或角色不存在") from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post(
+        "/api/sandbox/runs/{run_id}/candidates",
+        response_model=SandboxCandidate,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_sandbox_candidate(
+        run_id: UUID,
+        body: CreateSandboxCandidateRequest,
+    ) -> SandboxCandidate:
+        try:
+            return application.state.narrative_sandbox.create_candidate(str(run_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except SandboxValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @application.post(
+        "/api/sandbox/candidates/{candidate_id}/{decision}",
+        response_model=SandboxCandidate,
+    )
+    def decide_sandbox_candidate(
+        candidate_id: UUID,
+        decision: Literal["approve", "reject"],
+    ) -> SandboxCandidate:
+        try:
+            return application.state.narrative_sandbox.decide_candidate(
+                str(candidate_id), decision
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘候选不存在") from error
+        except SandboxConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post(
+        "/api/projects/{project_id}/sandbox/comparisons",
+        response_model=SandboxComparison,
+    )
+    def compare_sandbox_runs(
+        project_id: UUID,
+        body: CompareSandboxRunsRequest,
+    ) -> SandboxComparison:
+        try:
+            return application.state.narrative_sandbox.compare_runs(
+                str(project_id), body.run_ids
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except (SandboxValidationError, SandboxConflictError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @application.post("/api/runtime/start")
     def start_job_runtime(

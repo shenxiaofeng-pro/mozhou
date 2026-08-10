@@ -27,6 +27,9 @@ import type {
   CreateDirectoryNodeInput,
   CreateChapterInput,
   CreateBetaFeedbackInput,
+  CreateSandboxBranchInput,
+  CreateSandboxCandidateInput,
+  CreateSandboxSnapshotInput,
   CreateFutureKnowledgeInput,
   CreateProjectInput,
   CreateRecoveryPointInput,
@@ -66,6 +69,14 @@ import type {
   RenameDirectoryNodeInput,
   RecoveryPointSummary,
   SerialDashboard,
+  SandboxBranch,
+  SandboxCandidate,
+  SandboxComparison,
+  SandboxInterview,
+  SandboxReport,
+  SandboxRun,
+  SandboxTemplate,
+  SandboxWorkspace,
   SourceCard,
   SourceDocument,
   StoryEntity,
@@ -226,6 +237,74 @@ export const api = {
     return request<void>(
       `/api/projects/${encodeURIComponent(projectId)}/beta-events/${encodeURIComponent(eventType)}`,
       { method: 'POST' },
+    )
+  },
+  listSandboxTemplates() {
+    return request<SandboxTemplate[]>('/api/sandbox/templates')
+  },
+  getSandboxWorkspace(projectId: string) {
+    return request<SandboxWorkspace>(`/api/projects/${encodeURIComponent(projectId)}/sandbox`)
+  },
+  createSandboxSnapshot(projectId: string, input: CreateSandboxSnapshotInput) {
+    return request<SandboxWorkspace['snapshots'][number]>(
+      `/api/projects/${encodeURIComponent(projectId)}/sandbox/snapshots`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  createSandboxBranch(snapshotId: string, input: CreateSandboxBranchInput) {
+    return request<SandboxBranch>(
+      `/api/sandbox/snapshots/${encodeURIComponent(snapshotId)}/branches`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  createSandboxRun(branchId: string, requestedRounds: number, actionBudget: number) {
+    return request<SandboxRun>(`/api/sandbox/branches/${encodeURIComponent(branchId)}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ requested_rounds: requestedRounds, action_budget: actionBudget }),
+    })
+  },
+  getSandboxRun(runId: string) {
+    return request<SandboxRun>(`/api/sandbox/runs/${encodeURIComponent(runId)}`)
+  },
+  advanceSandboxRun(runId: string) {
+    return request<SandboxRun>(`/api/sandbox/runs/${encodeURIComponent(runId)}/advance`, {
+      method: 'POST',
+    })
+  },
+  cancelSandboxRun(runId: string) {
+    return request<SandboxRun>(`/api/sandbox/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+    })
+  },
+  replaySandboxRun(runId: string) {
+    return request<SandboxRun>(`/api/sandbox/runs/${encodeURIComponent(runId)}/replay`, {
+      method: 'POST',
+    })
+  },
+  getSandboxReport(runId: string) {
+    return request<SandboxReport>(`/api/sandbox/runs/${encodeURIComponent(runId)}/report`)
+  },
+  getSandboxInterview(runId: string, actorId: string) {
+    return request<SandboxInterview>(
+      `/api/sandbox/runs/${encodeURIComponent(runId)}/interviews/${encodeURIComponent(actorId)}`,
+    )
+  },
+  createSandboxCandidate(runId: string, input: CreateSandboxCandidateInput) {
+    return request<SandboxCandidate>(`/api/sandbox/runs/${encodeURIComponent(runId)}/candidates`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
+  decideSandboxCandidate(candidateId: string, decision: 'approve' | 'reject') {
+    return request<SandboxCandidate>(
+      `/api/sandbox/candidates/${encodeURIComponent(candidateId)}/${decision}`,
+      { method: 'POST' },
+    )
+  },
+  compareSandboxRuns(projectId: string, runIds: string[]) {
+    return request<SandboxComparison>(
+      `/api/projects/${encodeURIComponent(projectId)}/sandbox/comparisons`,
+      { method: 'POST', body: JSON.stringify({ run_ids: runIds }) },
     )
   },
   listProjects() {
