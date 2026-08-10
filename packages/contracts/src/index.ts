@@ -155,6 +155,110 @@ export interface Project {
   updated_at: string
 }
 
+export interface DiagnosticCheck {
+  key: string
+  status: 'ok' | 'warning' | 'error'
+  message: string
+}
+
+export interface DiagnosticSummary {
+  generated_at: string
+  app_version: string
+  schema_version: number
+  operating_system: string
+  architecture: string
+  python_version: string
+  database_bytes: number
+  free_disk_bytes: number
+  counts: Record<string, number>
+  checks: DiagnosticCheck[]
+}
+
+export type BetaFeedbackCategory =
+  | 'workflow'
+  | 'ai_quality'
+  | 'reliability'
+  | 'originality'
+  | 'usability'
+
+export type BetaFeedbackContext =
+  | 'writing'
+  | 'director'
+  | 'review'
+  | 'reference'
+  | 'recovery'
+  | 'release'
+
+export type BetaEventType =
+  | 'manuscript_export'
+  | 'project_export'
+  | 'recovery_restore'
+  | 'report_export'
+
+export interface BetaTemplate {
+  id: string
+  label: string
+  genre: Genre
+  suggested_title: string
+  rebirth_year: number
+  rebirth_location: string
+  idea_prompt: string
+  reality_anchor: string
+  first_ten_chapter_goal: string
+}
+
+export interface CreateBetaFeedbackInput {
+  category: BetaFeedbackCategory
+  context: BetaFeedbackContext
+  rating: number
+  note: string
+}
+
+export interface BetaFeedback extends CreateBetaFeedbackInput {
+  id: string
+  project_id: string
+  created_at: string
+}
+
+export interface BetaMilestone {
+  key: string
+  label: string
+  completed: boolean
+  evidence_count: number
+}
+
+export interface BetaMetrics {
+  chapter_count: number
+  written_chapter_count: number
+  approved_chapter_count: number
+  ai_candidate_count: number
+  ai_applied_count: number
+  ai_adoption_rate: number | null
+  mean_manual_modification_ratio: number | null
+  review_finding_count: number
+  review_accepted_count: number
+  review_acceptance_rate: number | null
+  median_seconds_to_approved_chapter: number | null
+  estimated_cost_microusd: number
+  failed_or_interrupted_jobs: number
+  recovered_retry_jobs: number
+  retry_recovery_rate: number | null
+  open_critical_findings: number
+  originality_blocked_count: number
+}
+
+export interface BetaEvaluationReport {
+  format: 'mozhou-closed-beta-report'
+  format_version: 1
+  generated_at: string
+  project_id: string
+  template_ids: string[]
+  milestones: BetaMilestone[]
+  metrics: BetaMetrics
+  feedback: BetaFeedback[]
+  privacy_notice: string
+}
+
 export interface ProjectArchive {
   format: 'mozhou-project'
   format_version: 1 | 2 | 3 | 4 | 5 | 6

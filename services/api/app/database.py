@@ -568,6 +568,35 @@ CREATE TABLE IF NOT EXISTS serial_daily_goals (
     UNIQUE(project_id, goal_date)
 );
 
+CREATE TABLE IF NOT EXISTS beta_feedback (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    category TEXT NOT NULL CHECK(category IN (
+        'workflow', 'ai_quality', 'reliability', 'originality', 'usability'
+    )),
+    context TEXT NOT NULL CHECK(context IN (
+        'writing', 'director', 'review', 'reference', 'recovery', 'release'
+    )),
+    rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+    note TEXT NOT NULL DEFAULT '' CHECK(length(note) <= 2000),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_beta_feedback_project_created
+ON beta_feedback(project_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS beta_events (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL CHECK(event_type IN (
+        'manuscript_export', 'project_export', 'recovery_restore', 'report_export'
+    )),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_beta_events_project_type_created
+ON beta_events(project_id, event_type, created_at, id);
+
 CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 80),

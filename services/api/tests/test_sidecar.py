@@ -4,13 +4,19 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.database import DatabaseIntegrityError, DatabaseMigrationError
 from app.runtime import (
     DEFER_JOB_RUNTIME_ENV,
     INSECURE_DEV_ENV,
     SESSION_TOKEN_ENV,
     create_runtime_app,
 )
-from app.sidecar import parse_args, wait_for_parent_disconnect
+from app.sidecar import (
+    parse_args,
+    startup_failure_for,
+    wait_for_parent_disconnect,
+    write_startup_failure,
+)
 
 
 def test_sidecar_uses_loopback_and_accepts_selected_port() -> None:
@@ -85,3 +91,28 @@ def test_desktop_can_restore_credentials_before_starting_job_runtime(
         )
         assert response.json() == {"status": "running"}
         assert application.state.job_runtime.is_running is True
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (DatabaseIntegrityError("private sqlite detail"), "database_integrity"),
+        (DatabaseMigrationError("private migration detail"), "database_migration_failed"),
+        (RuntimeError("private runtime detail"), "local_api_startup_failed"),
+    ],
+)
+def test_startup_failure_status_is_actionable_and_sanitized(
+    tmp_path: Path,
+    error: BaseException,
+    code: str,
+) -> None:
+    status_file = tmp_path / "runtime" / "startup-status.json"
+    failure = startup_failure_for(error)
+
+    write_startup_failure(status_file, failure)
+    payload = status_file.read_text(encoding="utf-8")
+
+    assert failure.code == code
+    assert code in payload
+    assert "private" not in payload
+    assert str(tmp_path) not in payload

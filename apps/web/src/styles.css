@@ -177,6 +177,85 @@ textarea:focus-visible {
   font-size: 2rem;
 }
 
+.project-beta-templates {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1.3rem;
+  border: 1px solid #b7c1c1;
+  padding: 0.9rem;
+  background: #e9eeeb;
+}
+
+.project-beta-templates p,
+.project-beta-templates h3 {
+  margin: 0;
+}
+
+.project-beta-templates > div:first-child p {
+  color: var(--rust);
+  font: 850 0.65rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.project-beta-templates h3 {
+  margin-top: 0.2rem;
+  font: 800 1rem "Songti SC", "STSong", serif;
+}
+
+.project-beta-template-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.project-beta-template-grid button {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid #aab7b7;
+  padding: 0.65rem;
+  color: var(--ink-soft);
+  background: #fffefa;
+  text-align: left;
+}
+
+.project-beta-template-grid button[data-selected="true"] {
+  border-color: var(--rust);
+  color: white;
+  background: var(--rust);
+}
+
+.project-beta-template-grid strong {
+  font-size: 0.72rem;
+}
+
+.project-beta-template-grid span {
+  overflow: hidden;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-beta-templates aside {
+  border-left: 0.2rem solid var(--rust);
+  padding: 0.65rem;
+  background: #fffaf0;
+}
+
+.project-beta-templates aside strong,
+.project-beta-templates aside p,
+.project-beta-templates aside span {
+  display: block;
+}
+
+.project-beta-templates aside p,
+.project-beta-templates aside span {
+  margin-top: 0.25rem;
+  color: var(--slate);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
 .project-form > label,
 .project-form fieldset,
 .form-row label {
@@ -395,22 +474,456 @@ textarea:focus-visible {
   font-size: 0.68rem;
 }
 
-.project-library-header > p {
+.project-library-system-status {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0 1.4rem;
+  border-left: 1px solid #c4ccce;
+}
+
+.project-library-system-status p {
   display: flex;
   gap: 0.5rem;
   align-items: center;
   margin: 0;
-  padding: 0 1.4rem;
-  border-left: 1px solid #c4ccce;
   color: var(--slate);
   font-size: 0.72rem;
 }
 
-.project-library-header > p i {
+.project-library-system-status i {
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 50%;
   background: var(--sage);
+}
+
+.project-library-system-status button {
+  border: 1px solid #aeb9b8;
+  padding: 0.45rem 0.65rem;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 0.68rem;
+}
+
+.diagnostics-dialog-backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(18 27 31 / 68%);
+  backdrop-filter: blur(4px);
+}
+
+.diagnostics-dialog {
+  width: min(48rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #97a5a5;
+  background: var(--paper);
+  box-shadow: 0.55rem 0.65rem 0 rgb(12 22 26 / 24%);
+}
+
+.diagnostics-dialog > header,
+.diagnostics-dialog > footer {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.diagnostics-dialog > header p,
+.diagnostics-dialog > header h2 {
+  margin: 0;
+}
+
+.diagnostics-dialog > header p {
+  color: var(--rust);
+  font: 850 0.68rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.diagnostics-dialog > header h2 {
+  margin-top: 0.2rem;
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.diagnostics-dialog > header button {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  font-size: 1.5rem;
+}
+
+.diagnostics-content {
+  min-height: 0;
+  display: grid;
+  gap: 1rem;
+  overflow: auto;
+  padding: 1.2rem;
+}
+
+.diagnostics-checks {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostics-checks li {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 0.7rem;
+  background: #fffefa;
+}
+
+.diagnostics-checks li > span {
+  width: 1.8rem;
+  height: 1.8rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: var(--sage);
+  font-weight: 900;
+}
+
+.diagnostics-checks li[data-status="warning"] > span,
+.diagnostics-checks li[data-status="error"] > span {
+  background: var(--rust);
+}
+
+.diagnostics-checks strong,
+.diagnostics-checks p {
+  margin: 0;
+}
+
+.diagnostics-checks p,
+.diagnostics-content aside p {
+  margin-top: 0.15rem;
+  color: var(--slate);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.diagnostics-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid var(--line);
+}
+
+.diagnostics-stats div {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.7rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.diagnostics-stats div:nth-child(3n) {
+  border-right: 0;
+}
+
+.diagnostics-stats dt {
+  color: var(--slate);
+  font-size: 0.66rem;
+}
+
+.diagnostics-stats dd {
+  margin: 0;
+  font-weight: 850;
+}
+
+.diagnostics-content aside {
+  border-left: 0.25rem solid var(--sage);
+  padding: 0.75rem;
+  background: #e9eeea;
+}
+
+.diagnostics-content aside p {
+  margin-bottom: 0;
+}
+
+.diagnostics-loading,
+.diagnostics-error {
+  margin: 0;
+  padding: 1rem 1.2rem;
+}
+
+.diagnostics-error {
+  color: var(--danger);
+  background: #fff0ed;
+}
+
+.diagnostics-dialog > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.diagnostics-dialog > footer button:last-child {
+  color: white;
+  background: var(--ink);
+}
+
+.beta-dialog-backdrop {
+  position: fixed;
+  z-index: 92;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(18 27 31 / 72%);
+  backdrop-filter: blur(5px);
+}
+
+.beta-dialog {
+  width: min(66rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #879797;
+  background: var(--paper);
+  box-shadow: 0.6rem 0.7rem 0 rgb(12 22 26 / 26%);
+}
+
+.beta-dialog > header,
+.beta-dialog > footer {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.beta-dialog > header p,
+.beta-dialog > header h2,
+.beta-dialog-content h3,
+.beta-dialog-content section > div > p,
+.beta-feedback-form > div > p {
+  margin: 0;
+}
+
+.beta-dialog > header p,
+.beta-dialog-content section > div > p,
+.beta-feedback-form > div > p {
+  color: var(--rust);
+  font: 850 0.66rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.beta-dialog > header h2 {
+  margin-top: 0.2rem;
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.beta-dialog > header button {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  font-size: 1.5rem;
+}
+
+.beta-dialog-content {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+  gap: 1rem;
+  overflow: auto;
+  padding: 1.2rem;
+}
+
+.beta-milestones,
+.beta-metrics,
+.beta-feedback-form {
+  border: 1px solid var(--line);
+  padding: 1rem;
+  background: #fffefa;
+}
+
+.beta-milestones ol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.beta-milestones li {
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: center;
+  border: 1px solid #d2d8d6;
+  padding: 0.5rem;
+  color: var(--slate);
+  background: #f1f2ed;
+}
+
+.beta-milestones li[data-completed="true"] {
+  border-color: #9cac9f;
+  color: var(--ink-soft);
+  background: #e4ece5;
+}
+
+.beta-milestones li > span {
+  width: 1.55rem;
+  height: 1.55rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #8c999c;
+  font-weight: 900;
+}
+
+.beta-milestones li[data-completed="true"] > span {
+  background: var(--sage);
+}
+
+.beta-milestones li div {
+  min-width: 0;
+  display: grid;
+}
+
+.beta-milestones strong,
+.beta-milestones small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beta-milestones strong {
+  font-size: 0.72rem;
+}
+
+.beta-milestones small {
+  margin-top: 0.1rem;
+  font-size: 0.62rem;
+}
+
+.beta-metrics dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0.8rem 0 0;
+  border: 1px solid var(--line);
+}
+
+.beta-metrics dl div {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.65rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.beta-metrics dl div:nth-child(2n) {
+  border-right: 0;
+}
+
+.beta-metrics dt {
+  color: var(--slate);
+  font-size: 0.66rem;
+}
+
+.beta-metrics dd {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 850;
+}
+
+.beta-feedback-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.beta-feedback-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.65fr;
+  gap: 0.55rem;
+}
+
+.beta-feedback-form label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.beta-feedback-form select,
+.beta-feedback-form textarea {
+  width: 100%;
+  border: 1px solid #acb8b8;
+  padding: 0.55rem;
+  color: var(--ink);
+  background: white;
+}
+
+.beta-feedback-form textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.beta-feedback-form > button {
+  justify-self: end;
+  border: 0;
+  padding: 0.65rem 1rem;
+  color: white;
+  background: var(--rust);
+  font-weight: 800;
+}
+
+.beta-privacy-note {
+  border-left: 0.25rem solid var(--sage);
+  padding: 0.8rem;
+  background: #e9eeea;
+}
+
+.beta-privacy-note p,
+.beta-privacy-note span {
+  margin: 0.25rem 0 0;
+  color: var(--slate);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.beta-dialog-loading,
+.beta-dialog-error {
+  margin: 0;
+  padding: 1rem 1.2rem;
+}
+
+.beta-dialog-error {
+  color: var(--danger);
+  background: #fff0ed;
+}
+
+.beta-dialog > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.beta-dialog > footer button:last-child {
+  color: white;
+  background: var(--ink);
 }
 
 .project-library-hero {
@@ -817,7 +1330,7 @@ textarea:focus-visible {
 
 .project-volume-actions {
   display: grid;
-  grid-template-rows: 1fr auto auto auto;
+  grid-template-rows: 1fr repeat(5, auto);
   border-left: 1px solid var(--line);
 }
 
@@ -6877,8 +7390,44 @@ textarea:focus-visible {
     background: var(--mist);
   }
 
-  .project-library-header > p {
+  .project-library-system-status p {
     display: none;
+  }
+
+  .project-library-system-status {
+    padding: 0 0.75rem;
+  }
+
+  .diagnostics-dialog-backdrop {
+    padding: 0.5rem;
+  }
+
+  .diagnostics-dialog {
+    max-height: calc(100vh - 1rem);
+  }
+
+  .beta-dialog-backdrop {
+    padding: 0.5rem;
+  }
+
+  .beta-dialog {
+    max-height: calc(100vh - 1rem);
+  }
+
+  .beta-dialog-content {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostics-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostics-stats div:nth-child(3n) {
+    border-right: 1px solid var(--line);
+  }
+
+  .diagnostics-stats div:nth-child(2n) {
+    border-right: 0;
   }
 
   .project-library-hero {
@@ -6902,7 +7451,7 @@ textarea:focus-visible {
 
   .project-volume-actions {
     grid-column: 1 / -1;
-    grid-template-columns: 1.5fr repeat(4, 1fr);
+    grid-template-columns: 1.5fr repeat(5, 1fr);
     grid-template-rows: 1fr;
     border-top: 1px solid var(--line);
     border-left: 0;
@@ -7116,5 +7665,15 @@ textarea:focus-visible {
   .form-row,
   .genre-grid {
     grid-template-columns: 1fr;
+  }
+
+  .project-beta-template-grid,
+  .beta-milestones ol,
+  .beta-feedback-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .project-volume-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

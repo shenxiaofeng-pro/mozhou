@@ -10,10 +10,45 @@ const tauriArguments = ['--filter', '@mozhou/desktop', 'tauri', 'build', '--ci']
 const targetDirectory = process.env.CARGO_TARGET_DIR
   ?? join(realpathSync(tmpdir()), 'mozhou-tauri-target')
 
+const bundleConfiguration = {}
 if (process.platform === 'darwin' && !process.env.APPLE_SIGNING_IDENTITY) {
+  bundleConfiguration.macOS = { hardenedRuntime: false, signingIdentity: '-' }
+}
+
+if (
+  process.platform === 'win32'
+  && process.env.AZURE_ARTIFACT_SIGNING_ENDPOINT
+  && process.env.AZURE_ARTIFACT_SIGNING_ACCOUNT
+  && process.env.AZURE_ARTIFACT_SIGNING_PROFILE
+) {
+  const endpoint = new URL(process.env.AZURE_ARTIFACT_SIGNING_ENDPOINT)
+  const account = process.env.AZURE_ARTIFACT_SIGNING_ACCOUNT
+  const profile = process.env.AZURE_ARTIFACT_SIGNING_PROFILE
+  if (
+    endpoint.protocol !== 'https:'
+    || endpoint.username
+    || endpoint.password
+    || !/^[A-Za-z0-9_.-]{1,100}$/.test(account)
+    || !/^[A-Za-z0-9_.-]{1,100}$/.test(profile)
+  ) {
+    throw new Error('Invalid Azure Artifact Signing configuration')
+  }
+  bundleConfiguration.windows = {
+    signCommand: [
+      'artifact-signing-cli',
+      '-e', endpoint.origin,
+      '-a', account,
+      '-c', profile,
+      '-d', 'Mozhou',
+      '%1',
+    ].join(' '),
+  }
+}
+
+if (Object.keys(bundleConfiguration).length > 0) {
   tauriArguments.push(
     '--config',
-    JSON.stringify({ bundle: { macOS: { hardenedRuntime: false, signingIdentity: '-' } } }),
+    JSON.stringify({ bundle: bundleConfiguration }),
   )
 }
 

@@ -20,6 +20,7 @@ const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_millis(300);
 const SESSION_TOKEN_ENV: &str = "MOZHOU_API_SESSION_TOKEN";
 const DEFER_JOB_RUNTIME_ENV: &str = "MOZHOU_DEFER_JOB_RUNTIME";
+const STARTUP_STATUS_ENV: &str = "MOZHOU_STARTUP_STATUS_FILE";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +32,12 @@ pub(crate) struct ApiConnection {
 struct ApiSidecar {
     connection: ApiConnection,
     child: Mutex<Option<CommandChild>>,
+}
+
+#[derive(serde::Deserialize)]
+struct StartupStatus {
+    format: String,
+    code: String,
 }
 
 #[tauri::command]
@@ -116,16 +123,48 @@ fn wait_for_health(port: u16, timeout: Duration) -> bool {
     false
 }
 
+fn startup_status_message(payload: &[u8]) -> Option<&'static str> {
+    let status: StartupStatus = serde_json::from_slice(payload).ok()?;
+    if status.format != "mozhou-startup-status" {
+        return None;
+    }
+    match status.code.as_str() {
+        "database_integrity" => Some(
+            "数据库完整性检查未通过，原文件没有被修改。请保留数据目录并从备份恢复。",
+        ),
+        "database_newer_than_app" => {
+            Some("数据库来自更高版本的墨舟。请安装对应或更新版本，不要覆盖现有数据。")
+        }
+        "upgrade_backup_failed" => {
+            Some("升级前安全备份失败，数据库没有升级。请检查磁盘空间和目录权限后重试。")
+        }
+        "database_migration_failed" => {
+            Some("数据库升级未完成，原文件保持不变。请保留备份并导出诊断信息。")
+        }
+        "local_api_startup_failed" => {
+            Some("本地服务启动失败。请保留数据目录并导出诊断信息后重试。")
+        }
+        _ => None,
+    }
+}
+
 fn start_api_sidecar(app: &tauri::App) -> Result<ApiSidecar, String> {
     let port = select_loopback_port().map_err(|error| format!("无法选择本地 API 端口：{error}"))?;
     let session_token = generate_session_token()?;
+    let startup_status_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("无法定位本地数据目录：{error}"))?
+        .join("startup-status.json");
+    let _ = std::fs::remove_file(&startup_status_path);
     let command = app
         .shell()
         .sidecar("mozhou-api")
         .map_err(|error| format!("无法定位本地 API：{error}"))?
         .args(["--port", &port.to_string()])
         .env(SESSION_TOKEN_ENV, &session_token)
-        .env(DEFER_JOB_RUNTIME_ENV, "1");
+        .env(DEFER_JOB_RUNTIME_ENV, "1")
+        .env(STARTUP_STATUS_ENV, &startup_status_path);
     let (mut events, child) = command
         .spawn()
         .map_err(|error| format!("无法启动本地 API：{error}"))?;
@@ -133,7 +172,12 @@ fn start_api_sidecar(app: &tauri::App) -> Result<ApiSidecar, String> {
 
     if !wait_for_health(port, SIDECAR_STARTUP_TIMEOUT) {
         let _ = child.kill();
-        return Err("本地 API 未能在限定时间内完成健康检查".to_owned());
+        let safe_detail = std::fs::read(&startup_status_path)
+            .ok()
+            .and_then(|payload| startup_status_message(&payload));
+        return Err(safe_detail
+            .unwrap_or("本地 API 未能在限定时间内完成健康检查")
+            .to_owned());
     }
 
     Ok(ApiSidecar {
@@ -196,7 +240,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        generate_session_token, is_healthy_http_response, select_loopback_port, wait_for_health,
+        generate_session_token, is_healthy_http_response, select_loopback_port,
+        startup_status_message, wait_for_health,
     };
 
     #[test]
@@ -250,5 +295,21 @@ mod tests {
 
         assert!(wait_for_health(port, Duration::from_secs(1)));
         server.join().expect("health server should exit");
+    }
+
+    #[test]
+    fn accepts_only_known_sanitized_startup_status_codes() {
+        assert_eq!(
+            startup_status_message(
+                br#"{"format":"mozhou-startup-status","code":"database_integrity","message":"ignored"}"#
+            ),
+            Some("数据库完整性检查未通过，原文件没有被修改。请保留数据目录并从备份恢复。")
+        );
+        assert_eq!(
+            startup_status_message(
+                br#"{"format":"mozhou-startup-status","code":"attacker-controlled","message":"inject"}"#
+            ),
+            None
+        );
     }
 }

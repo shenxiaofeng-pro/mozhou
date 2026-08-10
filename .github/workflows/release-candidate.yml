@@ -1,0 +1,127 @@
+name: release-candidate
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing semantic version tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  signed-desktop:
+    name: signed desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/mozhou-target
+      MOZHOU_RELEASE_REF: refs/tags/${{ inputs.release_tag || github.ref_name }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+      AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+      AZURE_ARTIFACT_SIGNING_PROFILE: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          uv python install 3.14
+          uv sync --project services/api --frozen
+      - name: Enforce signing and tag preflight
+        run: pnpm run release:preflight
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$KEYCHAIN_PASSWORD"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/mozhou-release.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/mozhou-build.keychain"
+          security default-keychain -s "$RUNNER_TEMP/mozhou-build.keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/mozhou-build.keychain"
+          security set-keychain-settings -t 3600 -u "$RUNNER_TEMP/mozhou-build.keychain"
+          security import "$RUNNER_TEMP/mozhou-release.p12" -k "$RUNNER_TEMP/mozhou-build.keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/mozhou-build.keychain"
+          rm "$RUNNER_TEMP/mozhou-release.p12"
+      - name: Install Azure Artifact Signing client
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo install artifact-signing-cli --locked
+      - name: Run complete verification gate
+        run: pnpm run verify
+      - name: Build signed and notarized installers
+        run: pnpm run desktop:build
+      - name: Verify macOS signature, notarization and package structure
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP_PATH=$(find "$CARGO_TARGET_DIR/release/bundle/macos" -maxdepth 1 -name '*.app' -print -quit)
+          DMG_PATH=$(find artifacts/desktop -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$APP_PATH"
+          test -n "$DMG_PATH"
+          test -x "$APP_PATH/Contents/MacOS/mozhou-api"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          hdiutil verify "$DMG_PATH"
+      - name: Verify Windows Authenticode and bundled sidecar
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem artifacts/desktop -File | Where-Object { $_.Extension -in '.exe', '.msi' }
+          if ($installers.Count -eq 0) { throw 'No Windows installer produced' }
+          if (-not (Test-Path "$env:CARGO_TARGET_DIR/release/mozhou.exe")) { throw 'Desktop executable missing' }
+          if (-not (Test-Path "$env:CARGO_TARGET_DIR/release/mozhou-api.exe")) { throw 'Bundled API sidecar missing' }
+          foreach ($installer in $installers) { & signtool verify /pa /all $installer.FullName }
+      - name: Generate SBOM, NOTICE, checksums and release record
+        run: pnpm run release:metadata
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/desktop/*
+      - name: Attest CycloneDX SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/desktop/*
+          sbom-path: artifacts/release-metadata/mozhou.cdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mozhou-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: error
+          path: |
+            artifacts/desktop/*
+            artifacts/release-metadata/*

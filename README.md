@@ -21,6 +21,9 @@
 - 将纯正文按 UTF-8 Markdown 导出；该入口与包含完整应用状态的 `.mozhou.json` 项目归档明确分离。
 - 在连载台查看今日新增、日目标、总字数、存稿、待审校、定稿和可发布数量；搜索全书章节正文、人物、资源与伏笔。
 - 支持 `Cmd/Ctrl+S` 保存、`Cmd/Ctrl+K` 搜索、`Cmd/Ctrl+Shift+F` 专注模式和 `Alt+Up/Down` 切章。
+- 从作品书架执行数据库完整性、结构版本和磁盘空间只读体检，并一键导出不含书名、正文、资料原文、路径、Prompt 或密钥的脱敏诊断包。
+- 使用历史重生、都市重生或现实锚点封测模板起航，并在作品书架查看十章里程碑、AI 采用/修改/审校/恢复/成本指标；报告只在作者主动操作时脱敏导出。
+- SQLite busy、磁盘写满、只读目录、损坏库和升级失败都有可操作的安全提示；桌面启动状态只接受白名单错误码，不能通过本地状态文件注入任意文本。
 - 横向查看连续三章的承诺、钩子、变化、回报和悬念，提示重复节拍。
 - 自动生成断更恢复卡，汇总上次进度、下一章入口、开放伏笔、人物/资源状态和待处理审核。
 - 运行确定性连续性检查，提示未来知识待复核、伏笔逾期、节奏缺口、重复节拍、实体状态缺失和现实资料年代覆盖问题。
@@ -91,7 +94,7 @@ pnpm run desktop:dev
 pnpm run verify
 ```
 
-`verify` 会依次运行前后端 lint、严格类型检查、前端交互测试、后端测试、生产构建、独立 sidecar 构建与桌面 Rust 编译检查。当前为 46 项前端测试、196 项后端测试、7 项常规 Rust 测试和 10 项工程脚本测试；另有 1 项真实 macOS Keychain 往返测试按需执行并已通过。动态端口 sidecar、数据库迁移、项目归档、恢复点、模型路由、完整性/签名和 release 安装包均有验证证据。
+`verify` 会依次运行前后端 lint、严格类型检查、前端交互测试、后端测试、规模基准、生产构建、独立 sidecar 构建与桌面 Rust 编译检查。当前为 50 项前端测试、211 项后端测试、8 项常规 Rust 测试和 16 项工程脚本测试；另有 1 项真实 macOS Keychain 往返测试按需执行并已通过。规模门覆盖 1/30/100 章项目打开、30 万字检索、切章、保存和 300 万字参考切分。
 
 桌面安装包构建：
 
@@ -100,6 +103,8 @@ pnpm run desktop:build
 ```
 
 构建脚本会在系统临时 target 目录完成 release 签名和打包，再把安装器复制到 `artifacts/desktop/`。macOS 无发布证书时产出可本机测试的 ad-hoc 签名 DMG；配置 `APPLE_SIGNING_IDENTITY` 后，PyInstaller 与 Tauri 会共用同一证书并保持 Hardened Runtime，公证仍需要 Apple 发布凭据。Windows 需在 Windows 机器原生构建对应安装器。
+
+严格标签流水线见 `.github/workflows/release-candidate.yml`：缺 Developer ID/公证或 Azure Artifact Signing 凭据时直接失败，不会把无签名包伪装成发布候选。每个平台生成 CycloneDX SBOM、第三方 NOTICE、SHA-256、工具链/源提交记录，以及 GitHub provenance 与 SBOM attestation。人工安装、升级、卸载保留和回滚矩阵见 [桌面发布清单](docs/product/release-checklist.md)。
 
 ## 项目结构
 

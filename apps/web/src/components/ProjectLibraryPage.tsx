@@ -2,7 +2,9 @@ import type { Project, RecoveryPointSummary, Workspace } from '@mozhou/contracts
 import { type ChangeEvent, useState } from 'react'
 
 import { api } from '../api'
+import { BetaEvaluationDialog } from './BetaEvaluationDialog'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
+import { SystemDiagnosticsDialog } from './SystemDiagnosticsDialog'
 
 interface ProjectLibraryPageProps {
   projects: Project[]
@@ -52,6 +54,8 @@ export function ProjectLibraryPage({
   const [recoveryPoints, setRecoveryPoints] = useState<RecoveryPointSummary[]>([])
   const [recoveryLabel, setRecoveryLabel] = useState('')
   const [isManuscriptImportOpen, setIsManuscriptImportOpen] = useState(false)
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
+  const [betaProject, setBetaProject] = useState<Project | null>(null)
 
   const reportError = (failure: unknown, fallback: string) => {
     setOperationError(failure instanceof Error ? failure.message : fallback)
@@ -80,6 +84,7 @@ export function ProjectLibraryPage({
           ? `《${project.title}》完整归档已导出，包含关联资料原文。`
           : `《${project.title}》归档已导出。`,
       )
+      void api.recordBetaEvent(project.id, 'project_export').catch(() => undefined)
     } catch (failure) {
       reportError(failure, '归档导出失败')
     } finally {
@@ -129,6 +134,7 @@ export function ProjectLibraryPage({
       anchor.remove()
       URL.revokeObjectURL(url)
       setNotice(`《${project.title}》正文已按 UTF-8 Markdown 导出。`)
+      void api.recordBetaEvent(project.id, 'manuscript_export').catch(() => undefined)
     } catch (failure) {
       reportError(failure, '正文导出失败')
     } finally {
@@ -184,6 +190,7 @@ export function ProjectLibraryPage({
       const restored = await api.restoreRecoveryPoint(point.id)
       onProjectAdded(restored)
       setNotice(`《${restored.project.title}》已恢复为新副本。`)
+      void api.recordBetaEvent(point.project_id, 'recovery_restore').catch(() => undefined)
     } catch (failure) {
       reportError(failure, '从恢复点创建副本失败')
     } finally {
@@ -198,7 +205,10 @@ export function ProjectLibraryPage({
           <span aria-hidden="true">墨</span>
           <div><strong>墨舟</strong><small>本地长篇创作工作台</small></div>
         </div>
-        <p><i aria-hidden="true" />作品保存在这台设备上</p>
+        <div className="project-library-system-status">
+          <p><i aria-hidden="true" />作品保存在这台设备上</p>
+          <button type="button" onClick={() => setIsDiagnosticsOpen(true)}>系统诊断</button>
+        </div>
       </header>
 
       <section className="project-library-hero" aria-labelledby="project-library-title">
@@ -289,6 +299,14 @@ export function ProjectLibraryPage({
               >
                 恢复点
               </button>
+              <button
+                type="button"
+                aria-label={`查看《${project.title}》封测报告`}
+                disabled={busyAction !== null}
+                onClick={() => setBetaProject(project)}
+              >
+                封测报告
+              </button>
             </div>
             {openRecoveryProjectId === project.id ? (
               <section className="project-recovery-drawer" aria-label={`《${project.title}》恢复点`}>
@@ -358,6 +376,12 @@ export function ProjectLibraryPage({
             setNotice(`《${workspace.project.title}》已从稿件创建。`)
           }}
         />
+      ) : null}
+      {isDiagnosticsOpen ? (
+        <SystemDiagnosticsDialog onClose={() => setIsDiagnosticsOpen(false)} />
+      ) : null}
+      {betaProject ? (
+        <BetaEvaluationDialog project={betaProject} onClose={() => setBetaProject(null)} />
       ) : null}
     </main>
   )
