@@ -597,6 +597,92 @@ CREATE TABLE IF NOT EXISTS beta_events (
 CREATE INDEX IF NOT EXISTS idx_beta_events_project_type_created
 ON beta_events(project_id, event_type, created_at, id);
 
+CREATE TABLE IF NOT EXISTS sandbox_snapshots (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 120),
+    engine_version TEXT NOT NULL CHECK(length(engine_version) BETWEEN 1 AND 80),
+    actor_count INTEGER NOT NULL CHECK(actor_count BETWEEN 5 AND 20),
+    snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+    snapshot_sha256 TEXT NOT NULL CHECK(length(snapshot_sha256) = 64),
+    source_counts_json TEXT NOT NULL CHECK(json_valid(source_counts_json)),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_snapshots_project_created
+ON sandbox_snapshots(project_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS sandbox_branches (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    snapshot_id TEXT NOT NULL REFERENCES sandbox_snapshots(id) ON DELETE CASCADE,
+    parent_branch_id TEXT REFERENCES sandbox_branches(id) ON DELETE SET NULL,
+    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 120),
+    seed INTEGER NOT NULL CHECK(seed BETWEEN 0 AND 2147483647),
+    variables_json TEXT NOT NULL CHECK(json_valid(variables_json)),
+    forced_actions_json TEXT NOT NULL CHECK(json_valid(forced_actions_json)),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_branches_snapshot_created
+ON sandbox_branches(snapshot_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS sandbox_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    branch_id TEXT NOT NULL REFERENCES sandbox_branches(id) ON DELETE CASCADE,
+    state TEXT NOT NULL CHECK(state IN (
+        'ready', 'running', 'completed', 'cancelled', 'budget_exhausted'
+    )),
+    requested_rounds INTEGER NOT NULL CHECK(requested_rounds BETWEEN 3 AND 10),
+    completed_rounds INTEGER NOT NULL DEFAULT 0 CHECK(completed_rounds BETWEEN 0 AND 10),
+    action_budget INTEGER NOT NULL CHECK(action_budget BETWEEN 5 AND 200),
+    actions_used INTEGER NOT NULL DEFAULT 0 CHECK(actions_used BETWEEN 0 AND 200),
+    current_state_json TEXT NOT NULL CHECK(json_valid(current_state_json)),
+    current_state_sha256 TEXT NOT NULL CHECK(length(current_state_sha256) = 64),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_runs_branch_created
+ON sandbox_runs(branch_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS sandbox_rounds (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES sandbox_runs(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 10),
+    actions_json TEXT NOT NULL CHECK(json_valid(actions_json)),
+    outcomes_json TEXT NOT NULL CHECK(json_valid(outcomes_json)),
+    assumptions_json TEXT NOT NULL CHECK(json_valid(assumptions_json)),
+    evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+    state_before_sha256 TEXT NOT NULL CHECK(length(state_before_sha256) = 64),
+    state_after_sha256 TEXT NOT NULL CHECK(length(state_after_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(run_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_rounds_run_ordinal
+ON sandbox_rounds(run_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS sandbox_candidates (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES sandbox_runs(id) ON DELETE CASCADE,
+    target_chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
+    source_round INTEGER NOT NULL CHECK(source_round BETWEEN 1 AND 10),
+    kind TEXT NOT NULL CHECK(kind IN ('chapter_outline', 'fact_change')),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    state TEXT NOT NULL CHECK(state IN ('candidate', 'approved', 'rejected')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    decided_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_candidates_project_created
+ON sandbox_candidates(project_id, created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK(length(name) BETWEEN 1 AND 80),

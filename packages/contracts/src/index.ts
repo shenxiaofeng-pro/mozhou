@@ -259,6 +259,223 @@ export interface BetaEvaluationReport {
   privacy_notice: string
 }
 
+export type SandboxActorKind = 'character' | 'faction'
+
+export type SandboxActionKind =
+  | 'observe'
+  | 'negotiate'
+  | 'invest'
+  | 'investigate'
+  | 'relocate'
+  | 'mobilize'
+  | 'publicize'
+  | 'trade'
+
+export type SandboxRunState =
+  | 'ready'
+  | 'running'
+  | 'completed'
+  | 'cancelled'
+  | 'budget_exhausted'
+
+export type SandboxCandidateKind = 'chapter_outline' | 'fact_change'
+
+export type SandboxCandidateState = 'candidate' | 'approved' | 'rejected'
+
+export type SandboxVariableValue = boolean | number | string
+
+export interface SandboxActor {
+  id: string
+  name: string
+  kind: SandboxActorKind
+  goal: string
+  location: string
+  resources: Record<string, number>
+  knowledge: string[]
+  capabilities: string[]
+  allowed_actions: SandboxActionKind[]
+  relationships: Record<string, number>
+}
+
+export interface SandboxTemplate {
+  id: string
+  label: string
+  description: string
+  suggested_variables: Record<string, SandboxVariableValue>
+  actors: SandboxActor[]
+}
+
+export interface CreateSandboxSnapshotInput {
+  label: string
+  template_id?: string
+  actors?: SandboxActor[]
+}
+
+export interface SandboxSnapshot {
+  id: string
+  project_id: string
+  label: string
+  engine_version: string
+  actor_count: number
+  snapshot_sha256: string
+  source_counts: Record<string, number>
+  actors: SandboxActor[]
+  created_at: string
+}
+
+export interface SandboxForcedAction {
+  round_number: number
+  actor_id: string
+  action_kind: SandboxActionKind
+  target_actor_id?: string
+  location: string
+  required_knowledge: string[]
+}
+
+export interface CreateSandboxBranchInput {
+  label: string
+  parent_branch_id?: string
+  seed: number
+  variables: Record<string, SandboxVariableValue>
+  forced_actions: SandboxForcedAction[]
+}
+
+export interface SandboxBranch {
+  id: string
+  project_id: string
+  snapshot_id: string
+  parent_branch_id: string | null
+  label: string
+  seed: number
+  variables: Record<string, SandboxVariableValue>
+  forced_actions: SandboxForcedAction[]
+  created_at: string
+}
+
+export interface SandboxAction {
+  actor_id: string
+  actor_name: string
+  action_kind: SandboxActionKind
+  target_actor_id: string | null
+  target_actor_name: string | null
+  location: string
+  costs: Record<string, number>
+  required_knowledge: string[]
+  summary: string
+}
+
+export interface SandboxOutcome {
+  actor_id: string
+  summary: string
+  resource_changes: Record<string, number>
+  relationship_changes: Record<string, number>
+  location_change: string | null
+  momentum_change: number
+  confidence: number
+}
+
+export interface SandboxRound {
+  id: string
+  run_id: string
+  ordinal: number
+  actions: SandboxAction[]
+  outcomes: SandboxOutcome[]
+  assumptions: string[]
+  evidence: Array<Record<string, string>>
+  state_before_sha256: string
+  state_after_sha256: string
+  created_at: string
+}
+
+export interface SandboxRun {
+  id: string
+  project_id: string
+  branch_id: string
+  state: SandboxRunState
+  requested_rounds: number
+  completed_rounds: number
+  action_budget: number
+  actions_used: number
+  current_state_sha256: string
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+  rounds: SandboxRound[]
+}
+
+export interface SandboxConclusion {
+  round_number: number
+  actor_id: string
+  statement: string
+  assumptions: string[]
+  evidence: Array<Record<string, string>>
+  confidence: number
+  impact_chain: string[]
+  counterexample: string
+}
+
+export interface SandboxReport {
+  run_id: string
+  branch_id: string
+  snapshot_sha256: string
+  state: SandboxRunState
+  disclaimer: string
+  conclusions: SandboxConclusion[]
+  final_scores: Record<string, number>
+}
+
+export interface SandboxInterviewAnswer {
+  question: string
+  answer: string
+  knowledge_basis: string[]
+  confidence: number
+}
+
+export interface SandboxInterview {
+  run_id: string
+  actor_id: string
+  actor_name: string
+  disclaimer: string
+  answers: SandboxInterviewAnswer[]
+}
+
+export interface CreateSandboxCandidateInput {
+  kind: SandboxCandidateKind
+  source_round: number
+  target_chapter_id?: string
+  title: string
+}
+
+export interface SandboxCandidate {
+  id: string
+  project_id: string
+  run_id: string
+  target_chapter_id: string | null
+  source_round: number
+  kind: SandboxCandidateKind
+  title: string
+  content: Record<string, unknown>
+  state: SandboxCandidateState
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface SandboxComparison {
+  run_ids: string[]
+  comparable: boolean
+  snapshot_sha256: string
+  scores: Record<string, Record<string, number>>
+  differences: string[]
+}
+
+export interface SandboxWorkspace {
+  snapshots: SandboxSnapshot[]
+  branches: SandboxBranch[]
+  runs: SandboxRun[]
+  candidates: SandboxCandidate[]
+}
+
 export interface ProjectArchive {
   format: 'mozhou-project'
   format_version: 1 | 2 | 3 | 4 | 5 | 6
