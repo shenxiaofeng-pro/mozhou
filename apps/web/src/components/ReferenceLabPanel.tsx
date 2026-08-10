@@ -1,8 +1,14 @@
 import type {
+  BlueprintDimensionState,
+  BlueprintEntityKind,
+  BlueprintRelationshipState,
   Job,
+  OriginalityReport,
   ReferenceFilePreview,
+  ReferencePatternApplication,
   ReferencePatternCard,
   ReferencePatternDimension,
+  ReferenceBlueprintState,
   ReferenceRightsBasis,
   Workspace,
   WorkspaceSummary,
@@ -561,7 +567,13 @@ function ReferencePatternCardPanel({
           {existingApplication ? <span>已应用到当前作品</span> : <span>待作者选择</span>}
         </div>
         {existingApplication ? (
-          <p>已带入 {existingApplication.selected_dimensions.length} 个抽象维度；后续章节 AI 可以读取这份应用蓝图。</p>
+          <ReferenceBlueprintEditor
+            key={`${existingApplication.id}:${existingApplication.revision}:${existingApplication.latest_report_id ?? ''}`}
+            application={existingApplication}
+            workspace={workspace}
+            sourceLabels={sourceLabels}
+            onWorkspaceChanged={onWorkspaceChanged}
+          />
         ) : (
           <>
             <fieldset>
@@ -609,5 +621,390 @@ function ReferencePatternCardPanel({
         {applyError ? <p className="agent-error" role="alert">{applyError}</p> : null}
       </section>
     </article>
+  )
+}
+
+interface ReferenceBlueprintEditorProps {
+  application: ReferencePatternApplication
+  workspace: WorkspaceSummary
+  sourceLabels: Map<string, string>
+  onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+}
+
+const modeLabels = {
+  preserve: '保留功能',
+  adjust: '调整表达',
+  reconstruct: '重构',
+} as const
+
+const riskLabels = {
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
+} as const
+
+const entityKindLabels: Record<BlueprintEntityKind, string> = {
+  character: '人物',
+  location: '地点',
+  organization: '组织',
+  proper_noun: '专名',
+}
+
+function parseNamedEntities(value: string): BlueprintDimensionState['named_entities'] {
+  const kindByLabel = Object.fromEntries(
+    Object.entries(entityKindLabels).map(([kind, label]) => [label, kind]),
+  ) as Record<string, BlueprintEntityKind>
+  return value.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20).map((line) => {
+    const [first, second = '', ...parts] = line.split('｜').map((item) => item.trim())
+    const kind = kindByLabel[first] ?? (
+      first in entityKindLabels ? first as BlueprintEntityKind : 'proper_noun'
+    )
+    return kind === 'proper_noun' && !kindByLabel[first] && !(first in entityKindLabels)
+      ? { kind, name: first, function: [second, ...parts].filter(Boolean).join('｜') }
+      : { kind, name: second, function: parts.join('｜') }
+  }).filter((item) => item.name)
+}
+
+function copyBlueprint(blueprint: ReferenceBlueprintState): ReferenceBlueprintState {
+  return JSON.parse(JSON.stringify(blueprint)) as ReferenceBlueprintState
+}
+
+function replaceApplication(
+  workspace: WorkspaceSummary,
+  application: ReferencePatternApplication,
+): WorkspaceSummary {
+  return {
+    ...workspace,
+    reference_pattern_applications: workspace.reference_pattern_applications.map((item) => (
+      item.id === application.id ? application : item
+    )),
+  }
+}
+
+function ReferenceBlueprintEditor({
+  application,
+  workspace,
+  sourceLabels,
+  onWorkspaceChanged,
+}: ReferenceBlueprintEditorProps) {
+  const [draft, setDraft] = useState<ReferenceBlueprintState | null>(() => (
+    application.blueprint ? copyBlueprint(application.blueprint) : null
+  ))
+  const [changedDimensions, setChangedDimensions] = useState<Set<ReferencePatternDimension>>(
+    () => new Set(),
+  )
+  const [relationshipChanged, setRelationshipChanged] = useState(false)
+  const [report, setReport] = useState<OriginalityReport | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isLoadingReport, setIsLoadingReport] = useState(false)
+  const [editorError, setEditorError] = useState<string | null>(null)
+
+  function updateDimension(
+    dimension: ReferencePatternDimension,
+    update: (current: BlueprintDimensionState) => BlueprintDimensionState,
+  ) {
+    setDraft((current) => {
+      if (!current?.dimensions[dimension]) return current
+      return {
+        ...current,
+        dimensions: {
+          ...current.dimensions,
+          [dimension]: update(current.dimensions[dimension]),
+        },
+      }
+    })
+    setChangedDimensions((current) => new Set(current).add(dimension))
+  }
+
+  function updateRelationship(
+    update: (current: BlueprintRelationshipState) => BlueprintRelationshipState,
+  ) {
+    setDraft((current) => current ? {
+      ...current,
+      relationship: update(current.relationship),
+    } : current)
+    setRelationshipChanged(true)
+  }
+
+  async function saveBlueprint() {
+    if (!draft || (!changedDimensions.size && !relationshipChanged)) return
+    setIsSaving(true)
+    setEditorError(null)
+    try {
+      const updated = await api.updateReferenceBlueprint(
+        workspace.project.id,
+        application.id,
+        {
+          blueprint: draft,
+          changed_dimensions: [...changedDimensions],
+          relationship_changed: relationshipChanged,
+          expected_revision: application.revision,
+        },
+      )
+      onWorkspaceChanged(replaceApplication(workspace, updated))
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '蓝图保存失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function openReport() {
+    if (!application.latest_report_id) return
+    setIsLoadingReport(true)
+    setEditorError(null)
+    try {
+      setReport(await api.getOriginalityReport(application.latest_report_id))
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '原创性报告加载失败')
+    } finally {
+      setIsLoadingReport(false)
+    }
+  }
+
+  async function acknowledgeReport() {
+    setIsSaving(true)
+    setEditorError(null)
+    try {
+      const updated = await api.acknowledgeOriginalityReport(
+        workspace.project.id,
+        application.id,
+        { expected_revision: application.revision },
+      )
+      onWorkspaceChanged(replaceApplication(workspace, updated))
+      if (application.latest_report_id) {
+        setReport(await api.getOriginalityReport(application.latest_report_id))
+      }
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '风险确认失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  if (!draft) {
+    return <p>这是旧版蓝图，已暂停传给 AI；请重新应用或恢复后完成原创性检查。</p>
+  }
+
+  const risk = application.risk_level
+  return (
+    <div className="reference-blueprint-editor">
+      <div className="originality-gate-summary" data-risk={risk ?? 'unchecked'}>
+        <div>
+          <small>原创性门禁 · {application.threshold_version ?? '待检查'}</small>
+          <strong>{risk ? riskLabels[risk] : '待检查'}</strong>
+          <span>
+            {application.originality_status === 'passed'
+              ? '已通过，章纲与正文 AI 可使用这份蓝图。'
+              : application.originality_status === 'review_required'
+                ? '需查看完整报告并显式确认，当前不传给 AI。'
+                : '当前不传给章纲或正文 AI，请先重构标记项。'}
+          </span>
+        </div>
+        <button type="button" onClick={openReport} disabled={!application.latest_report_id || isLoadingReport}>
+          {isLoadingReport ? '加载报告…' : '查看原创性报告'}
+        </button>
+      </div>
+
+      {report ? (
+        <section className="originality-report" aria-label="原创性报告" data-risk={report.risk_level}>
+          <header>
+            <div><small>风险分</small><strong>{report.score}/100</strong></div>
+            <div><small>检查范围</small><strong>{report.checked_dimensions.length} 个维度</strong></div>
+            <div><small>规则版本</small><strong>{report.threshold_version}</strong></div>
+          </header>
+          {report.evidence.length ? (
+            <ul>
+              {report.evidence.map((evidence) => (
+                <li key={evidence.evidence_sha256}>
+                  <strong>+{evidence.score} · {evidence.summary}</strong>
+                  <span>
+                    {evidence.dimension
+                      ? dimensionLabels.find(([key]) => key === evidence.dimension)?.[1]
+                      : '组合检查'}
+                    {evidence.source_segment_id
+                      ? ` · ${sourceLabels.get(evidence.source_segment_id) ?? '来源区段'}`
+                      : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : <p>没有检出需提示的结构组合或文本重合。</p>}
+          <p className="originality-legal-notice">{report.legal_notice}</p>
+          {application.originality_status === 'review_required' ? (
+            <button type="button" onClick={acknowledgeReport} disabled={isSaving}>
+              我已查看报告，确认继续使用这份蓝图
+            </button>
+          ) : null}
+          {application.originality_status === 'blocked' ? (
+            <p className="originality-blocked-note">高风险不能手动跳过；请根据证据重构下方维度后重新检查。</p>
+          ) : null}
+        </section>
+      ) : null}
+
+      <div className="blueprint-dimension-list">
+        {application.selected_dimensions.map((dimension) => {
+          const state = draft.dimensions[dimension]
+          if (!state) return null
+          const label = dimensionLabels.find(([key]) => key === dimension)?.[1] ?? dimension
+          return (
+            <section className="blueprint-dimension" key={dimension} data-changed={changedDimensions.has(dimension)}>
+              <header>
+                <div><small>{label}</small><strong>v{state.version}</strong></div>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={state.locked}
+                    onChange={(event) => updateDimension(dimension, (current) => ({
+                      ...current,
+                      locked: event.target.checked,
+                    }))}
+                  />
+                  锁定这一版
+                </label>
+              </header>
+              <label>处理方式
+                <select
+                  aria-label={`${label}处理方式`}
+                  value={state.mode}
+                  disabled={state.locked}
+                  onChange={(event) => updateDimension(dimension, (current) => ({
+                    ...current,
+                    mode: event.target.value as BlueprintDimensionState['mode'],
+                  }))}
+                >
+                  {Object.entries(modeLabels).map(([value, modeLabel]) => (
+                    <option key={value} value={value}>{modeLabel}</option>
+                  ))}
+                </select>
+              </label>
+              <label>来源结构（只读）
+                <textarea value={`${state.source.summary}\n${state.source.transferable_logic}`} rows={3} readOnly />
+              </label>
+              <label>作者改编意图
+                <textarea
+                  value={state.author_edits}
+                  rows={3}
+                  maxLength={1200}
+                  disabled={state.locked}
+                  onChange={(event) => updateDimension(dimension, (current) => ({
+                    ...current,
+                    author_edits: event.target.value,
+                  }))}
+                />
+              </label>
+              <label>候选蓝图摘要
+                <textarea
+                  aria-label={`${label}候选蓝图摘要`}
+                  value={state.generated_variant.summary}
+                  rows={3}
+                  maxLength={1200}
+                  disabled={state.locked}
+                  onChange={(event) => updateDimension(dimension, (current) => ({
+                    ...current,
+                    generated_variant: {
+                      ...current.generated_variant,
+                      summary: event.target.value,
+                    },
+                  }))}
+                />
+              </label>
+              <label>可迁移逻辑
+                <textarea
+                  value={state.generated_variant.transferable_logic}
+                  rows={3}
+                  maxLength={1200}
+                  disabled={state.locked}
+                  onChange={(event) => updateDimension(dimension, (current) => ({
+                    ...current,
+                    generated_variant: {
+                      ...current.generated_variant,
+                      transferable_logic: event.target.value,
+                    },
+                  }))}
+                />
+              </label>
+              <label>来源实体（每行：人物/地点/组织/专名｜名称｜功能）
+                <textarea
+                  value={state.named_entities.map((item) => (
+                    `${entityKindLabels[item.kind]}｜${item.name}｜${item.function}`
+                  )).join('\n')}
+                  rows={2}
+                  disabled={state.locked}
+                  onChange={(event) => updateDimension(dimension, (current) => ({
+                    ...current,
+                    named_entities: parseNamedEntities(event.target.value),
+                  }))}
+                />
+              </label>
+              {dimension === 'key_scene_sequence' ? (
+                <label>新作关键场景节拍（每行一个）
+                  <textarea
+                    value={state.key_beats.join('\n')}
+                    rows={4}
+                    disabled={state.locked}
+                    onChange={(event) => updateDimension(dimension, (current) => ({
+                      ...current,
+                      key_beats: event.target.value.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20),
+                    }))}
+                  />
+                </label>
+              ) : null}
+            </section>
+          )
+        })}
+      </div>
+
+      <section className="blueprint-relationship" data-changed={relationshipChanged}>
+        <header><div><small>人物关系重组</small><strong>v{draft.relationship.version}</strong></div>
+          <label><input
+            type="checkbox"
+            checked={draft.relationship.locked}
+            onChange={(event) => updateRelationship((current) => ({ ...current, locked: event.target.checked }))}
+          />锁定这一版</label>
+        </header>
+        <label>来源关系（只读）<textarea value={draft.relationship.source} rows={2} readOnly /></label>
+        <label>人物重组意图<textarea
+          value={draft.relationship.author_edits}
+          rows={3}
+          disabled={draft.relationship.locked}
+          onChange={(event) => updateRelationship((current) => ({ ...current, author_edits: event.target.value }))}
+        /></label>
+        <label>新作人物关系<textarea
+          aria-label="新作人物关系"
+          value={draft.relationship.generated_variant}
+          rows={3}
+          disabled={draft.relationship.locked}
+          onChange={(event) => updateRelationship((current) => ({ ...current, generated_variant: event.target.value }))}
+        /></label>
+        <label>关系结构（每行：角色A｜关系｜角色B｜说明）<textarea
+          value={draft.relationship.relationships.map((item) => (
+            `${item.left_role}｜${item.relation}｜${item.right_role}｜${item.notes}`
+          )).join('\n')}
+          rows={4}
+          disabled={draft.relationship.locked}
+          onChange={(event) => updateRelationship((current) => ({
+            ...current,
+            relationships: event.target.value.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20).flatMap((line) => {
+              const [left_role, relation, right_role, ...notes] = line.split('｜').map((item) => item.trim())
+              return left_role && relation && right_role
+                ? [{ left_role, relation, right_role, notes: notes.join('｜') }]
+                : []
+            }),
+          }))}
+        /></label>
+      </section>
+
+      <button
+        type="button"
+        className="save-blueprint"
+        onClick={saveBlueprint}
+        disabled={isSaving || (!changedDimensions.size && !relationshipChanged)}
+      >
+        {isSaving ? '正在重新检查…' : `保存并重检 ${changedDimensions.size + (relationshipChanged ? 1 : 0)} 项`}
+      </button>
+      <p className="originality-legal-notice">原创性风险提示用于创作风控，不是法律结论。</p>
+      {editorError ? <p className="agent-error" role="alert">{editorError}</p> : null}
+    </div>
   )
 }

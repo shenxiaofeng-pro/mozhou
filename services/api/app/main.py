@@ -50,6 +50,7 @@ from app.jobs import (
     JobRuntime,
 )
 from app.models import (
+    AcknowledgeOriginalityReportRequest,
     AiChapterBriefProposal,
     AiChapterBriefRequest,
     AiDraftRequest,
@@ -71,6 +72,7 @@ from app.models import (
     FutureKnowledge,
     GenerationRun,
     ImportReferenceWorkRequest,
+    OriginalityReport,
     Project,
     RecoveryPointSummary,
     ReferenceFilePreview,
@@ -97,6 +99,7 @@ from app.models import (
     TransitionStoryThreadRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateReferenceBlueprintRequest,
     UpdateStoryEntityRequest,
     Workspace,
     WorkspaceSummary,
@@ -127,6 +130,7 @@ from app.repository import (
     InvalidReferenceSelectionError,
     InvalidStoryThreadStateError,
     NotFoundError,
+    OriginalityGateBlockedError,
     ProjectRepository,
     StaleChapterSequenceError,
     StaleRevisionError,
@@ -588,6 +592,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新生成章纲") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except InvalidContextPacketError as error:
@@ -612,6 +618,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新预览") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except InvalidContextPacketError as error:
@@ -637,6 +645,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新提交") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except InvalidContextPacketError as error:
@@ -673,6 +683,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新生成正文") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except InvalidContextPacketError as error:
@@ -697,6 +709,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新预览") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
 
@@ -720,6 +734,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新提交") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
         except InvalidContextPacketError as error:
@@ -1205,7 +1221,62 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="模式卡不存在于当前作品") from error
         except InvalidReferenceApplicationError as error:
-            raise HTTPException(status_code=409, detail="这张模式卡已经应用到当前作品") from error
+            raise HTTPException(status_code=409, detail="蓝图无法应用，请检查来源或是否已应用") from error
+
+    @application.get(
+        "/api/originality-reports/{report_id}",
+        response_model=OriginalityReport,
+    )
+    def get_originality_report(
+        report_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> OriginalityReport:
+        try:
+            return repository.get_originality_report(str(report_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="原创性报告不存在") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/reference-blueprints/{application_id}",
+        response_model=ReferencePatternApplication,
+    )
+    def update_reference_blueprint(
+        project_id: UUID,
+        application_id: UUID,
+        body: UpdateReferenceBlueprintRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferencePatternApplication:
+        try:
+            return repository.update_reference_blueprint(
+                str(project_id), str(application_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="蓝图不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再修改") from error
+        except InvalidReferenceApplicationError as error:
+            raise HTTPException(status_code=409, detail="蓝图修改不合法，请检查变更维度和锁定状态") from error
+
+    @application.post(
+        "/api/projects/{project_id}/reference-blueprints/{application_id}/originality-acknowledgements",
+        response_model=ReferencePatternApplication,
+    )
+    def acknowledge_originality_report(
+        project_id: UUID,
+        application_id: UUID,
+        body: AcknowledgeOriginalityReportRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferencePatternApplication:
+        try:
+            return repository.acknowledge_originality_report(
+                str(project_id), str(application_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="蓝图不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再处理") from error
+        except InvalidReferenceApplicationError as error:
+            raise HTTPException(status_code=409, detail="当前报告不能确认，高风险蓝图必须先修改") from error
 
     @application.get("/api/projects/{project_id}", response_model=Workspace)
     def get_project(

@@ -23,6 +23,7 @@ from app.models import (
     ConfigureAiRequest,
     GenerationRun,
     GenerationState,
+    OriginalityStatus,
     ReferenceBookAnalysis,
     ReferenceChunkAnalysis,
     ReferencePatternCard,
@@ -48,6 +49,7 @@ from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 from app.repository import (
     InvalidChapterStateError,
     InvalidReferenceSelectionError,
+    OriginalityGateBlockedError,
     ProjectRepository,
     StaleRevisionError,
 )
@@ -699,6 +701,11 @@ class AiWritingService:
             raise StaleRevisionError(str(chapter.revision))
         if chapter.status not in {ChapterStatus.PLANNED, ChapterStatus.DRAFTED}:
             raise InvalidChapterStateError(chapter.status.value)
+        if any(
+            application.originality_status != OriginalityStatus.PASSED
+            for application in workspace.reference_pattern_applications
+        ):
+            raise OriginalityGateBlockedError("reference_blueprint_not_passed")
         if not self.manager.status().configured:
             raise AiNotConfiguredError
         return workspace, chapter
@@ -898,6 +905,7 @@ def build_chapter_context(workspace: Workspace, chapter: Chapter, author_intent:
                 "application_note": application.application_note,
             }
             for application in workspace.reference_pattern_applications
+            if application.originality_status == OriginalityStatus.PASSED
         ][:10],
     }
     return json.dumps(context, ensure_ascii=False, separators=(",", ":"))

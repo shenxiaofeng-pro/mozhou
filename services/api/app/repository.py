@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -10,9 +11,13 @@ from app.continuity import enrich_serial_control
 from app.database import Database
 from app.fake_model import ChapterContext
 from app.models import (
+    AcknowledgeOriginalityReportRequest,
     AppliedReferenceDimension,
     ApplyFactChangeSetRequest,
     ApplyReferencePatternRequest,
+    BlueprintDimensionState,
+    BlueprintMode,
+    BlueprintRelationshipState,
     Chapter,
     ChapterStatus,
     ChapterSummary,
@@ -33,10 +38,16 @@ from app.models import (
     ImportReferenceWorkRequest,
     KnowledgeReviewAction,
     KnowledgeStatus,
+    OriginalityAssessment,
+    OriginalityReport,
+    OriginalityRiskLevel,
+    OriginalityStatus,
     Project,
+    ReferenceBlueprintState,
     ReferenceFormat,
     ReferencePatternApplication,
     ReferencePatternCard,
+    ReferencePatternDimension,
     ReferenceRightsBasis,
     ReferenceSegment,
     ReferenceSynthesisProposal,
@@ -56,10 +67,12 @@ from app.models import (
     TransitionStoryThreadRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateReferenceBlueprintRequest,
     UpdateStoryEntityRequest,
     Workspace,
     WorkspaceSummary,
 )
+from app.originality_guard import assess_blueprint
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 from app.safe_import import ParsedReferenceFile
 
@@ -105,6 +118,10 @@ class InvalidReferenceSelectionError(Exception):
 
 
 class InvalidReferenceApplicationError(Exception):
+    pass
+
+
+class OriginalityGateBlockedError(RuntimeError):
     pass
 
 
@@ -868,7 +885,8 @@ class ProjectRepository:
         with self.database.connect() as connection:
             card = connection.execute(
                 """
-                SELECT proposal_json FROM reference_pattern_cards
+                SELECT proposal_json, selected_segment_ids_json
+                FROM reference_pattern_cards
                 WHERE id = ? AND project_id = ?
                 """,
                 (card_id, project_id),
@@ -876,38 +894,76 @@ class ProjectRepository:
             if card is None:
                 raise NotFoundError(card_id)
             proposal = ReferenceSynthesisProposal.model_validate_json(card["proposal_json"])
-            dimensions = {
-                dimension.value: AppliedReferenceDimension(
-                    summary=getattr(proposal, dimension.value).summary,
-                    transferable_logic=getattr(proposal, dimension.value).transferable_logic,
-                ).model_dump(mode="json")
-                for dimension in request.selected_dimensions
-            }
+        blueprint = request.blueprint or self._default_reference_blueprint(
+            proposal,
+            request.selected_dimensions,
+            request.application_note,
+        )
+        self._validate_blueprint_sources(blueprint, proposal, request.selected_dimensions)
+        selected_segment_ids = json.loads(card["selected_segment_ids_json"])
+        if not isinstance(selected_segment_ids, list) or not all(
+            isinstance(segment_id, str) for segment_id in selected_segment_ids
+        ):
+            raise InvalidReferenceApplicationError("invalid_pattern_sources")
+        sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
+        assessment = assess_blueprint(blueprint, sources)
+        status = self._status_for_assessment(assessment)
+        report_id = str(uuid4())
+        dimensions = {
+            dimension.value: state.generated_variant.model_dump(mode="json")
+            for dimension, state in blueprint.dimensions.items()
+        }
+        with self.database.connect() as connection:
             try:
                 connection.execute(
                     """
                     INSERT INTO reference_pattern_applications (
                         id, project_id, pattern_card_id, selected_dimensions_json,
                         dimensions_json, relationship_recomposition,
-                        application_note, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        application_note, blueprint_json, originality_status,
+                        risk_level, latest_report_id, threshold_version, revision,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     (
                         application_id,
                         project_id,
                         card_id,
                         json.dumps(
-                            [dimension.value for dimension in request.selected_dimensions],
+                            [dimension.value for dimension in blueprint.dimensions],
                             separators=(",", ":"),
                         ),
                         json.dumps(dimensions, ensure_ascii=False, separators=(",", ":")),
-                        proposal.relationship_recomposition,
+                        blueprint.relationship.generated_variant,
                         request.application_note,
+                        blueprint.model_dump_json(),
+                        status.value,
+                        assessment.risk_level.value,
+                        report_id,
+                        assessment.threshold_version,
+                        timestamp,
                         timestamp,
                     ),
                 )
             except IntegrityError as error:
                 raise InvalidReferenceApplicationError("pattern_already_applied") from error
+            self._insert_blueprint_version(
+                connection,
+                application_id=application_id,
+                revision=0,
+                blueprint=blueprint,
+                changed_dimensions=list(blueprint.dimensions),
+                relationship_changed=True,
+                timestamp=timestamp,
+            )
+            self._insert_originality_report(
+                connection,
+                report_id=report_id,
+                application_id=application_id,
+                revision=0,
+                assessment=assessment,
+                timestamp=timestamp,
+            )
             row = connection.execute(
                 "SELECT * FROM reference_pattern_applications WHERE id = ?",
                 (application_id,),
@@ -915,6 +971,359 @@ class ProjectRepository:
         if row is None:
             raise NotFoundError(application_id)
         return self._reference_pattern_application(row)
+
+    def get_originality_report(self, report_id: str) -> OriginalityReport:
+        return self._get_originality_report(report_id, mark_viewed=True)
+
+    def _get_originality_report(
+        self,
+        report_id: str,
+        *,
+        mark_viewed: bool,
+    ) -> OriginalityReport:
+        with self.database.connect() as connection:
+            if mark_viewed:
+                connection.execute(
+                    "UPDATE originality_reports SET viewed_at = ? "
+                    "WHERE id = ? AND viewed_at IS NULL",
+                    (now_iso(), report_id),
+                )
+            row = connection.execute(
+                "SELECT * FROM originality_reports WHERE id = ?",
+                (report_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(report_id)
+        return self._originality_report(row)
+
+    def update_reference_blueprint(
+        self,
+        project_id: str,
+        application_id: str,
+        request: UpdateReferenceBlueprintRequest,
+    ) -> ReferencePatternApplication:
+        current = self._get_reference_application(project_id, application_id)
+        if current.revision != request.expected_revision or current.blueprint is None:
+            raise StaleRevisionError(str(current.revision))
+        previous_blueprint = current.blueprint
+        changed = set(request.changed_dimensions)
+        for dimension, previous_state in previous_blueprint.dimensions.items():
+            next_state = request.blueprint.dimensions.get(dimension)
+            if next_state is None:
+                raise InvalidReferenceApplicationError("cannot_remove_dimension")
+            if dimension not in changed and next_state != previous_state:
+                raise InvalidReferenceApplicationError("undeclared_dimension_change")
+            if (
+                dimension in changed
+                and previous_state.locked
+                and next_state
+                != previous_state.model_copy(update={"locked": False})
+            ):
+                raise InvalidReferenceApplicationError("locked_dimension")
+        if set(request.blueprint.dimensions) != set(previous_blueprint.dimensions):
+            raise InvalidReferenceApplicationError("cannot_change_dimension_selection")
+        if not request.relationship_changed and request.blueprint.relationship != previous_blueprint.relationship:
+            raise InvalidReferenceApplicationError("undeclared_relationship_change")
+        if (
+            request.relationship_changed
+            and previous_blueprint.relationship.locked
+            and request.blueprint.relationship
+            != previous_blueprint.relationship.model_copy(update={"locked": False})
+        ):
+            raise InvalidReferenceApplicationError("locked_relationship")
+        normalized_dimensions = dict(request.blueprint.dimensions)
+        for dimension in changed:
+            normalized_dimensions[dimension] = normalized_dimensions[dimension].model_copy(
+                update={"version": previous_blueprint.dimensions[dimension].version + 1}
+            )
+        relationship = request.blueprint.relationship
+        if request.relationship_changed:
+            relationship = relationship.model_copy(
+                update={"version": previous_blueprint.relationship.version + 1}
+            )
+        blueprint = ReferenceBlueprintState(
+            dimensions=normalized_dimensions,
+            relationship=relationship,
+        )
+        with self.database.connect() as connection:
+            card = connection.execute(
+                """
+                SELECT c.proposal_json, c.selected_segment_ids_json
+                FROM reference_pattern_cards c
+                JOIN reference_pattern_applications a ON a.pattern_card_id = c.id
+                WHERE a.id = ? AND a.project_id = ?
+                """,
+                (application_id, project_id),
+            ).fetchone()
+        if card is None:
+            raise NotFoundError(application_id)
+        proposal = ReferenceSynthesisProposal.model_validate_json(card["proposal_json"])
+        self._validate_blueprint_sources(blueprint, proposal, list(blueprint.dimensions))
+        selected_segment_ids = json.loads(card["selected_segment_ids_json"])
+        if not isinstance(selected_segment_ids, list) or not all(
+            isinstance(segment_id, str) for segment_id in selected_segment_ids
+        ):
+            raise InvalidReferenceApplicationError("invalid_pattern_sources")
+        sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
+        previous_report = (
+            self._get_originality_report(current.latest_report_id, mark_viewed=False)
+            if current.latest_report_id is not None else None
+        )
+        assessment = assess_blueprint(
+            blueprint,
+            sources,
+            changed_dimensions=changed,
+            relationship_changed=request.relationship_changed,
+            previous=previous_report,
+        )
+        status = self._status_for_assessment(assessment)
+        report_id = str(uuid4())
+        revision = current.revision + 1
+        timestamp = now_iso()
+        dimensions = {
+            dimension.value: state.generated_variant.model_dump(mode="json")
+            for dimension, state in blueprint.dimensions.items()
+        }
+        with self.database.connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE reference_pattern_applications
+                SET dimensions_json = ?, relationship_recomposition = ?,
+                    blueprint_json = ?, originality_status = ?, risk_level = ?,
+                    latest_report_id = ?, threshold_version = ?, revision = ?, updated_at = ?
+                WHERE id = ? AND project_id = ? AND revision = ?
+                """,
+                (
+                    json.dumps(dimensions, ensure_ascii=False, separators=(",", ":")),
+                    blueprint.relationship.generated_variant,
+                    blueprint.model_dump_json(),
+                    status.value,
+                    assessment.risk_level.value,
+                    report_id,
+                    assessment.threshold_version,
+                    revision,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_revision,
+                ),
+            )
+            if result.rowcount == 0:
+                raise StaleRevisionError(str(current.revision))
+            self._insert_blueprint_version(
+                connection,
+                application_id=application_id,
+                revision=revision,
+                blueprint=blueprint,
+                changed_dimensions=request.changed_dimensions,
+                relationship_changed=request.relationship_changed,
+                timestamp=timestamp,
+            )
+            self._insert_originality_report(
+                connection,
+                report_id=report_id,
+                application_id=application_id,
+                revision=revision,
+                assessment=assessment,
+                timestamp=timestamp,
+            )
+            row = connection.execute(
+                "SELECT * FROM reference_pattern_applications WHERE id = ?",
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
+
+    def acknowledge_originality_report(
+        self,
+        project_id: str,
+        application_id: str,
+        request: AcknowledgeOriginalityReportRequest,
+    ) -> ReferencePatternApplication:
+        current = self._get_reference_application(project_id, application_id)
+        if current.revision != request.expected_revision:
+            raise StaleRevisionError(str(current.revision))
+        if current.originality_status != OriginalityStatus.REVIEW_REQUIRED:
+            raise InvalidReferenceApplicationError("report_not_acknowledgeable")
+        if current.latest_report_id is None:
+            raise InvalidReferenceApplicationError("missing_report")
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            report = connection.execute(
+                "SELECT viewed_at FROM originality_reports WHERE id = ?",
+                (current.latest_report_id,),
+            ).fetchone()
+            if report is None or report["viewed_at"] is None:
+                raise InvalidReferenceApplicationError("report_not_viewed")
+            result = connection.execute(
+                """
+                UPDATE reference_pattern_applications
+                SET originality_status = 'passed', updated_at = ?
+                WHERE id = ? AND project_id = ? AND revision = ?
+                  AND originality_status = 'review_required'
+                """,
+                (timestamp, application_id, project_id, request.expected_revision),
+            )
+            if result.rowcount == 0:
+                raise StaleRevisionError(str(current.revision))
+            row = connection.execute(
+                "SELECT * FROM reference_pattern_applications WHERE id = ?",
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
+
+    def _get_reference_application(
+        self,
+        project_id: str,
+        application_id: str,
+    ) -> ReferencePatternApplication:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM reference_pattern_applications
+                WHERE id = ? AND project_id = ?
+                """,
+                (application_id, project_id),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
+
+    @staticmethod
+    def _default_reference_blueprint(
+        proposal: ReferenceSynthesisProposal,
+        selected_dimensions: list[ReferencePatternDimension],
+        application_note: str,
+    ) -> ReferenceBlueprintState:
+        dimensions: dict[ReferencePatternDimension, BlueprintDimensionState] = {}
+        for dimension in selected_dimensions:
+            source = getattr(proposal, dimension.value)
+            source_beats = (
+                [
+                    item.strip()
+                    for item in re.split(r"[\n；;。.!！？?、→>]+", source.summary)
+                    if item.strip()
+                ][:20]
+                if dimension == ReferencePatternDimension.KEY_SCENE_SEQUENCE
+                else []
+            )
+            dimensions[dimension] = BlueprintDimensionState(
+                source=source,
+                mode=BlueprintMode.PRESERVE,
+                author_edits=application_note,
+                generated_variant=AppliedReferenceDimension(
+                    summary=source.summary,
+                    transferable_logic=source.transferable_logic,
+                ),
+                source_beats=source_beats,
+                key_beats=source_beats,
+            )
+        return ReferenceBlueprintState(
+            dimensions=dimensions,
+            relationship=BlueprintRelationshipState(
+                source=proposal.relationship_recomposition,
+                mode=BlueprintMode.PRESERVE,
+                author_edits=application_note,
+                generated_variant=proposal.relationship_recomposition,
+            ),
+        )
+
+    @staticmethod
+    def _validate_blueprint_sources(
+        blueprint: ReferenceBlueprintState,
+        proposal: ReferenceSynthesisProposal,
+        selected_dimensions: list[ReferencePatternDimension],
+    ) -> None:
+        if set(blueprint.dimensions) != set(selected_dimensions):
+            raise InvalidReferenceApplicationError("blueprint_dimension_mismatch")
+        for dimension, state in blueprint.dimensions.items():
+            if state.source != getattr(proposal, dimension.value):
+                raise InvalidReferenceApplicationError("blueprint_source_changed")
+        if blueprint.relationship.source != proposal.relationship_recomposition:
+            raise InvalidReferenceApplicationError("relationship_source_changed")
+
+    @staticmethod
+    def _status_for_assessment(assessment: OriginalityAssessment) -> OriginalityStatus:
+        if assessment.risk_level == OriginalityRiskLevel.HIGH:
+            return OriginalityStatus.BLOCKED
+        if assessment.risk_level == OriginalityRiskLevel.MEDIUM:
+            return OriginalityStatus.REVIEW_REQUIRED
+        return OriginalityStatus.PASSED
+
+    @staticmethod
+    def _insert_blueprint_version(
+        connection: Connection,
+        *,
+        application_id: str,
+        revision: int,
+        blueprint: ReferenceBlueprintState,
+        changed_dimensions: list[ReferencePatternDimension],
+        relationship_changed: bool,
+        timestamp: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO reference_blueprint_versions (
+                id, application_id, blueprint_revision, blueprint_json,
+                changed_dimensions_json, relationship_changed, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                application_id,
+                revision,
+                blueprint.model_dump_json(),
+                json.dumps(
+                    [dimension.value for dimension in changed_dimensions],
+                    separators=(",", ":"),
+                ),
+                int(relationship_changed),
+                timestamp,
+            ),
+        )
+
+    @staticmethod
+    def _insert_originality_report(
+        connection: Connection,
+        *,
+        report_id: str,
+        application_id: str,
+        revision: int,
+        assessment: OriginalityAssessment,
+        timestamp: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO originality_reports (
+                id, application_id, blueprint_revision, risk_level, score,
+                threshold_version, checked_dimensions_json, evidence_json,
+                source_segment_ids_json, input_sha256, viewed_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                report_id,
+                application_id,
+                revision,
+                assessment.risk_level.value,
+                assessment.score,
+                assessment.threshold_version,
+                json.dumps(
+                    [dimension.value for dimension in assessment.checked_dimensions],
+                    separators=(",", ":"),
+                ),
+                json.dumps(
+                    [item.model_dump(mode="json") for item in assessment.evidence],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                json.dumps(assessment.source_segment_ids, separators=(",", ":")),
+                assessment.input_sha256,
+                timestamp,
+            ),
+        )
 
     def create_story_entity(
         self,
@@ -2274,8 +2683,21 @@ class ProjectRepository:
 
     @staticmethod
     def _reference_pattern_application(row: Row) -> ReferencePatternApplication:
+        payload = dict(row)
+        raw_blueprint = payload.pop("blueprint_json", None)
         return ReferencePatternApplication.model_validate({
-            **dict(row),
+            **payload,
             "selected_dimensions": json.loads(row["selected_dimensions_json"]),
             "dimensions": json.loads(row["dimensions_json"]),
+            "blueprint": json.loads(raw_blueprint) if raw_blueprint else None,
+        })
+
+    @staticmethod
+    def _originality_report(row: Row) -> OriginalityReport:
+        return OriginalityReport.model_validate({
+            **dict(row),
+            "checked_dimensions": json.loads(row["checked_dimensions_json"]),
+            "evidence": json.loads(row["evidence_json"]),
+            "source_segment_ids": json.loads(row["source_segment_ids_json"]),
+            "legal_notice": "原创性风险提示用于创作风控，不是法律结论。",
         })

@@ -5,6 +5,7 @@ import type {
   AiStatus,
   AiTaskDefault,
   AiTaskType,
+  AcknowledgeOriginalityReportInput,
   ApplyFactChangeSetInput,
   ApplyReferencePatternInput,
   Chapter,
@@ -31,6 +32,7 @@ import type {
   JobDetail,
   KnowledgeReviewAction,
   ModelProfile,
+  OriginalityReport,
   Project,
   ProjectArchive,
   ReferenceWork,
@@ -51,6 +53,7 @@ import type {
   UpdateChapterBriefInput,
   UpdateChapterInput,
   UpdateModelProfileInput,
+  UpdateReferenceBlueprintInput,
   UpdateAiTaskDefaultInput,
   UpdateStoryEntityInput,
   Workspace,
@@ -542,6 +545,31 @@ export const api = {
   applyReferencePattern(projectId: string, cardId: string, input: ApplyReferencePatternInput) {
     return request<ReferencePatternApplication>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-cards/${encodeURIComponent(cardId)}/applications`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getOriginalityReport(reportId: string) {
+    return request<OriginalityReport>(
+      `/api/originality-reports/${encodeURIComponent(reportId)}`,
+    )
+  },
+  updateReferenceBlueprint(
+    projectId: string,
+    applicationId: string,
+    input: UpdateReferenceBlueprintInput,
+  ) {
+    return request<ReferencePatternApplication>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  acknowledgeOriginalityReport(
+    projectId: string,
+    applicationId: string,
+    input: AcknowledgeOriginalityReportInput,
+  ) {
+    return request<ReferencePatternApplication>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/originality-acknowledgements`,
       { method: 'POST', body: JSON.stringify(input) },
     )
   },
