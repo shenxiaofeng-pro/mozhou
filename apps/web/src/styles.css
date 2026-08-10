@@ -1831,6 +1831,7 @@ textarea:focus-visible {
 }
 
 .chapter-brief,
+.book-director,
 .ai-coauthor,
 .context-preview,
 .candidate-card,
@@ -1848,6 +1849,294 @@ textarea:focus-visible {
   margin-top: 1rem;
   padding: 1rem;
   background: var(--paper);
+}
+
+.book-director {
+  display: grid;
+  gap: 0.85rem;
+  border-top: 4px solid var(--rust);
+  color: var(--ink);
+  background: #fffdf8;
+}
+
+.book-director > header,
+.plan-editor > header,
+.pipeline-result > header,
+.director-outbound > div:first-child,
+.director-job > div,
+.expansion-proposal > div {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.book-director > header p,
+.book-director > header h3 {
+  margin: 0;
+}
+
+.book-director > header p {
+  color: var(--rust);
+  font-size: 0.52rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.book-director > header h3 {
+  margin-top: 0.25rem;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.02rem;
+  line-height: 1.4;
+}
+
+.book-director > header > span {
+  flex: none;
+  border: 1px solid var(--line);
+  padding: 0.28rem 0.4rem;
+  color: var(--slate);
+  font-size: 0.5rem;
+}
+
+.book-director > header > span[data-ready="true"] {
+  border-color: var(--sage);
+  color: #486557;
+  background: #edf4ef;
+}
+
+.director-startup,
+.director-command-row,
+.director-outbound,
+.director-job,
+.field-proposal,
+.expansion-proposal,
+.pipeline-result,
+.plan-editor {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.director-startup label,
+.director-command-row label,
+.blueprint-grid label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--slate);
+  font-size: 0.57rem;
+  font-weight: 800;
+}
+
+.director-startup textarea,
+.director-command-row textarea,
+.book-director input,
+.book-director select,
+.book-director textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 1px;
+  padding: 0.5rem;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 0.62rem;
+  line-height: 1.5;
+}
+
+.book-director textarea {
+  resize: vertical;
+}
+
+.book-director button {
+  border: 1px solid var(--ink);
+  padding: 0.5rem 0.65rem;
+  color: #fff;
+  background: var(--ink);
+  font-size: 0.57rem;
+  font-weight: 850;
+}
+
+.book-director button:hover:not(:disabled),
+.book-director button:focus-visible:not(:disabled) {
+  border-color: var(--rust);
+  background: var(--rust);
+}
+
+.book-director button:disabled {
+  border-color: #b4bcba;
+  color: #717c7a;
+  background: #e8ecea;
+}
+
+.blueprint-editor,
+.director-plans {
+  border: 1px solid var(--line);
+  padding: 0.7rem;
+  background: #f7f7f3;
+}
+
+.blueprint-editor > summary,
+.director-plans > summary {
+  cursor: pointer;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.blueprint-editor > summary small,
+.director-plans > summary small {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--slate);
+  font-family: system-ui, sans-serif;
+  font-size: 0.52rem;
+  font-weight: 500;
+}
+
+.blueprint-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.7rem 0;
+}
+
+.blueprint-grid label {
+  position: relative;
+  border-left: 2px solid transparent;
+  padding-left: 0.45rem;
+}
+
+.blueprint-grid label[data-locked="true"] {
+  border-left-color: var(--rust);
+}
+
+.blueprint-grid .blueprint-lock {
+  justify-self: end;
+  border: 0;
+  padding: 0.16rem 0;
+  color: var(--rust);
+  background: transparent;
+  font-size: 0.5rem;
+}
+
+.director-command-row {
+  border-left: 3px solid var(--ink);
+  padding-left: 0.7rem;
+}
+
+.field-regenerator {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+}
+
+.book-director .pipeline-action {
+  border-color: var(--rust);
+  background: var(--rust);
+}
+
+.director-outbound,
+.director-job,
+.field-proposal,
+.expansion-proposal,
+.pipeline-result {
+  border-left: 3px solid var(--rust);
+  padding: 0.75rem;
+  background: #f0e8dc;
+}
+
+.director-outbound p,
+.field-proposal p,
+.expansion-proposal p,
+.pipeline-result p {
+  margin: 0;
+  color: #586261;
+  font-size: 0.58rem;
+  line-height: 1.55;
+}
+
+.director-outbound span,
+.director-job span,
+.pipeline-result header span,
+.expansion-proposal > div span {
+  color: var(--slate);
+  font-size: 0.5rem;
+}
+
+.director-outbound > div:last-child,
+.pipeline-result > div,
+.pipeline-rerun {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.director-job progress {
+  width: 100%;
+  accent-color: var(--rust);
+}
+
+.startup-candidates {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.startup-candidates article {
+  border: 1px solid var(--line);
+  padding: 0.75rem;
+  background: #f7f7f3;
+}
+
+.startup-candidates small {
+  color: var(--rust);
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.startup-candidates h4,
+.startup-candidates p,
+.startup-candidates ul,
+.field-proposal h4,
+.expansion-proposal h4,
+.pipeline-result h4 {
+  margin: 0.45rem 0;
+}
+
+.startup-candidates p,
+.startup-candidates li {
+  color: var(--slate);
+  font-size: 0.57rem;
+  line-height: 1.5;
+}
+
+.director-warning,
+.book-director .ai-coauthor-error {
+  margin: 0;
+  color: #8a3d2a;
+  font-size: 0.56rem;
+  line-height: 1.5;
+}
+
+.director-plans > .plan-editor {
+  margin-top: 0.65rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.65rem;
+}
+
+.plan-editor > header button {
+  border: 0;
+  padding: 0;
+  color: var(--rust);
+  background: transparent;
+}
+
+.plan-editor.rolling {
+  border-left: 2px solid var(--sage);
+  padding-left: 0.6rem;
+}
+
+.pipeline-rerun button {
+  color: var(--ink);
+  background: transparent;
 }
 
 .ai-coauthor {

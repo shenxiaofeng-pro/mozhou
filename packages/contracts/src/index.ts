@@ -72,6 +72,29 @@ export type OriginalitySignal =
   | 'beat_sequence'
   | 'multi_dimension'
 
+export type BookBlueprintField =
+  | 'title'
+  | 'genre'
+  | 'rebirth_year'
+  | 'rebirth_location'
+  | 'target_audience'
+  | 'core_selling_points'
+  | 'core_desire'
+  | 'divergence_point'
+  | 'long_term_promise'
+  | 'ending_direction'
+  | 'protagonist_arc'
+  | 'resource_growth'
+  | 'relationship_design'
+
+export type DirectorWorkflow =
+  | 'director_startup'
+  | 'director_expansion'
+  | 'director_field_regeneration'
+  | 'director_chapter_pipeline'
+
+export type DirectorPipelineStage = 'context' | 'brief' | 'pre_review' | 'draft'
+
 export type AiProvider = 'unavailable' | 'openai' | 'openai_compatible'
 
 export type ContinuitySeverity = 'warning' | 'info'
@@ -107,13 +130,247 @@ export interface Project {
 
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1 | 2 | 3
+  format_version: 1 | 2 | 3 | 4
   exported_at: string
   source_project_id: string
   source_project_title: string
   schema_version: number
   tables: Record<string, Array<Record<string, unknown>>>
   checksum_sha256: string
+}
+
+export interface BookBlueprintContent {
+  title: string
+  genre: Genre
+  rebirth_year: number
+  rebirth_location: string
+  target_audience: string
+  core_selling_points: string[]
+  core_desire: string
+  divergence_point: string
+  long_term_promise: string
+  ending_direction: string
+  protagonist_arc: string
+  resource_growth: string
+  relationship_design: string
+}
+
+export interface BookBlueprint {
+  id: string
+  project_id: string
+  idea: string
+  content: BookBlueprintContent
+  locks: Record<BookBlueprintField, boolean>
+  field_versions: Record<BookBlueprintField, number>
+  stale_fields: BookBlueprintField[]
+  plan_stale: boolean
+  source_candidate_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DirectorStartupRequest {
+  idea: string
+  reality_anchor: string
+  candidate_count: number
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface DirectorStartupCandidate {
+  id: string
+  ordinal: number
+  label: string
+  blueprint: BookBlueprintContent
+  why_distinct: string
+  risks: string[]
+}
+
+export interface DirectorStartupProposalSet {
+  job_id: string
+  project_id: string
+  idea: string
+  candidates: DirectorStartupCandidate[]
+}
+
+export interface SelectDirectorCandidateInput {
+  job_id: string
+  candidate_id: string
+  expected_blueprint_revision: number | null
+}
+
+export interface UpdateBookBlueprintInput {
+  content: BookBlueprintContent
+  changed_fields: BookBlueprintField[]
+  lock_updates: Partial<Record<BookBlueprintField, boolean>>
+  expected_revision: number
+}
+
+export interface DirectorRegenerationImpact {
+  target_field: BookBlueprintField
+  directly_affected: BookBlueprintField[]
+  downstream_affected: BookBlueprintField[]
+  locked_conflicts: BookBlueprintField[]
+  will_mark_plan_stale: boolean
+}
+
+export interface DirectorFieldRegenerationRequest {
+  target_field: BookBlueprintField
+  expected_revision: number
+  author_intent: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface DirectorFieldProposal {
+  job_id: string
+  project_id: string
+  blueprint_revision: number
+  target_field: BookBlueprintField
+  value: string | string[]
+  rationale: string
+  downstream_affected: BookBlueprintField[]
+}
+
+export interface ApplyDirectorProposalInput {
+  job_id: string
+  expected_revision: number
+}
+
+export interface DirectorSceneBeat {
+  ordinal: number
+  summary: string
+  state_change: string
+  resource_change: string
+  emotional_turn: string
+  verification: string
+}
+
+export interface VolumePlanContent {
+  volume_number: number
+  title: string
+  direction: string
+  central_conflict: string
+  state_goal: string
+  resource_goal: string
+  emotional_payoff: string
+  climax: string
+  verification: string
+}
+
+export interface VolumePlan extends VolumePlanContent {
+  id: string
+  project_id: string
+  revision: number
+  locked: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface RollingChapterPlanContent {
+  chapter_number: number
+  title: string
+  reader_promise: string
+  opening_hook: string
+  state_change: string
+  resource_change: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  verification: string
+  scene_beats: DirectorSceneBeat[]
+}
+
+export interface RollingChapterPlan extends RollingChapterPlanContent {
+  id: string
+  project_id: string
+  volume_plan_id: string
+  revision: number
+  locked: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface DirectorPlanningSnapshot {
+  book_blueprint: BookBlueprint | null
+  volume_plans: VolumePlan[]
+  rolling_chapter_plans: RollingChapterPlan[]
+}
+
+export interface DirectorEntityProposal {
+  kind: StoryEntityKind
+  name: string
+  role: string
+  goal: string
+  initial_state: string
+  relationship_notes: string
+}
+
+export interface DirectorExpansionProposal {
+  job_id: string
+  project_id: string
+  blueprint_revision: number
+  entities: DirectorEntityProposal[]
+  volumes: VolumePlanContent[]
+  chapters: RollingChapterPlanContent[]
+  why_writeable: string
+  risk_notes: string[]
+}
+
+export interface DirectorExpansionRequest {
+  expected_revision: number
+  author_intent: string
+  chapter_count: number
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface UpdateVolumePlanInput {
+  content: VolumePlanContent
+  locked: boolean
+  expected_revision: number
+}
+
+export interface UpdateRollingChapterPlanInput {
+  content: RollingChapterPlanContent
+  locked: boolean
+  expected_revision: number
+}
+
+export interface DirectorOutboundPreview {
+  workflow: DirectorWorkflow
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  data_types: string[]
+  content_scope: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_calls: number
+  estimated_cost_microusd: number | null
+}
+
+export interface DirectorPreReviewFinding {
+  severity: 'warning' | 'info'
+  field: string
+  message: string
+}
+
+export interface DirectorPreReview {
+  passed: boolean
+  findings: DirectorPreReviewFinding[]
+}
+
+export interface DirectorChapterPipelineRequest {
+  expected_revision: number
+  author_intent: string
+  context_token_budget: number
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+  rerun_from: DirectorPipelineStage
+  parent_job_id: string | null
 }
 
 export interface CreateRecoveryPointInput {
@@ -456,7 +713,22 @@ export interface ContextSourceRef {
 
 export interface ContextItem {
   id: string
-  kind: string
+  kind:
+    | 'security_boundary'
+    | 'author_intent'
+    | 'project_anchor'
+    | 'current_chapter'
+    | 'canonical_fact'
+    | 'story_entity'
+    | 'story_thread'
+    | 'recent_chapter_excerpt'
+    | 'distant_chapter_summary'
+    | 'timeline_event'
+    | 'future_knowledge'
+    | 'reality_source'
+    | 'approved_blueprint'
+    | 'book_blueprint'
+    | 'rolling_chapter_plan'
   tier: ContextTier
   label: string
   content: string
@@ -554,6 +826,9 @@ export interface AiChapterBriefProposal {
 export interface Workspace {
   project: Project
   chapters: Chapter[]
+  book_blueprint: BookBlueprint | null
+  volume_plans: VolumePlan[]
+  rolling_chapter_plans: RollingChapterPlan[]
   timeline_events: TimelineEvent[]
   story_facts: StoryFact[]
   fact_change_sets: FactChangeSet[]
@@ -848,12 +1123,24 @@ export interface GenerationRun {
   updated_at: string
 }
 
+export interface DirectorChapterPipelineResult {
+  job_id: string
+  project_id: string
+  chapter_id: string
+  chapter_revision: number
+  completed_stages: DirectorPipelineStage[]
+  brief: AiChapterBriefProposal
+  pre_review: DirectorPreReview
+  draft: GenerationRun
+}
+
 export interface Job {
   id: string
   project_id: string
   chapter_id: string | null
   parent_job_id: string | null
   kind: JobKind
+  workflow: string
   state: JobState
   idempotency_key: string
   progress_current: number

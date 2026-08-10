@@ -11,6 +11,7 @@ import { useState } from 'react'
 
 import { api } from '../api'
 import { AiCoauthorPanel } from './AiCoauthorPanel'
+import { BookDirectorPanel } from './BookDirectorPanel'
 import { FactTimelinePanel } from './FactTimelinePanel'
 import { FutureKnowledgePanel } from './FutureKnowledgePanel'
 import { RhythmWindowPanel } from './RhythmWindowPanel'
@@ -178,6 +179,15 @@ export function DirectorPanel({
         <p className="section-kicker">本章导演台</p>
         <h2>先确定这一章改变什么</h2>
       </header>
+      <BookDirectorPanel
+        project={project}
+        workspace={workspace}
+        chapter={chapter}
+        canUseChapter={canGenerate && canUpdateChapter}
+        onWorkspaceChanged={onWorkspaceChanged}
+        onAdoptBrief={adoptAiProposal}
+        onDraftGenerated={setRun}
+      />
       <AiCoauthorPanel
         chapter={chapter}
         canUseAi={canGenerate && canUpdateChapter}

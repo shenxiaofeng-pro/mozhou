@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.continuity import enrich_serial_control
 from app.database import Database
+from app.director.repository import DirectorRepository
 from app.fake_model import ChapterContext
 from app.models import (
     AcknowledgeOriginalityReportRequest,
@@ -206,9 +207,10 @@ class ProjectRepository:
 
     def project_exists(self, project_id: str) -> bool:
         with self.database.connect() as connection:
-            return connection.execute(
-                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
-            ).fetchone() is not None
+            return (
+                connection.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
+                is not None
+            )
 
     def get_workspace(self, project_id: str) -> Workspace:
         return cast(Workspace, self._get_workspace(project_id, include_chapter_content=True))
@@ -358,6 +360,18 @@ class ProjectRepository:
                 """,
                 (project_id,),
             ).fetchall()
+            book_blueprint_row = connection.execute(
+                "SELECT * FROM book_blueprints WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+            volume_plan_rows = connection.execute(
+                "SELECT * FROM volume_plans WHERE project_id = ? ORDER BY volume_number",
+                (project_id,),
+            ).fetchall()
+            rolling_plan_rows = connection.execute(
+                "SELECT * FROM rolling_chapter_plans WHERE project_id = ? ORDER BY chapter_number",
+                (project_id,),
+            ).fetchall()
         changes_by_set: dict[str, list[FactChange]] = {}
         for row in change_rows:
             changes_by_set.setdefault(row["change_set_id"], []).append(self._fact_change(row))
@@ -395,8 +409,16 @@ class ProjectRepository:
                 self._reference_pattern_card(row) for row in reference_pattern_rows
             ],
             "reference_pattern_applications": [
-                self._reference_pattern_application(row)
-                for row in reference_application_rows
+                self._reference_pattern_application(row) for row in reference_application_rows
+            ],
+            "book_blueprint": (
+                DirectorRepository.parse_book_blueprint(book_blueprint_row)
+                if book_blueprint_row is not None
+                else None
+            ),
+            "volume_plans": [DirectorRepository.parse_volume_plan(row) for row in volume_plan_rows],
+            "rolling_chapter_plans": [
+                DirectorRepository.parse_rolling_plan(row) for row in rolling_plan_rows
             ],
         }
         if include_chapter_content:
@@ -599,13 +621,17 @@ class ProjectRepository:
     def link_reference_work(self, project_id: str, work_id: str) -> ReferenceWork:
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
-            if connection.execute(
-                "SELECT id FROM reference_works WHERE id = ?", (work_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM reference_works WHERE id = ?", (work_id,)
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(work_id)
             connection.execute(
                 """
@@ -792,10 +818,13 @@ class ProjectRepository:
     ) -> list[ReferenceAnalysisInput]:
         placeholders = ", ".join("?" for _ in segment_ids)
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             rows = connection.execute(
                 f"""
@@ -809,10 +838,7 @@ class ProjectRepository:
                 """,
                 (project_id, *segment_ids),
             ).fetchall()
-        by_id = {
-            row["segment_id"]: ReferenceAnalysisInput(**dict(row))
-            for row in rows
-        }
+        by_id = {row["segment_id"]: ReferenceAnalysisInput(**dict(row)) for row in rows}
         if len(by_id) != len(segment_ids):
             raise InvalidReferenceSelectionError("missing_or_cross_project_segment")
         selected = [by_id[segment_id] for segment_id in segment_ids]
@@ -835,10 +861,13 @@ class ProjectRepository:
         card_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             if source_job_id is not None:
                 existing = connection.execute(
@@ -1016,13 +1045,15 @@ class ProjectRepository:
             if (
                 dimension in changed
                 and previous_state.locked
-                and next_state
-                != previous_state.model_copy(update={"locked": False})
+                and next_state != previous_state.model_copy(update={"locked": False})
             ):
                 raise InvalidReferenceApplicationError("locked_dimension")
         if set(request.blueprint.dimensions) != set(previous_blueprint.dimensions):
             raise InvalidReferenceApplicationError("cannot_change_dimension_selection")
-        if not request.relationship_changed and request.blueprint.relationship != previous_blueprint.relationship:
+        if (
+            not request.relationship_changed
+            and request.blueprint.relationship != previous_blueprint.relationship
+        ):
             raise InvalidReferenceApplicationError("undeclared_relationship_change")
         if (
             request.relationship_changed
@@ -1067,7 +1098,8 @@ class ProjectRepository:
         sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
         previous_report = (
             self._get_originality_report(current.latest_report_id, mark_viewed=False)
-            if current.latest_report_id is not None else None
+            if current.latest_report_id is not None
+            else None
         )
         assessment = assess_blueprint(
             blueprint,
@@ -1333,10 +1365,13 @@ class ProjectRepository:
         entity_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             connection.execute(
                 """
@@ -1425,15 +1460,22 @@ class ProjectRepository:
         thread_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
-            if request.planted_chapter_number is not None and connection.execute(
-                "SELECT id FROM chapters WHERE project_id = ? AND chapter_number = ?",
-                (project_id, request.planted_chapter_number),
-            ).fetchone() is None:
+            if (
+                request.planted_chapter_number is not None
+                and connection.execute(
+                    "SELECT id FROM chapters WHERE project_id = ? AND chapter_number = ?",
+                    (project_id, request.planted_chapter_number),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(str(request.planted_chapter_number))
             connection.execute(
                 """
@@ -1524,10 +1566,13 @@ class ProjectRepository:
         card_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             connection.execute(
                 """
@@ -1653,9 +1698,10 @@ class ProjectRepository:
         card_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             document = connection.execute(
                 "SELECT content, source_spans_json FROM source_documents WHERE id = ?",
@@ -1709,9 +1755,7 @@ class ProjectRepository:
                 "SELECT COUNT(*) FROM source_cards WHERE source_document_id = ?",
                 (document_id,),
             ).fetchone()[0]
-            result = connection.execute(
-                "DELETE FROM source_documents WHERE id = ?", (document_id,)
-            )
+            result = connection.execute("DELETE FROM source_documents WHERE id = ?", (document_id,))
             if result.rowcount == 0:
                 raise NotFoundError(document_id)
         return int(impacted)
@@ -2182,7 +2226,9 @@ class ProjectRepository:
                 "UPDATE projects SET updated_at = ? WHERE id = ?",
                 (timestamp, project_id),
             )
-            row = connection.execute("SELECT * FROM chapters WHERE id = ?", (chapter_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
+            ).fetchone()
         if row is None:
             raise NotFoundError(chapter_id)
         return self._chapter(row)
@@ -2225,7 +2271,9 @@ class ProjectRepository:
                 """,
                 (timestamp, chapter_id),
             )
-            row = connection.execute("SELECT * FROM chapters WHERE id = ?", (chapter_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
+            ).fetchone()
         if row is None:  # defensive: the row was updated in the same transaction
             raise NotFoundError(chapter_id)
         return self._chapter(row)
@@ -2279,7 +2327,9 @@ class ProjectRepository:
                 """,
                 (timestamp, chapter_id),
             )
-            row = connection.execute("SELECT * FROM chapters WHERE id = ?", (chapter_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
+            ).fetchone()
         if row is None:
             raise NotFoundError(chapter_id)
         return self._chapter(row)
@@ -2304,13 +2354,20 @@ class ProjectRepository:
                 raise InvalidChapterStateError(
                     f"{current_status.value}->{request.target_status.value}"
                 )
+            if (
+                request.target_status
+                in {
+                    ChapterStatus.DRAFTED,
+                    ChapterStatus.REVIEWING,
+                    ChapterStatus.APPROVED,
+                }
+                and not row["content"].strip()
+            ):
+                raise InvalidChapterStateError("empty_content")
             if request.target_status in {
-                ChapterStatus.DRAFTED,
                 ChapterStatus.REVIEWING,
                 ChapterStatus.APPROVED,
-            } and not row["content"].strip():
-                raise InvalidChapterStateError("empty_content")
-            if request.target_status in {ChapterStatus.REVIEWING, ChapterStatus.APPROVED} and not all(
+            } and not all(
                 row[field].strip()
                 for field in ("opening_hook", "state_change", "ending_cliffhanger")
             ):
@@ -2421,10 +2478,13 @@ class ProjectRepository:
         """Materialize an immutable job artifact as an author-reviewable candidate."""
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM chapters WHERE id = ?",
-                (chapter_id,),
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT id FROM chapters WHERE id = ?",
+                    (chapter_id,),
+                ).fetchone()
+                is None
+            ):
                 raise NotFoundError(chapter_id)
             result = connection.execute(
                 """
@@ -2583,7 +2643,9 @@ class ProjectRepository:
         return self._chapter(chapter)
 
     @staticmethod
-    def _append_event(connection: Connection, run_id: str, state: GenerationState, timestamp: str) -> None:
+    def _append_event(
+        connection: Connection, run_id: str, state: GenerationState, timestamp: str
+    ) -> None:
         cursor = connection.execute(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = ?",
             (run_id,),
@@ -2646,10 +2708,12 @@ class ProjectRepository:
     def _source_document(row: Row) -> SourceDocument:
         payload = dict(row)
         raw_spans = payload.pop("source_spans_json", "[]")
-        return SourceDocument.model_validate({
-            **payload,
-            "source_spans": json.loads(raw_spans),
-        })
+        return SourceDocument.model_validate(
+            {
+                **payload,
+                "source_spans": json.loads(raw_spans),
+            }
+        )
 
     @staticmethod
     def _reference_segment(row: Row) -> ReferenceSegment:
@@ -2665,39 +2729,47 @@ class ProjectRepository:
         projects = project_ids or []
         payload = dict(row)
         raw_spans = payload.pop("source_spans_json", "[]")
-        return ReferenceWork.model_validate({
-            **payload,
-            "project_id": projects[0] if len(projects) == 1 else None,
-            "project_ids": projects,
-            "source_spans": json.loads(raw_spans),
-            "segments": segments,
-        })
+        return ReferenceWork.model_validate(
+            {
+                **payload,
+                "project_id": projects[0] if len(projects) == 1 else None,
+                "project_ids": projects,
+                "source_spans": json.loads(raw_spans),
+                "segments": segments,
+            }
+        )
 
     @staticmethod
     def _reference_pattern_card(row: Row) -> ReferencePatternCard:
-        return ReferencePatternCard.model_validate({
-            **dict(row),
-            **json.loads(row["proposal_json"]),
-            "selected_segment_ids": json.loads(row["selected_segment_ids_json"]),
-        })
+        return ReferencePatternCard.model_validate(
+            {
+                **dict(row),
+                **json.loads(row["proposal_json"]),
+                "selected_segment_ids": json.loads(row["selected_segment_ids_json"]),
+            }
+        )
 
     @staticmethod
     def _reference_pattern_application(row: Row) -> ReferencePatternApplication:
         payload = dict(row)
         raw_blueprint = payload.pop("blueprint_json", None)
-        return ReferencePatternApplication.model_validate({
-            **payload,
-            "selected_dimensions": json.loads(row["selected_dimensions_json"]),
-            "dimensions": json.loads(row["dimensions_json"]),
-            "blueprint": json.loads(raw_blueprint) if raw_blueprint else None,
-        })
+        return ReferencePatternApplication.model_validate(
+            {
+                **payload,
+                "selected_dimensions": json.loads(row["selected_dimensions_json"]),
+                "dimensions": json.loads(row["dimensions_json"]),
+                "blueprint": json.loads(raw_blueprint) if raw_blueprint else None,
+            }
+        )
 
     @staticmethod
     def _originality_report(row: Row) -> OriginalityReport:
-        return OriginalityReport.model_validate({
-            **dict(row),
-            "checked_dimensions": json.loads(row["checked_dimensions_json"]),
-            "evidence": json.loads(row["evidence_json"]),
-            "source_segment_ids": json.loads(row["source_segment_ids_json"]),
-            "legal_notice": "原创性风险提示用于创作风控，不是法律结论。",
-        })
+        return OriginalityReport.model_validate(
+            {
+                **dict(row),
+                "checked_dimensions": json.loads(row["checked_dimensions_json"]),
+                "evidence": json.loads(row["evidence_json"]),
+                "source_segment_ids": json.loads(row["source_segment_ids_json"]),
+                "legal_notice": "原创性风险提示用于创作风控，不是法律结论。",
+            }
+        )

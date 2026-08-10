@@ -39,6 +39,14 @@ from app.context import (
     StaleContextDirectiveError,
 )
 from app.database import Database
+from app.director.repository import (
+    DirectorNotFoundError,
+    DirectorRepository,
+    InvalidDirectorChangeError,
+    StaleDirectorRevisionError,
+)
+from app.director.rules import regeneration_impact
+from app.director.service import DirectorService
 from app.generation import GenerationService
 from app.jobs import (
     Job,
@@ -55,9 +63,11 @@ from app.models import (
     AiChapterBriefRequest,
     AiDraftRequest,
     AiStatus,
+    ApplyDirectorProposalRequest,
     ApplyFactChangeSetRequest,
     ApplyGenerationRequest,
     ApplyReferencePatternRequest,
+    BookBlueprint,
     Chapter,
     ConfigureAiRequest,
     CreateChapterRequest,
@@ -68,6 +78,18 @@ from app.models import (
     CreateStoryEntityRequest,
     CreateStoryThreadRequest,
     CreateTimelineEventRequest,
+    DirectorChapterPipelineRequest,
+    DirectorChapterPipelineResult,
+    DirectorExpansionProposal,
+    DirectorExpansionRequest,
+    DirectorFieldProposal,
+    DirectorFieldRegenerationRequest,
+    DirectorOutboundPreview,
+    DirectorPlanningSnapshot,
+    DirectorRegenerationImpact,
+    DirectorRegenerationImpactRequest,
+    DirectorStartupProposalSet,
+    DirectorStartupRequest,
     FactChangeSet,
     FutureKnowledge,
     GenerationRun,
@@ -86,6 +108,8 @@ from app.models import (
     ReferenceWorkImpactResponse,
     RejectFactChangeSetRequest,
     ReviewFutureKnowledgeRequest,
+    RollingChapterPlan,
+    SelectDirectorCandidateRequest,
     SetSourceCardConfirmationRequest,
     SourceCard,
     SourceConfidence,
@@ -97,10 +121,14 @@ from app.models import (
     TimelineEvent,
     TransitionChapterRequest,
     TransitionStoryThreadRequest,
+    UpdateBookBlueprintRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
     UpdateReferenceBlueprintRequest,
+    UpdateRollingChapterPlanRequest,
     UpdateStoryEntityRequest,
+    UpdateVolumePlanRequest,
+    VolumePlan,
     Workspace,
     WorkspaceSummary,
 )
@@ -162,6 +190,7 @@ def create_app(
         application.state.context_repository = ContextRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
+        application.state.director_repository = DirectorRepository(database)
         application.state.reference_job_service = ReferenceJobService(
             application.state.repository,
             application.state.job_repository,
@@ -175,12 +204,21 @@ def create_app(
             application.state.model_profiles,
             application.state.context_repository,
         )
+        application.state.director_service = DirectorService(
+            application.state.repository,
+            application.state.director_repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+            application.state.context_repository,
+        )
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
             {
                 JobKind.REFERENCE_FUSION: application.state.reference_job_service.handle,
                 JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
                 JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
+                JobKind.REVIEW: application.state.director_service.handle,
             },
         )
         if not defer_job_runtime:
@@ -449,7 +487,9 @@ def create_app(
         except ModelProfileNotFoundError as error:
             raise HTTPException(status_code=404, detail="模型配置不存在") from error
         except StaleTaskDefaultError as error:
-            raise HTTPException(status_code=409, detail="任务默认模型已更新，请刷新后重试") from error
+            raise HTTPException(
+                status_code=409, detail="任务默认模型已更新，请刷新后重试"
+            ) from error
 
     @application.delete(
         "/api/ai/task-defaults/{task_type}",
@@ -468,7 +508,9 @@ def create_app(
                 expected_revision,
             )
         except StaleTaskDefaultError as error:
-            raise HTTPException(status_code=409, detail="任务默认模型已更新，请刷新后重试") from error
+            raise HTTPException(
+                status_code=409, detail="任务默认模型已更新，请刷新后重试"
+            ) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post(
@@ -760,12 +802,410 @@ def create_app(
     ) -> list[Project]:
         return repository.list_projects()
 
-    @application.post("/api/projects", response_model=Workspace, status_code=status.HTTP_201_CREATED)
+    @application.post(
+        "/api/projects", response_model=Workspace, status_code=status.HTTP_201_CREATED
+    )
     def create_project(
         body: CreateProjectRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> Workspace:
         return repository.create_project(body)
+
+    @application.get(
+        "/api/projects/{project_id}/director",
+        response_model=DirectorPlanningSnapshot,
+    )
+    def get_director_snapshot(
+        project_id: UUID,
+        director: Annotated[DirectorRepository, Depends(get_director_repository)],
+    ) -> DirectorPlanningSnapshot:
+        try:
+            return director.get_snapshot(str(project_id))
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/director/book-blueprint",
+        response_model=BookBlueprint,
+    )
+    def update_book_blueprint(
+        project_id: UUID,
+        body: UpdateBookBlueprintRequest,
+        director: Annotated[DirectorRepository, Depends(get_director_repository)],
+    ) -> BookBlueprint:
+        try:
+            return director.update_book_blueprint(str(project_id), body)
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书蓝图不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图变更与锁定状态冲突") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/regeneration-impact",
+        response_model=DirectorRegenerationImpact,
+    )
+    def get_director_regeneration_impact(
+        project_id: UUID,
+        body: DirectorRegenerationImpactRequest,
+        director: Annotated[DirectorRepository, Depends(get_director_repository)],
+    ) -> DirectorRegenerationImpact:
+        try:
+            return regeneration_impact(
+                director.require_book_blueprint(str(project_id)),
+                body.target_field,
+            )
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书蓝图不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/startup-preview",
+        response_model=DirectorOutboundPreview,
+    )
+    def preview_director_startup(
+        project_id: UUID,
+        body: DirectorStartupRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorOutboundPreview:
+        try:
+            return service.preview_startup(str(project_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/startup-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_director_startup(
+        project_id: UUID,
+        body: DirectorStartupRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_startup(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="请确认外发范围和费用上限") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/director-startup-result",
+        response_model=DirectorStartupProposalSet,
+    )
+    def get_director_startup_result(
+        job_id: UUID,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorStartupProposalSet:
+        try:
+            return service.get_startup_result(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="开书任务不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="开书任务尚无可用候选") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/startup-selection",
+        response_model=BookBlueprint,
+    )
+    def select_director_startup_candidate(
+        project_id: UUID,
+        body: SelectDirectorCandidateRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> BookBlueprint:
+        try:
+            return service.select_startup_candidate(str(project_id), body)
+        except (DirectorNotFoundError, JobNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="开书候选不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="已经选择过开书方向") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/expansion-preview",
+        response_model=DirectorOutboundPreview,
+    )
+    def preview_director_expansion(
+        project_id: UUID,
+        body: DirectorExpansionRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorOutboundPreview:
+        try:
+            return service.preview_expansion(str(project_id), body)
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书蓝图不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/expansion-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_director_expansion(
+        project_id: UUID,
+        body: DirectorExpansionRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_expansion(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书蓝图不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="请确认外发范围和费用上限") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/director-expansion-result",
+        response_model=DirectorExpansionProposal,
+    )
+    def get_director_expansion_result(
+        job_id: UUID,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorExpansionProposal:
+        try:
+            return service.get_expansion_result(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书展开任务不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="整书展开任务尚无可用候选") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/expansion-application",
+        response_model=DirectorPlanningSnapshot,
+    )
+    def apply_director_expansion(
+        project_id: UUID,
+        body: ApplyDirectorProposalRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorPlanningSnapshot:
+        try:
+            return service.apply_expansion(str(project_id), body)
+        except (DirectorNotFoundError, JobNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="整书展开候选不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="计划与锁定字段冲突，请先处理") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/field-preview",
+        response_model=DirectorOutboundPreview,
+    )
+    def preview_director_field(
+        project_id: UUID,
+        body: DirectorFieldRegenerationRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorOutboundPreview:
+        try:
+            return service.preview_field_regeneration(str(project_id), body)
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书蓝图不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="目标字段已锁定") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/field-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_director_field(
+        project_id: UUID,
+        body: DirectorFieldRegenerationRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_field_regeneration(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="整书蓝图不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=409, detail="请确认字段锁、外发范围和费用上限"
+            ) from error
+
+    @application.get(
+        "/api/jobs/{job_id}/director-field-result",
+        response_model=DirectorFieldProposal,
+    )
+    def get_director_field_result(
+        job_id: UUID,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorFieldProposal:
+        try:
+            return service.get_field_result(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="字段任务不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="字段任务尚无可用候选") from error
+
+    @application.post(
+        "/api/projects/{project_id}/director/field-application",
+        response_model=BookBlueprint,
+    )
+    def apply_director_field_result(
+        project_id: UUID,
+        body: ApplyDirectorProposalRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> BookBlueprint:
+        try:
+            return service.apply_field_result(str(project_id), body)
+        except (DirectorNotFoundError, JobNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="字段候选不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="字段候选与锁定状态冲突") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/director/volume-plans/{plan_id}",
+        response_model=VolumePlan,
+    )
+    def update_director_volume_plan(
+        project_id: UUID,
+        plan_id: UUID,
+        body: UpdateVolumePlanRequest,
+        director: Annotated[DirectorRepository, Depends(get_director_repository)],
+    ) -> VolumePlan:
+        try:
+            return director.update_volume_plan(str(project_id), str(plan_id), body)
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="卷计划不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="卷计划已有新版本，请刷新") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="卷计划已锁定") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/director/rolling-plans/{plan_id}",
+        response_model=RollingChapterPlan,
+    )
+    def update_director_rolling_plan(
+        project_id: UUID,
+        plan_id: UUID,
+        body: UpdateRollingChapterPlanRequest,
+        director: Annotated[DirectorRepository, Depends(get_director_repository)],
+    ) -> RollingChapterPlan:
+        try:
+            return director.update_rolling_plan(str(project_id), str(plan_id), body)
+        except DirectorNotFoundError as error:
+            raise HTTPException(status_code=404, detail="滚动章纲不存在") from error
+        except StaleDirectorRevisionError as error:
+            raise HTTPException(status_code=409, detail="滚动章纲已有新版本，请刷新") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="滚动章纲已锁定") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/director-pipeline-preview",
+        response_model=DirectorOutboundPreview,
+    )
+    def preview_director_chapter_pipeline(
+        chapter_id: UUID,
+        body: DirectorChapterPipelineRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorOutboundPreview:
+        try:
+            return service.preview_chapter_pipeline(str(chapter_id), body)
+        except (NotFoundError, DirectorNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="章节已有新版本，请重新预览") from error
+        except InvalidChapterStateError as error:
+            raise HTTPException(status_code=409, detail="当前章节状态不允许 AI 流水线") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图存在待联动复核字段") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/director-pipeline-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_director_chapter_pipeline(
+        chapter_id: UUID,
+        body: DirectorChapterPipelineRequest,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_chapter_pipeline(str(chapter_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except (NotFoundError, DirectorNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="章节或父任务不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="章节已有新版本，请重新提交") from error
+        except InvalidChapterStateError as error:
+            raise HTTPException(status_code=409, detail="当前章节状态不允许 AI 流水线") from error
+        except InvalidDirectorChangeError as error:
+            raise HTTPException(status_code=409, detail="整书蓝图存在待联动复核字段") from error
+        except OriginalityGateBlockedError as error:
+            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=409, detail="请确认外发范围、费用上限或重跑阶段"
+            ) from error
+
+    @application.get(
+        "/api/jobs/{job_id}/director-pipeline-result",
+        response_model=DirectorChapterPipelineResult,
+    )
+    def get_director_chapter_pipeline_result(
+        job_id: UUID,
+        service: Annotated[DirectorService, Depends(get_director_service)],
+    ) -> DirectorChapterPipelineResult:
+        try:
+            return service.get_chapter_pipeline_result(str(job_id))
+        except JobNotFoundError as error:
+            raise HTTPException(status_code=404, detail="单章流水线任务不存在") from error
+        except (ValueError, StaleRevisionError) as error:
+            raise HTTPException(
+                status_code=409, detail="单章流水线尚无可用候选或章节已更新"
+            ) from error
 
     @application.get("/api/projects/{project_id}/export")
     def export_project(
@@ -806,7 +1246,9 @@ def create_app(
             if len(raw_archive) > MAX_ARCHIVE_BYTES:
                 raise HTTPException(status_code=413, detail="项目归档不能超过 256 MiB")
         try:
-            project_id = ProjectArchiveService(repository.database).import_project(bytes(raw_archive))
+            project_id = ProjectArchiveService(repository.database).import_project(
+                bytes(raw_archive)
+            )
             return repository.get_workspace(project_id)
         except ProjectArchiveTooLargeError as error:
             raise HTTPException(status_code=413, detail="项目归档不能超过 256 MiB") from error
@@ -1221,7 +1663,9 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="模式卡不存在于当前作品") from error
         except InvalidReferenceApplicationError as error:
-            raise HTTPException(status_code=409, detail="蓝图无法应用，请检查来源或是否已应用") from error
+            raise HTTPException(
+                status_code=409, detail="蓝图无法应用，请检查来源或是否已应用"
+            ) from error
 
     @application.get(
         "/api/originality-reports/{report_id}",
@@ -1247,15 +1691,15 @@ def create_app(
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
         try:
-            return repository.update_reference_blueprint(
-                str(project_id), str(application_id), body
-            )
+            return repository.update_reference_blueprint(str(project_id), str(application_id), body)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="蓝图不存在") from error
         except StaleRevisionError as error:
             raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再修改") from error
         except InvalidReferenceApplicationError as error:
-            raise HTTPException(status_code=409, detail="蓝图修改不合法，请检查变更维度和锁定状态") from error
+            raise HTTPException(
+                status_code=409, detail="蓝图修改不合法，请检查变更维度和锁定状态"
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/reference-blueprints/{application_id}/originality-acknowledgements",
@@ -1276,7 +1720,9 @@ def create_app(
         except StaleRevisionError as error:
             raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再处理") from error
         except InvalidReferenceApplicationError as error:
-            raise HTTPException(status_code=409, detail="当前报告不能确认，高风险蓝图必须先修改") from error
+            raise HTTPException(
+                status_code=409, detail="当前报告不能确认，高风险蓝图必须先修改"
+            ) from error
 
     @application.get("/api/projects/{project_id}", response_model=Workspace)
     def get_project(
@@ -1457,7 +1903,9 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
         except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="章节已在其他位置更新，请重新载入") from error
+            raise HTTPException(
+                status_code=409, detail="章节已在其他位置更新，请重新载入"
+            ) from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="已定稿章节需先重新打开才能修改") from error
 
@@ -1578,7 +2026,9 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
         except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="正文已有新版本，请重新准备上下文") from error
+            raise HTTPException(
+                status_code=409, detail="正文已有新版本，请重新准备上下文"
+            ) from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="当前章节状态不允许生成候选稿") from error
 
@@ -1603,7 +2053,9 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="生成任务不存在") from error
         except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="正文已有新版本，候选稿未覆盖当前内容") from error
+            raise HTTPException(
+                status_code=409, detail="正文已有新版本，候选稿未覆盖当前内容"
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail="生成任务尚无可采用草稿") from error
 
@@ -1628,6 +2080,16 @@ def get_model_profile_repository(request: Request) -> ModelProfileRepository:
 def get_context_repository(request: Request) -> ContextRepository:
     repository: ContextRepository = request.app.state.context_repository
     return repository
+
+
+def get_director_repository(request: Request) -> DirectorRepository:
+    repository: DirectorRepository = request.app.state.director_repository
+    return repository
+
+
+def get_director_service(request: Request) -> DirectorService:
+    service: DirectorService = request.app.state.director_service
+    return service
 
 
 def get_job_runtime_from_repository(

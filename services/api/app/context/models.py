@@ -33,6 +33,8 @@ class ContextItemKind(StrEnum):
     FUTURE_KNOWLEDGE = "future_knowledge"
     REALITY_SOURCE = "reality_source"
     APPROVED_BLUEPRINT = "approved_blueprint"
+    BOOK_BLUEPRINT = "book_blueprint"
+    ROLLING_CHAPTER_PLAN = "rolling_chapter_plan"
 
 
 class ContextDirectiveAction(StrEnum):

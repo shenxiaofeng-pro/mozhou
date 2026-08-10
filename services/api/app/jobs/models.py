@@ -45,6 +45,7 @@ class Job(BaseModel):
     chapter_id: str | None
     parent_job_id: str | None
     kind: JobKind
+    workflow: str = ""
     state: JobState
     idempotency_key: str
     progress_current: int

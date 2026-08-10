@@ -14,6 +14,7 @@ from app.context import ContextDirective
 from app.database import CURRENT_SCHEMA_VERSION, Database
 from app.jobs.models import Job, JobArtifact, JobAttempt, JobChunk, JobEvent
 from app.models import (
+    BookBlueprint,
     Chapter,
     ChapterStatus,
     FactChange,
@@ -29,18 +30,22 @@ from app.models import (
     ReferencePatternCard,
     ReferenceSegment,
     ReferenceWork,
+    RollingChapterPlan,
+    RollingChapterPlanContent,
     SourceCard,
     SourceDocument,
     StoryEntity,
     StoryFact,
     StoryThread,
     TimelineEvent,
+    VolumePlan,
+    VolumePlanContent,
 )
 from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 3
+ARCHIVE_FORMAT_VERSION = 4
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -68,6 +73,62 @@ ARCHIVE_TABLES = (
             "updated_at",
         ),
         "id = ?",
+    ),
+    ArchiveTable(
+        "book_blueprints",
+        (
+            "id",
+            "project_id",
+            "idea",
+            "content_json",
+            "locks_json",
+            "field_versions_json",
+            "stale_fields_json",
+            "plan_stale",
+            "source_candidate_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("content_json", "locks_json", "field_versions_json", "stale_fields_json"),
+    ),
+    ArchiveTable(
+        "volume_plans",
+        (
+            "id",
+            "project_id",
+            "volume_number",
+            "content_json",
+            "locked",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("content_json",),
+    ),
+    ArchiveTable(
+        "rolling_chapter_plans",
+        (
+            "id",
+            "project_id",
+            "volume_plan_id",
+            "chapter_number",
+            "content_json",
+            "locked",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("volume_plan_id", "volume_plans", False),
+        ),
+        ("content_json",),
     ),
     ArchiveTable(
         "chapters",
@@ -149,6 +210,7 @@ ARCHIVE_TABLES = (
             "chapter_id",
             "parent_job_id",
             "kind",
+            "workflow",
             "state",
             "idempotency_key",
             "input_json",
@@ -628,6 +690,42 @@ def _validate_business_rows(
             raise InvalidProjectArchiveError("project_without_chapters")
         for row in tables["projects"]:
             Project.model_validate(row)
+        for row in tables["book_blueprints"]:
+            BookBlueprint.model_validate({
+                **row,
+                "content": _parse_json(row["content_json"]),
+                "locks": _parse_json(row["locks_json"]),
+                "field_versions": _parse_json(row["field_versions_json"]),
+                "stale_fields": _parse_json(row["stale_fields_json"]),
+                "plan_stale": bool(row["plan_stale"]),
+            })
+        for row in tables["volume_plans"]:
+            volume_content = VolumePlanContent.model_validate(
+                _parse_json(row["content_json"])
+            )
+            VolumePlan.model_validate({
+                **volume_content.model_dump(mode="json"),
+                "id": row["id"],
+                "project_id": row["project_id"],
+                "revision": row["revision"],
+                "locked": bool(row["locked"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            })
+        for row in tables["rolling_chapter_plans"]:
+            rolling_content = RollingChapterPlanContent.model_validate(
+                _parse_json(row["content_json"])
+            )
+            RollingChapterPlan.model_validate({
+                **rolling_content.model_dump(mode="json"),
+                "id": row["id"],
+                "project_id": row["project_id"],
+                "volume_plan_id": row["volume_plan_id"],
+                "revision": row["revision"],
+                "locked": bool(row["locked"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            })
         for row in tables["chapters"]:
             Chapter.model_validate(row)
         for row in tables["context_directives"]:
@@ -1094,7 +1192,7 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4}:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1117,6 +1215,8 @@ class ProjectArchiveService:
             value = self._upgrade_v1_archive(value)
         if value["format_version"] == 2:
             value = self._upgrade_v2_archive(value)
+        if value["format_version"] == 3:
+            value = self._upgrade_v3_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1307,6 +1407,32 @@ class ProjectArchiveService:
         upgraded_tables["reference_pattern_applications"] = upgraded_applications
         upgraded_tables["reference_blueprint_versions"] = versions
         upgraded_tables["originality_reports"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 3
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v3_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        job_rows = tables.get("jobs")
+        if not isinstance(job_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded_jobs: list[dict[str, Any]] = []
+        for row in job_rows:
+            if not isinstance(row, dict) or "workflow" in row:
+                raise InvalidProjectArchiveError("invalid_columns")
+            upgraded_jobs.append({**row, "workflow": ""})
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["jobs"] = upgraded_jobs
+        upgraded_tables["book_blueprints"] = []
+        upgraded_tables["volume_plans"] = []
+        upgraded_tables["rolling_chapter_plans"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

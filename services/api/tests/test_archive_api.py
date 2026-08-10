@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,6 +11,9 @@ from app.main import create_app
 
 ARCHIVE_TABLES = {
     "projects",
+    "book_blueprints",
+    "volume_plans",
+    "rolling_chapter_plans",
     "chapters",
     "context_directives",
     "generation_runs",
@@ -86,7 +90,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 3
+    assert archive["format_version"] == 4
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -95,6 +99,138 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert archive["tables"]["reference_segments"][0]["id"] == reference["segments"][0]["id"]
     checksum = archive.pop("checksum_sha256")
     assert checksum == hashlib.sha256(canonical_json(archive)).hexdigest()
+
+
+def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> None:
+    database_path = tmp_path / "mozhou.db"
+    timestamp = "2026-08-11T00:00:00+00:00"
+    fields = (
+        "title", "genre", "rebirth_year", "rebirth_location", "target_audience",
+        "core_selling_points", "core_desire", "divergence_point", "long_term_promise",
+        "ending_direction", "protagonist_arc", "resource_growth", "relationship_design",
+    )
+    blueprint_content = {
+        "title": "闽北春潮",
+        "genre": "urban_rebirth",
+        "rebirth_year": 1998,
+        "rebirth_location": "福建南平",
+        "target_audience": "年代创业读者",
+        "core_selling_points": ["木竹产业", "家庭改命"],
+        "core_desire": "改变家庭命运",
+        "divergence_point": "提前拿到停产名单",
+        "long_term_promise": "从工厂自救到产业升级",
+        "ending_direction": "建立可持续的产业联盟",
+        "protagonist_arc": "从救家人到承担公共责任",
+        "resource_growth": "信息差到组织信用",
+        "relationship_design": "父子、师徒和竞争者重新组合",
+    }
+    volume_content = {
+        "volume_number": 1,
+        "title": "停产名单",
+        "direction": "完成工厂自救",
+        "central_conflict": "旧管理层阻止改制",
+        "state_goal": "父亲保住岗位",
+        "resource_goal": "获得第一笔订单",
+        "emotional_payoff": "父子恢复信任",
+        "climax": "公开竞标逆转",
+        "verification": "核对 1998 年当地改制流程",
+    }
+    rolling_content = {
+        "chapter_number": 1,
+        "title": "名单之前",
+        "reader_promise": "第一次改命",
+        "opening_hook": "停产名单提前贴出",
+        "state_change": "父亲暂时留岗",
+        "resource_change": "获得厂长注意",
+        "emotional_payoff": "父子关系松动",
+        "ending_cliffhanger": "厂长叫出主角小名",
+        "verification": "核对厂办张榜流程",
+        "scene_beats": [{
+            "ordinal": 1,
+            "summary": "主角发现名单",
+            "state_change": "确认时间线变化",
+            "resource_change": "得到行动窗口",
+            "emotional_turn": "恐慌转为决断",
+            "verification": "核对公告地点",
+        }],
+    }
+    with TestClient(create_app(database_path)) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "闽北春潮",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        blueprint_id = "0a9cc817-ac3f-40c5-a749-f77dbcd85546"
+        volume_id = "b5f28e1e-73f6-4379-b542-e751493952ae"
+        rolling_id = "0a1465f4-3005-40cf-a93b-f63e6bbd4038"
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO book_blueprints (
+                    id, project_id, idea, content_json, locks_json, field_versions_json,
+                    stale_fields_json, plan_stale, source_candidate_id, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, ?, 2, ?, ?)
+                """,
+                (
+                    blueprint_id,
+                    project_id,
+                    "回到一九九八年救下家乡木竹厂",
+                    json.dumps(blueprint_content, ensure_ascii=False),
+                    json.dumps({field: field == "ending_direction" for field in fields}),
+                    json.dumps({field: 1 for field in fields}),
+                    "f6f7db1e-96a7-4656-a540-96d81d9fa046",
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO volume_plans (
+                    id, project_id, volume_number, content_json, locked, revision, created_at, updated_at
+                ) VALUES (?, ?, 1, ?, 1, 1, ?, ?)
+                """,
+                (volume_id, project_id, json.dumps(volume_content, ensure_ascii=False), timestamp, timestamp),
+            )
+            connection.execute(
+                """
+                INSERT INTO rolling_chapter_plans (
+                    id, project_id, volume_plan_id, chapter_number, content_json,
+                    locked, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, 1, ?, 0, 3, ?, ?)
+                """,
+                (
+                    rolling_id,
+                    project_id,
+                    volume_id,
+                    json.dumps(rolling_content, ensure_ascii=False),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        archive = client.get(f"/api/projects/{project_id}/export").json()
+        restored_response = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert archive["format_version"] == 4
+    assert archive["tables"]["book_blueprints"][0]["revision"] == 2
+    assert restored_response.status_code == 201
+    restored = restored_response.json()
+    assert restored["book_blueprint"]["content"]["ending_direction"] == blueprint_content[
+        "ending_direction"
+    ]
+    assert restored["book_blueprint"]["locks"]["ending_direction"] is True
+    assert restored["volume_plans"][0]["title"] == "停产名单"
+    assert restored["volume_plans"][0]["locked"] is True
+    assert restored["rolling_chapter_plans"][0]["opening_hook"] == "停产名单提前贴出"
+    assert restored["rolling_chapter_plans"][0]["revision"] == 3
 
 
 def test_reality_source_archive_defaults_to_card_snapshot_and_can_include_raw_asset(
@@ -446,6 +582,23 @@ def test_archive_round_trip_preserves_job_history_and_immutable_artifacts(
         )
         archive = client.get(f"/api/projects/{project_id}/export").json()
 
+        legacy_v3 = json.loads(json.dumps(archive))
+        legacy_v3["format_version"] = 3
+        for table_name in ("book_blueprints", "volume_plans", "rolling_chapter_plans"):
+            legacy_v3["tables"].pop(table_name)
+        for legacy_job in legacy_v3["tables"]["jobs"]:
+            legacy_job.pop("workflow")
+        legacy_unsigned = dict(legacy_v3)
+        legacy_unsigned.pop("checksum_sha256")
+        legacy_v3["checksum_sha256"] = hashlib.sha256(
+            canonical_json(legacy_unsigned)
+        ).hexdigest()
+        legacy_restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(legacy_v3),
+            headers={"Content-Type": "application/json"},
+        )
+
         restored = client.post(
             "/api/project-imports",
             content=canonical_json(archive),
@@ -460,8 +613,10 @@ def test_archive_round_trip_preserves_job_history_and_immutable_artifacts(
             f"/api/job-artifacts/{restored_detail['artifacts'][0]['id']}"
         ).json()
 
+    assert legacy_restored.status_code == 201
     assert restored_jobs[0]["id"] != job.id
     assert restored_jobs[0]["project_id"] == restored_project_id
+    assert restored_jobs[0]["workflow"] == ""
     assert restored_detail["artifacts"][0]["id"] != artifact.id
     assert restored_artifact["payload"] == '{"era":"旧城改造"}'
 

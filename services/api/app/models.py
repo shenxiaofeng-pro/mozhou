@@ -136,6 +136,36 @@ class OriginalitySignal(StrEnum):
     MULTI_DIMENSION = "multi_dimension"
 
 
+class BookBlueprintField(StrEnum):
+    TITLE = "title"
+    GENRE = "genre"
+    REBIRTH_YEAR = "rebirth_year"
+    REBIRTH_LOCATION = "rebirth_location"
+    TARGET_AUDIENCE = "target_audience"
+    CORE_SELLING_POINTS = "core_selling_points"
+    CORE_DESIRE = "core_desire"
+    DIVERGENCE_POINT = "divergence_point"
+    LONG_TERM_PROMISE = "long_term_promise"
+    ENDING_DIRECTION = "ending_direction"
+    PROTAGONIST_ARC = "protagonist_arc"
+    RESOURCE_GROWTH = "resource_growth"
+    RELATIONSHIP_DESIGN = "relationship_design"
+
+
+class DirectorWorkflow(StrEnum):
+    STARTUP = "director_startup"
+    EXPANSION = "director_expansion"
+    FIELD_REGENERATION = "director_field_regeneration"
+    CHAPTER_PIPELINE = "director_chapter_pipeline"
+
+
+class DirectorPipelineStage(StrEnum):
+    CONTEXT = "context"
+    BRIEF = "brief"
+    PRE_REVIEW = "pre_review"
+    DRAFT = "draft"
+
+
 class ContinuitySeverity(StrEnum):
     WARNING = "warning"
     INFO = "info"
@@ -177,6 +207,359 @@ class Project(BaseModel):
     safety_buffer_chapters: int
     created_at: str
     updated_at: str
+
+
+class BookBlueprintContent(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=120)
+    genre: Genre
+    rebirth_year: int = Field(ge=-3000, le=2030)
+    rebirth_location: str = Field(min_length=1, max_length=100)
+    target_audience: str = Field(min_length=1, max_length=500)
+    core_selling_points: list[str] = Field(min_length=1, max_length=5)
+    core_desire: str = Field(min_length=1, max_length=1000)
+    divergence_point: str = Field(min_length=1, max_length=1200)
+    long_term_promise: str = Field(min_length=1, max_length=1200)
+    ending_direction: str = Field(min_length=1, max_length=1200)
+    protagonist_arc: str = Field(min_length=1, max_length=1200)
+    resource_growth: str = Field(min_length=1, max_length=1200)
+    relationship_design: str = Field(min_length=1, max_length=1200)
+
+    @field_validator(
+        "title",
+        "rebirth_location",
+        "target_audience",
+        "core_desire",
+        "divergence_point",
+        "long_term_promise",
+        "ending_direction",
+        "protagonist_arc",
+        "resource_growth",
+        "relationship_design",
+    )
+    @classmethod
+    def reject_blueprint_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("整书蓝图不能包含空字节")
+        return value
+
+    @field_validator("core_selling_points")
+    @classmethod
+    def validate_selling_points(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 300 or "\x00" in item for item in value):
+            raise ValueError("核心卖点格式无效")
+        return value
+
+
+class DirectorStartupCandidateDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    label: str = Field(min_length=1, max_length=80)
+    blueprint: BookBlueprintContent
+    why_distinct: str = Field(min_length=1, max_length=800)
+    risks: list[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("risks")
+    @classmethod
+    def validate_risks(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 300 or "\x00" in item for item in value):
+            raise ValueError("启动风险提示格式无效")
+        return value
+
+
+class DirectorStartupDraftSet(BaseModel):
+    candidates: list[DirectorStartupCandidateDraft] = Field(min_length=2, max_length=3)
+
+
+class DirectorStartupCandidate(DirectorStartupCandidateDraft):
+    id: str
+    ordinal: int = Field(ge=1, le=3)
+
+
+class DirectorStartupProposalSet(BaseModel):
+    job_id: str
+    project_id: str
+    idea: str = Field(min_length=1, max_length=3000)
+    candidates: list[DirectorStartupCandidate] = Field(min_length=2, max_length=3)
+
+
+class BookBlueprint(BaseModel):
+    id: str
+    project_id: str
+    idea: str = Field(min_length=1, max_length=3000)
+    content: BookBlueprintContent
+    locks: dict[BookBlueprintField, bool]
+    field_versions: dict[BookBlueprintField, int]
+    stale_fields: list[BookBlueprintField] = Field(default_factory=list)
+    plan_stale: bool = True
+    source_candidate_id: str | None = None
+    revision: int = Field(ge=0)
+    created_at: str
+    updated_at: str
+
+    @model_validator(mode="after")
+    def require_complete_field_state(self) -> BookBlueprint:
+        expected = set(BookBlueprintField)
+        if set(self.locks) != expected or set(self.field_versions) != expected:
+            raise ValueError("整书蓝图字段状态不完整")
+        if any(version < 1 for version in self.field_versions.values()):
+            raise ValueError("整书蓝图字段版本无效")
+        if len(set(self.stale_fields)) != len(self.stale_fields):
+            raise ValueError("整书蓝图过期字段不能重复")
+        return self
+
+
+class DirectorStartupRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    idea: str = Field(min_length=1, max_length=3000)
+    reality_anchor: str = Field(default="", max_length=1500)
+    candidate_count: int = Field(default=3, ge=2, le=3)
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+    @field_validator("idea", "reality_anchor")
+    @classmethod
+    def reject_startup_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("创意约束不能包含空字节")
+        return value
+
+
+class SelectDirectorCandidateRequest(BaseModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_id: str = Field(min_length=36, max_length=36)
+    expected_blueprint_revision: int | None = Field(default=None, ge=0)
+
+
+class UpdateBookBlueprintRequest(BaseModel):
+    content: BookBlueprintContent
+    changed_fields: list[BookBlueprintField] = Field(default_factory=list, max_length=13)
+    lock_updates: dict[BookBlueprintField, bool] = Field(default_factory=dict)
+    expected_revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def require_declared_blueprint_change(self) -> UpdateBookBlueprintRequest:
+        if len(set(self.changed_fields)) != len(self.changed_fields):
+            raise ValueError("整书蓝图变更字段不能重复")
+        if not self.changed_fields and not self.lock_updates:
+            raise ValueError("整书蓝图没有声明变更")
+        return self
+
+
+class DirectorRegenerationImpactRequest(BaseModel):
+    target_field: BookBlueprintField
+
+
+class DirectorRegenerationImpact(BaseModel):
+    target_field: BookBlueprintField
+    directly_affected: list[BookBlueprintField]
+    downstream_affected: list[BookBlueprintField]
+    locked_conflicts: list[BookBlueprintField]
+    will_mark_plan_stale: bool
+
+
+class DirectorFieldRegenerationRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    target_field: BookBlueprintField
+    expected_revision: int = Field(ge=0)
+    author_intent: str = Field(default="", max_length=1000)
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+
+class DirectorFieldProposal(BaseModel):
+    job_id: str
+    project_id: str
+    blueprint_revision: int = Field(ge=0)
+    target_field: BookBlueprintField
+    value: str | list[str]
+    rationale: str = Field(min_length=1, max_length=800)
+    downstream_affected: list[BookBlueprintField]
+
+    @field_validator("value")
+    @classmethod
+    def validate_field_value(cls, value: str | list[str]) -> str | list[str]:
+        values = [value] if isinstance(value, str) else value
+        if not values or any(
+            not item.strip() or len(item) > 1200 or "\x00" in item for item in values
+        ):
+            raise ValueError("蓝图字段候选格式无效")
+        return value
+
+
+class DirectorFieldDraft(BaseModel):
+    target_field: BookBlueprintField
+    value: str | list[str]
+    rationale: str = Field(min_length=1, max_length=800)
+
+    @field_validator("value")
+    @classmethod
+    def validate_draft_value(cls, value: str | list[str]) -> str | list[str]:
+        return DirectorFieldProposal.validate_field_value(value)
+
+
+class ApplyDirectorProposalRequest(BaseModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    expected_revision: int = Field(ge=0)
+
+
+class DirectorSceneBeat(BaseModel):
+    ordinal: int = Field(ge=1, le=20)
+    summary: str = Field(min_length=1, max_length=500)
+    state_change: str = Field(min_length=1, max_length=500)
+    resource_change: str = Field(min_length=1, max_length=500)
+    emotional_turn: str = Field(min_length=1, max_length=500)
+    verification: str = Field(min_length=1, max_length=500)
+
+
+class VolumePlanContent(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    volume_number: int = Field(ge=1, le=100)
+    title: str = Field(min_length=1, max_length=120)
+    direction: str = Field(min_length=1, max_length=1200)
+    central_conflict: str = Field(min_length=1, max_length=1200)
+    state_goal: str = Field(min_length=1, max_length=1000)
+    resource_goal: str = Field(min_length=1, max_length=1000)
+    emotional_payoff: str = Field(min_length=1, max_length=1000)
+    climax: str = Field(min_length=1, max_length=1000)
+    verification: str = Field(min_length=1, max_length=800)
+
+
+class VolumePlan(VolumePlanContent):
+    id: str
+    project_id: str
+    revision: int = Field(ge=0)
+    locked: bool = False
+    created_at: str
+    updated_at: str
+
+
+class RollingChapterPlanContent(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    chapter_number: int = Field(ge=1, le=10_000)
+    title: str = Field(min_length=1, max_length=120)
+    reader_promise: str = Field(min_length=1, max_length=300)
+    opening_hook: str = Field(min_length=1, max_length=300)
+    state_change: str = Field(min_length=1, max_length=300)
+    resource_change: str = Field(min_length=1, max_length=300)
+    emotional_payoff: str = Field(min_length=1, max_length=300)
+    ending_cliffhanger: str = Field(min_length=1, max_length=300)
+    verification: str = Field(min_length=1, max_length=500)
+    scene_beats: list[DirectorSceneBeat] = Field(min_length=1, max_length=20)
+
+
+class RollingChapterPlan(RollingChapterPlanContent):
+    id: str
+    project_id: str
+    volume_plan_id: str
+    revision: int = Field(ge=0)
+    locked: bool = False
+    created_at: str
+    updated_at: str
+
+
+class DirectorPlanningSnapshot(BaseModel):
+    book_blueprint: BookBlueprint | None = None
+    volume_plans: list[VolumePlan] = Field(default_factory=list)
+    rolling_chapter_plans: list[RollingChapterPlan] = Field(default_factory=list)
+
+
+class DirectorEntityProposal(BaseModel):
+    kind: StoryEntityKind
+    name: str = Field(min_length=1, max_length=120)
+    role: str = Field(min_length=1, max_length=300)
+    goal: str = Field(min_length=1, max_length=500)
+    initial_state: str = Field(min_length=1, max_length=1000)
+    relationship_notes: str = Field(default="", max_length=1000)
+
+
+class DirectorExpansionDraft(BaseModel):
+    entities: list[DirectorEntityProposal] = Field(min_length=2, max_length=20)
+    volumes: list[VolumePlanContent] = Field(min_length=1, max_length=3)
+    chapters: list[RollingChapterPlanContent] = Field(min_length=3, max_length=5)
+    why_writeable: str = Field(min_length=1, max_length=1000)
+    risk_notes: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_plan_ordinals(self) -> DirectorExpansionDraft:
+        volume_numbers = [item.volume_number for item in self.volumes]
+        chapter_numbers = [item.chapter_number for item in self.chapters]
+        if len(set(volume_numbers)) != len(volume_numbers):
+            raise ValueError("卷级计划编号不能重复")
+        if len(set(chapter_numbers)) != len(chapter_numbers):
+            raise ValueError("滚动章纲编号不能重复")
+        return self
+
+
+class DirectorExpansionProposal(DirectorExpansionDraft):
+    job_id: str
+    project_id: str
+    blueprint_revision: int = Field(ge=0)
+
+
+class DirectorExpansionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    expected_revision: int = Field(ge=0)
+    author_intent: str = Field(default="", max_length=1000)
+    chapter_count: int = Field(default=3, ge=3, le=5)
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+
+class UpdateVolumePlanRequest(BaseModel):
+    content: VolumePlanContent
+    locked: bool
+    expected_revision: int = Field(ge=0)
+
+
+class UpdateRollingChapterPlanRequest(BaseModel):
+    content: RollingChapterPlanContent
+    locked: bool
+    expected_revision: int = Field(ge=0)
+
+
+class DirectorOutboundPreview(BaseModel):
+    workflow: DirectorWorkflow
+    profile_id: str | None
+    profile_name: str
+    provider: str
+    model: str
+    data_types: list[str]
+    content_scope: str
+    character_count: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_calls: int = Field(ge=1)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+
+class DirectorPreReviewFinding(BaseModel):
+    severity: str = Field(pattern=r"^(warning|info)$")
+    field: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=500)
+
+
+class DirectorPreReview(BaseModel):
+    passed: bool
+    findings: list[DirectorPreReviewFinding] = Field(default_factory=list, max_length=20)
+
+
+class DirectorChapterPipelineRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    expected_revision: int = Field(ge=0)
+    author_intent: str = Field(default="", max_length=1000)
+    context_token_budget: int = Field(default=24_000, ge=1000, le=200_000)
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    rerun_from: DirectorPipelineStage = DirectorPipelineStage.CONTEXT
+    parent_job_id: str | None = Field(default=None, min_length=36, max_length=36)
 
 
 class CreateRecoveryPointRequest(BaseModel):
@@ -836,6 +1219,9 @@ class AcknowledgeOriginalityReportRequest(BaseModel):
 class Workspace(BaseModel):
     project: Project
     chapters: list[Chapter]
+    book_blueprint: BookBlueprint | None = None
+    volume_plans: list[VolumePlan] = Field(default_factory=list)
+    rolling_chapter_plans: list[RollingChapterPlan] = Field(default_factory=list)
     timeline_events: list[TimelineEvent] = Field(default_factory=list)
     story_facts: list[StoryFact] = Field(default_factory=list)
     fact_change_sets: list[FactChangeSet] = Field(default_factory=list)
@@ -853,6 +1239,9 @@ class Workspace(BaseModel):
 class WorkspaceSummary(BaseModel):
     project: Project
     chapters: list[ChapterSummary]
+    book_blueprint: BookBlueprint | None = None
+    volume_plans: list[VolumePlan] = Field(default_factory=list)
+    rolling_chapter_plans: list[RollingChapterPlan] = Field(default_factory=list)
     timeline_events: list[TimelineEvent] = Field(default_factory=list)
     story_facts: list[StoryFact] = Field(default_factory=list)
     fact_change_sets: list[FactChangeSet] = Field(default_factory=list)
@@ -1110,3 +1499,14 @@ class GenerationRun(BaseModel):
     model: str = "replay-v1"
     created_at: str
     updated_at: str
+
+
+class DirectorChapterPipelineResult(BaseModel):
+    job_id: str
+    project_id: str
+    chapter_id: str
+    chapter_revision: int = Field(ge=0)
+    completed_stages: list[DirectorPipelineStage]
+    brief: AiChapterBriefProposal
+    pre_review: DirectorPreReview
+    draft: GenerationRun
