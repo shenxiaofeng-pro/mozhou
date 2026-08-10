@@ -186,6 +186,26 @@ CREATE TABLE IF NOT EXISTS story_threads (
 CREATE INDEX IF NOT EXISTS idx_story_threads_project_status
 ON story_threads(project_id, status, created_at);
 
+CREATE TABLE IF NOT EXISTS source_documents (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+    source_filename TEXT NOT NULL CHECK(length(source_filename) BETWEEN 1 AND 255),
+    source_format TEXT NOT NULL CHECK(source_format IN ('txt', 'markdown', 'pdf')),
+    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    source_encoding TEXT NOT NULL CHECK(length(source_encoding) BETWEEN 1 AND 40),
+    encoding_confidence REAL NOT NULL CHECK(encoding_confidence BETWEEN 0 AND 1),
+    import_state TEXT NOT NULL CHECK(import_state IN ('ready', 'needs_review')),
+    source_spans_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_spans_json)),
+    duplicate_of_id TEXT REFERENCES source_documents(id) ON DELETE SET NULL,
+    content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 20000000),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_documents_hash_created
+ON source_documents(content_sha256, created_at, id);
+
 CREATE TABLE IF NOT EXISTS source_cards (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -196,6 +216,12 @@ CREATE TABLE IF NOT EXISTS source_cards (
     applicable_year_end INTEGER NOT NULL CHECK(applicable_year_end BETWEEN -3000 AND 2100),
     confidence TEXT NOT NULL CHECK(confidence IN ('high', 'medium', 'low')),
     excerpt TEXT NOT NULL DEFAULT '' CHECK(length(excerpt) <= 4000),
+    source_document_id TEXT REFERENCES source_documents(id) ON DELETE SET NULL,
+    source_date TEXT CHECK(source_date IS NULL OR length(source_date) <= 40),
+    page_number_start INTEGER CHECK(page_number_start IS NULL OR page_number_start > 0),
+    page_number_end INTEGER CHECK(page_number_end IS NULL OR page_number_end >= page_number_start),
+    start_char INTEGER CHECK(start_char IS NULL OR start_char >= 0),
+    end_char INTEGER CHECK(end_char IS NULL OR end_char > start_char),
     confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (0, 1)),
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
     created_at TEXT NOT NULL,
@@ -215,9 +241,11 @@ CREATE TABLE IF NOT EXISTS reference_works (
     total_characters INTEGER NOT NULL CHECK(total_characters BETWEEN 1 AND 20000000),
     segment_target_characters INTEGER NOT NULL CHECK(segment_target_characters BETWEEN 100000 AND 1000000),
     content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
     source_encoding TEXT NOT NULL CHECK(length(source_encoding) BETWEEN 1 AND 40),
     encoding_confidence REAL NOT NULL CHECK(encoding_confidence BETWEEN 0 AND 1),
     import_state TEXT NOT NULL CHECK(import_state IN ('ready', 'needs_review')),
+    source_spans_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_spans_json)),
     duplicate_of_id TEXT REFERENCES reference_works(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -253,6 +281,31 @@ CREATE TABLE IF NOT EXISTS reference_segments (
 
 CREATE INDEX IF NOT EXISTS idx_reference_segments_work_ordinal
 ON reference_segments(reference_work_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS reference_analysis_cache (
+    cache_key TEXT PRIMARY KEY CHECK(length(cache_key) = 64),
+    asset_level TEXT NOT NULL CHECK(asset_level IN ('chunk', 'segment', 'book', 'fusion')),
+    reference_work_id TEXT REFERENCES reference_works(id) ON DELETE CASCADE,
+    source_fingerprint_sha256 TEXT NOT NULL CHECK(length(source_fingerprint_sha256) = 64),
+    prompt_version TEXT NOT NULL CHECK(length(prompt_version) BETWEEN 1 AND 100),
+    provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 40),
+    model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 100),
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+    metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json)),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reference_analysis_cache_work_level
+ON reference_analysis_cache(reference_work_id, asset_level, created_at);
+
+CREATE TABLE IF NOT EXISTS reference_analysis_cache_sources (
+    cache_key TEXT NOT NULL REFERENCES reference_analysis_cache(cache_key) ON DELETE CASCADE,
+    reference_work_id TEXT NOT NULL REFERENCES reference_works(id) ON DELETE CASCADE,
+    PRIMARY KEY(cache_key, reference_work_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reference_analysis_cache_sources_work
+ON reference_analysis_cache_sources(reference_work_id, cache_key);
 
 CREATE TABLE IF NOT EXISTS reference_pattern_cards (
     id TEXT PRIMARY KEY,

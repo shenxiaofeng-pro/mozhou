@@ -34,6 +34,15 @@ class PlannedReferenceChunk:
     input_payload: dict[str, object]
 
 
+@dataclass(frozen=True)
+class ReferenceCacheIdentity:
+    cache_key: str
+    asset_level: str
+    reference_work_id: str | None
+    source_fingerprint_sha256: str
+    source_work_ids: tuple[str, ...]
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -220,6 +229,45 @@ class ReferenceJobService:
                 raise JobExecutionError("missing_artifact", "已完成任务块缺少产物，无法安全继续")
             if chunk.state != ChunkState.RUNNING:
                 chunk = self.jobs.transition_chunk(chunk.id, ChunkState.RUNNING)
+            cache_identity = self._cache_identity(
+                item,
+                request,
+                segment_by_id,
+                plan,
+                job,
+            )
+            cached = self.repository.get_reference_analysis_cache(cache_identity.cache_key)
+            if cached is not None:
+                self._validate_cached_payload(
+                    item,
+                    cached.payload,
+                    request,
+                )
+                self.jobs.put_artifact(
+                    job.id,
+                    chunk_id=chunk.id,
+                    kind=item.kind.value,
+                    artifact_key=item.artifact_key,
+                    payload=cached.payload,
+                    content_type="application/json",
+                    metadata={
+                        **cached.metadata,
+                        "cache_key": cached.cache_key,
+                        "cache_hit": True,
+                    },
+                    provider=job.provider,
+                    provider_profile_id=job.provider_profile_id,
+                    model=job.model,
+                )
+                self.jobs.transition_chunk(chunk.id, ChunkState.SUCCEEDED)
+                completed += 1
+                self.jobs.update_progress(
+                    job.id,
+                    current=completed,
+                    total=len(plan),
+                    step=self._step_label(item, cached=True),
+                )
+                continue
             self.jobs.update_progress(
                 job.id,
                 current=completed,
@@ -296,6 +344,18 @@ class ReferenceJobService:
                 provider=job.provider,
                 provider_profile_id=job.provider_profile_id,
                 model=job.model,
+            )
+            self.repository.put_reference_analysis_cache(
+                cache_key=cache_identity.cache_key,
+                asset_level=cache_identity.asset_level,
+                reference_work_id=cache_identity.reference_work_id,
+                source_fingerprint_sha256=cache_identity.source_fingerprint_sha256,
+                prompt_version=REFERENCE_JOB_PROMPT_VERSION,
+                provider=job.provider,
+                model=job.model,
+                payload=payload,
+                metadata={**metadata, "cache_hit": False},
+                source_work_ids=list(cache_identity.source_work_ids),
             )
             metrics = consume_ai_call_metrics(gateway)
             self.jobs.finish_attempt(
@@ -434,6 +494,100 @@ class ReferenceJobService:
             return proposal.model_dump_json(), dict(item.input_payload)
 
         raise JobExecutionError("unsupported_chunk", "不支持的拆书任务块")
+
+    def _cache_identity(
+        self,
+        item: PlannedReferenceChunk,
+        request: ReferenceSynthesisRequest,
+        segment_by_id: dict[str, ReferenceAnalysisInput],
+        plan: list[PlannedReferenceChunk],
+        job: Job,
+    ) -> ReferenceCacheIdentity:
+        work_id: str | None = None
+        focus = ""
+        if item.kind == JobKind.REFERENCE_SEGMENT_MAP:
+            segment_id = str(item.input_payload["segment_id"])
+            segment = segment_by_id[segment_id]
+            chunk_start = item.input_payload.get("chunk_start")
+            chunk_end = item.input_payload.get("chunk_end")
+            if not isinstance(chunk_start, int) or not isinstance(chunk_end, int):
+                raise JobExecutionError("invalid_plan", "拆书字符范围无效")
+            source_payload: object = {
+                "content": segment.content[chunk_start:chunk_end],
+                "absolute_start": item.input_payload.get("absolute_start"),
+                "absolute_end": item.input_payload.get("absolute_end"),
+            }
+            asset_level = "chunk"
+            work_id = segment.work_id
+        elif item.kind == JobKind.REFERENCE_BOOK_REDUCE:
+            work_id = str(item.input_payload["work_id"])
+            source_payload = [
+                self._artifact_payload(job.id, planned.artifact_key)
+                for planned in plan
+                if planned.kind == JobKind.REFERENCE_SEGMENT_MAP
+                and planned.input_payload["work_id"] == work_id
+            ]
+            asset_level = "book"
+            focus = request.author_focus
+        elif item.kind == JobKind.REFERENCE_FUSION:
+            source_payload = [
+                self._artifact_payload(job.id, planned.artifact_key)
+                for planned in plan
+                if planned.kind == JobKind.REFERENCE_BOOK_REDUCE
+            ]
+            asset_level = "fusion"
+            focus = request.author_focus
+        else:
+            raise JobExecutionError("unsupported_chunk", "不支持的拆书任务块")
+        fingerprint = sha256(_canonical_json(source_payload).encode("utf-8")).hexdigest()
+        cache_key = sha256(_canonical_json({
+            "kind": item.kind.value,
+            "source_fingerprint": fingerprint,
+            "input": item.input_payload,
+            "author_focus": focus,
+            "provider": job.provider,
+            "provider_profile_id": job.provider_profile_id,
+            "model": job.model,
+            "prompt_version": REFERENCE_JOB_PROMPT_VERSION,
+        }).encode("utf-8")).hexdigest()
+        return ReferenceCacheIdentity(
+            cache_key=cache_key,
+            asset_level=asset_level,
+            reference_work_id=work_id,
+            source_fingerprint_sha256=fingerprint,
+            source_work_ids=tuple(sorted({
+                str(planned.input_payload["work_id"])
+                for planned in plan
+                if planned.kind == JobKind.REFERENCE_SEGMENT_MAP
+                and (
+                    item.kind == JobKind.REFERENCE_FUSION
+                    or planned.input_payload["work_id"] == work_id
+                )
+            })),
+        )
+
+    def _artifact_payload(self, job_id: str, artifact_key: str) -> object:
+        artifact = self.jobs.find_artifact(job_id, artifact_key)
+        if artifact is None:
+            raise JobExecutionError("missing_artifact", "拆书缓存来源不完整")
+        return json.loads(artifact.payload)
+
+    def _validate_cached_payload(
+        self,
+        item: PlannedReferenceChunk,
+        payload: str,
+        request: ReferenceSynthesisRequest,
+    ) -> None:
+        if item.kind == JobKind.REFERENCE_SEGMENT_MAP:
+            ReferenceChunkAnalysis.model_validate_json(payload)
+            return
+        if item.kind == JobKind.REFERENCE_BOOK_REDUCE:
+            analysis = ReferenceBookAnalysis.model_validate_json(payload)
+            if analysis.work_id != item.input_payload["work_id"]:
+                raise JobExecutionError("invalid_cache", "单书缓存来源不匹配")
+            return
+        proposal = ReferenceSynthesisProposal.model_validate_json(payload)
+        self._validate_proposal_sources(proposal, set(request.selected_segment_ids))
 
     @staticmethod
     def _validate_proposal_sources(

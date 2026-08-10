@@ -9,6 +9,7 @@ interface ProjectLibraryPageProps {
   error: string | null
   onOpen: (projectId: string) => void
   onCreate: () => void
+  onOpenGlobalLibrary: () => void
   onProjectAdded: (workspace: Workspace) => void
   initialNotice?: string | null
 }
@@ -39,6 +40,7 @@ export function ProjectLibraryPage({
   error,
   onOpen,
   onCreate,
+  onOpenGlobalLibrary,
   onProjectAdded,
   initialNotice = null,
 }: ProjectLibraryPageProps) {
@@ -54,23 +56,28 @@ export function ProjectLibraryPage({
     setNotice(null)
   }
 
-  const exportProject = async (project: Project) => {
-    const action = `export:${project.id}`
+  const exportProject = async (project: Project, includeReferenceAssets = false) => {
+    const action = `${includeReferenceAssets ? 'export-assets' : 'export'}:${project.id}`
     setBusyAction(action)
     setOperationError(null)
     setNotice(null)
     try {
-      const archive = await api.exportProject(project.id)
+      const archive = await api.exportProject(project.id, includeReferenceAssets)
       const blob = new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${safeArchiveFilename(project.title)}.mozhou.json`
+      const assetSuffix = includeReferenceAssets ? '-含资料原文' : ''
+      anchor.download = `${safeArchiveFilename(project.title)}${assetSuffix}.mozhou.json`
       document.body.append(anchor)
       anchor.click()
       anchor.remove()
       URL.revokeObjectURL(url)
-      setNotice(`《${project.title}》归档已导出。`)
+      setNotice(
+        includeReferenceAssets
+          ? `《${project.title}》完整归档已导出，包含关联资料原文。`
+          : `《${project.title}》归档已导出。`,
+      )
     } catch (failure) {
       reportError(failure, '归档导出失败')
     } finally {
@@ -176,6 +183,7 @@ export function ProjectLibraryPage({
         </div>
         <div className="project-library-hero-actions">
           <button type="button" onClick={onCreate}>新建一部作品</button>
+          <button type="button" onClick={onOpenGlobalLibrary}>打开全局资料码头</button>
           <label className={busyAction === 'import' ? 'is-disabled' : undefined}>
             <input
               type="file"
@@ -228,6 +236,14 @@ export function ProjectLibraryPage({
                 onClick={() => { void exportProject(project) }}
               >
                 {busyAction === `export:${project.id}` ? '正在装订…' : '导出归档'}
+              </button>
+              <button
+                type="button"
+                aria-label={`导出《${project.title}》含资料原文的完整归档`}
+                disabled={busyAction !== null}
+                onClick={() => { void exportProject(project, true) }}
+              >
+                {busyAction === `export-assets:${project.id}` ? '正在收拢资料…' : '含资料归档'}
               </button>
               <button
                 type="button"

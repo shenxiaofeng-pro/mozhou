@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { api } from './api'
 import { CreateProjectForm } from './components/CreateProjectForm'
+import { GlobalReferenceLibraryPage } from './components/GlobalReferenceLibraryPage'
 import { ProjectLibraryPage } from './components/ProjectLibraryPage'
 import { ReferenceLibraryPage } from './components/ReferenceLibraryPage'
 import { TaskCenter } from './components/TaskCenter'
@@ -56,6 +57,7 @@ export function App() {
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<'writing' | 'reference-library'>('writing')
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false)
+  const [isGlobalLibraryOpen, setIsGlobalLibraryOpen] = useState(false)
 
   useEffect(() => {
     const projectId = loadActiveProjectId()
@@ -172,12 +174,30 @@ export function App() {
     ))
   }, [])
 
+  const handleProjectAssetsChanged = useCallback((projectId: string) => {
+    void api.listProjects().then(setProjects).catch(() => undefined)
+    if (workspace?.project.id === projectId) {
+      void api.getProjectSummary(projectId).then(setWorkspace).catch(() => undefined)
+    }
+  }, [workspace?.project.id])
+
   if (isLoading) {
     return (
       <main className="loading-shell" aria-live="polite">
         <div className="brand-mark" aria-hidden="true">墨</div>
         <p>正在展开上次的稿纸…</p>
       </main>
+    )
+  }
+
+  if (isGlobalLibraryOpen) {
+    return (
+      <GlobalReferenceLibraryPage
+        projects={projects}
+        activeProjectId={workspace?.project.id}
+        onBack={() => setIsGlobalLibraryOpen(false)}
+        onProjectAssetsChanged={handleProjectAssetsChanged}
+      />
     )
   }
 
@@ -190,6 +210,7 @@ export function App() {
           error={loadError}
           onOpen={(projectId) => { void handleOpenProject(projectId) }}
           onCreate={() => setIsCreatingProject(true)}
+          onOpenGlobalLibrary={() => setIsGlobalLibraryOpen(true)}
           onProjectAdded={handleProjectAdded}
           initialNotice={libraryNotice}
         />
@@ -214,6 +235,7 @@ export function App() {
         onWorkspaceChanged={handleWorkspaceChanged}
         onBack={() => setActiveView('writing')}
         onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
+        onOpenGlobalLibrary={() => setIsGlobalLibraryOpen(true)}
       />
     ) : (
       <WorkspaceShell

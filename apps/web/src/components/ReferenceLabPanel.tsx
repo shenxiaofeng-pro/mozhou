@@ -1,5 +1,6 @@
 import type {
   Job,
+  ReferenceFilePreview,
   ReferencePatternCard,
   ReferencePatternDimension,
   ReferenceRightsBasis,
@@ -15,7 +16,7 @@ interface ReferenceLabPanelProps {
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
 }
 
-const MAX_FILE_BYTES = 20 * 1024 * 1024
+const MAX_FILE_BYTES = 25 * 1024 * 1024
 const DEFAULT_SEGMENT_CHARACTERS = 500_000
 
 const rightsLabels: Record<ReferenceRightsBasis, string> = {
@@ -42,6 +43,9 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
   const [title, setTitle] = useState('')
   const [rightsBasis, setRightsBasis] = useState<ReferenceRightsBasis>('self_owned')
   const [segmentCharacters, setSegmentCharacters] = useState(DEFAULT_SEGMENT_CHARACTERS)
+  const [filePreview, setFilePreview] = useState<ReferenceFilePreview | null>(null)
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const [confirmedUncertainEncoding, setConfirmedUncertainEncoding] = useState(false)
   const [selectedSegments, setSelectedSegments] = useState<Set<string>>(() => new Set())
   const [isImporting, setIsImporting] = useState(false)
   const [authorFocus, setAuthorFocus] = useState('')
@@ -129,14 +133,16 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
 
   function chooseFile(nextFile: File | undefined) {
     setError(null)
+    setFilePreview(null)
+    setConfirmedUncertainEncoding(false)
     if (!nextFile) {
       setFile(null)
       return
     }
     const extension = nextFile.name.toLowerCase().split('.').pop()
-    if (!extension || !['txt', 'md', 'markdown'].includes(extension)) {
+    if (!extension || !['txt', 'md', 'markdown', 'pdf'].includes(extension)) {
       setFile(null)
-      setError('当前只支持 UTF-8 TXT 或 Markdown 文件。')
+      setError('当前支持 TXT、Markdown 与文本型 PDF。')
       return
     }
     if (nextFile.size > MAX_FILE_BYTES) {
@@ -145,7 +151,21 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
       return
     }
     setFile(nextFile)
-    setTitle(nextFile.name.replace(/\.(?:txt|md|markdown)$/i, ''))
+    setTitle(nextFile.name.replace(/\.(?:txt|md|markdown|pdf)$/i, ''))
+  }
+
+  async function previewFile() {
+    if (!file) return
+    setIsPreviewing(true)
+    setError(null)
+    try {
+      setFilePreview(await api.previewReferenceFile(file))
+    } catch (caught) {
+      setFilePreview(null)
+      setError(caught instanceof Error ? caught.message : '参考文件预览失败')
+    } finally {
+      setIsPreviewing(false)
+    }
   }
 
   async function importWork() {
@@ -153,19 +173,23 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
     setIsImporting(true)
     setError(null)
     try {
-      const content = await file.text()
-      const imported = await api.importReferenceWork(workspace.project.id, {
+      if (!filePreview) throw new Error('请先完成编码检测并查看预览')
+      const imported = await api.importReferenceFile(file, {
         title: title.trim(),
-        source_filename: file.name,
         rights_basis: rightsBasis,
         segment_target_characters: segmentCharacters,
-        content,
+        expected_source_sha256: filePreview.source_sha256,
+        confirm_preview: true,
+        confirm_uncertain_encoding: confirmedUncertainEncoding,
+        project_id: workspace.project.id,
       })
       onWorkspaceChanged({
         ...workspace,
         reference_works: [...workspace.reference_works, imported],
       })
       setFile(null)
+      setFilePreview(null)
+      setConfirmedUncertainEncoding(false)
       setTitle('')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '参考作品导入失败')
@@ -233,10 +257,10 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
           <input
             type="file"
             aria-label="选择参考小说文件"
-            accept=".txt,.md,.markdown,text/plain,text/markdown"
+            accept=".txt,.md,.markdown,.pdf,text/plain,text/markdown,application/pdf"
             onChange={(event) => chooseFile(event.target.files?.[0])}
           />
-          <span>{file ? file.name : 'TXT / Markdown · 最大 20 MB'}</span>
+          <span>{file ? file.name : 'TXT / Markdown / PDF · 最大 25 MB'}</span>
         </label>
         <label>
           作品名
@@ -257,11 +281,48 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
           </select>
         </label>
       </div>
+      {file && !filePreview ? (
+        <button
+          className="reference-import-action"
+          type="button"
+          onClick={() => { void previewFile() }}
+          disabled={isPreviewing}
+        >
+          {isPreviewing ? '正在安全解析…' : '检测编码并查看预览'}
+        </button>
+      ) : null}
+      {filePreview ? (
+        <section className="reference-file-preview" aria-label="参考文件预览">
+          <header>
+            <strong>{filePreview.source_format.toUpperCase()} · {filePreview.source_encoding}</strong>
+            <span>置信度 {Math.round(filePreview.encoding_confidence * 100)}%</span>
+            {filePreview.page_count > 0 ? <span>{filePreview.page_count} 页</span> : null}
+          </header>
+          <pre>{filePreview.preview}</pre>
+          <small>内容指纹 {filePreview.content_sha256.slice(0, 12)} · {filePreview.total_characters.toLocaleString('zh-CN')} 字</small>
+          {filePreview.import_state === 'needs_review' ? (
+            <label className="reference-processing-consent">
+              <input
+                type="checkbox"
+                checked={confirmedUncertainEncoding}
+                onChange={(event) => setConfirmedUncertainEncoding(event.target.checked)}
+              />
+              预览文字与原文件一致，确认按当前编码导入
+            </label>
+          ) : null}
+        </section>
+      ) : null}
       <button
         className="reference-import-action"
         type="button"
-        onClick={importWork}
-        disabled={!file || !title.trim() || isImporting}
+        onClick={() => { void importWork() }}
+        disabled={
+          !file
+          || !filePreview
+          || !title.trim()
+          || isImporting
+          || (filePreview.import_state === 'needs_review' && !confirmedUncertainEncoding)
+        }
       >
         {isImporting ? '正在本地切段…' : `导入并按 ${formatWan(segmentCharacters)}字切段`}
       </button>
@@ -275,7 +336,7 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
           <article className="reference-folio" key={work.id}>
             <header>
               <div>
-                <small>{work.source_format === 'markdown' ? 'MARKDOWN' : 'TXT'} · {rightsLabels[work.rights_basis]}</small>
+                <small>{work.source_format.toUpperCase()} · {rightsLabels[work.rights_basis]}</small>
                 <strong>{work.title}</strong>
               </div>
               <span>{formatWan(work.total_characters)}字</span>

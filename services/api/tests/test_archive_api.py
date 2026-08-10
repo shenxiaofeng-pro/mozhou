@@ -27,6 +27,7 @@ ARCHIVE_TABLES = {
     "future_knowledge",
     "story_entities",
     "story_threads",
+    "source_documents",
     "source_cards",
     "reference_works",
     "reference_segments",
@@ -94,6 +95,66 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert checksum == hashlib.sha256(canonical_json(archive)).hexdigest()
 
 
+def test_reality_source_archive_defaults_to_card_snapshot_and_can_include_raw_asset(
+    tmp_path: Path,
+) -> None:
+    raw_source = "一九九八年春，南平城区早市猪肉每斤六元。".encode()
+    source_sha256 = hashlib.sha256(raw_source).hexdigest()
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "现实资料归档",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        imported_card = client.post(
+            "/api/source-library/file-imports",
+            params={
+                "project_id": project_id,
+                "source_filename": "南平早市.txt",
+                "title": "南平早市物价",
+                "source_kind": "historical_record",
+                "source_reference": "作者自有走访记录",
+                "applicable_year_start": 1998,
+                "applicable_year_end": 1998,
+                "confidence": "medium",
+                "source_date": "1998-03",
+                "expected_source_sha256": source_sha256,
+                "confirm_preview": "true",
+            },
+            content=raw_source,
+            headers={"Content-Type": "text/plain"},
+        ).json()
+
+        default_archive = client.get(f"/api/projects/{project_id}/export").json()
+        full_archive = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        ).json()
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(full_archive),
+            headers={"Content-Type": "application/json"},
+        ).json()
+        global_documents = client.get("/api/source-library/documents").json()
+
+    assert default_archive["tables"]["source_documents"] == []
+    assert default_archive["tables"]["source_cards"][0]["source_document_id"] is None
+    assert default_archive["tables"]["source_cards"][0]["excerpt"] == raw_source.decode()
+    assert full_archive["tables"]["source_documents"][0]["content"] == raw_source.decode()
+    assert full_archive["tables"]["source_cards"][0]["source_document_id"] == imported_card[
+        "source_document_id"
+    ]
+    assert restored["source_cards"][0]["source_document_id"] != imported_card[
+        "source_document_id"
+    ]
+    assert restored["source_cards"][0]["source_date"] == "1998-03"
+    assert len(global_documents) == 2
+
+
 def test_export_returns_not_found_without_leaking_details(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
         response = client.get(
@@ -135,8 +196,9 @@ def test_import_upgrades_v1_project_owned_reference_archive(tmp_path: Path) -> N
                 key: value
                 for key, value in work.items()
                 if key not in {
-                    "content_sha256", "source_encoding", "encoding_confidence",
-                    "import_state", "duplicate_of_id", "updated_at",
+                    "content_sha256", "source_sha256", "source_encoding",
+                    "encoding_confidence", "import_state", "source_spans_json",
+                    "duplicate_of_id", "updated_at",
                 }
             } | {"project_id": project_id}
             for work in archive["tables"]["reference_works"]

@@ -6,7 +6,7 @@ from secrets import compare_digest
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -73,14 +73,22 @@ from app.models import (
     ImportReferenceWorkRequest,
     Project,
     RecoveryPointSummary,
+    ReferenceFilePreview,
+    ReferenceFormat,
     ReferencePatternApplication,
     ReferencePatternCard,
+    ReferenceRightsBasis,
+    ReferenceSourceSpan,
     ReferenceSynthesisRequest,
     ReferenceWork,
+    ReferenceWorkImpactResponse,
     RejectFactChangeSetRequest,
     ReviewFutureKnowledgeRequest,
     SetSourceCardConfirmationRequest,
     SourceCard,
+    SourceConfidence,
+    SourceDocument,
+    SourceKind,
     StartGenerationRequest,
     StoryEntity,
     StoryThread,
@@ -122,6 +130,12 @@ from app.repository import (
     ProjectRepository,
     StaleChapterSequenceError,
     StaleRevisionError,
+)
+from app.safe_import import (
+    MAX_PDF_FILE_BYTES,
+    ParsedReferenceFile,
+    UnsafeImportError,
+    parse_reference_file,
 )
 
 
@@ -312,6 +326,45 @@ def create_app(
         except StaleContextDirectiveError as error:
             raise HTTPException(status_code=409, detail="上下文选择已更新，请重新预览") from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.get(
+        "/api/reference-library/works/{work_id}/impact",
+        response_model=ReferenceWorkImpactResponse,
+    )
+    def get_reference_work_impact(
+        work_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferenceWorkImpactResponse:
+        try:
+            impact = repository.get_reference_work_impact(str(work_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="参考资产不存在") from error
+        return ReferenceWorkImpactResponse(
+            work=impact.work,
+            projects=impact.projects,
+            cache_entries=impact.cache_entries,
+        )
+
+    @application.delete(
+        "/api/reference-library/works/{work_id}",
+        response_model=ReferenceWorkImpactResponse,
+    )
+    def purge_global_reference_work(
+        work_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+        confirm_purge: bool = False,
+    ) -> ReferenceWorkImpactResponse:
+        if not confirm_purge:
+            raise HTTPException(status_code=409, detail="请先查看受影响作品并确认清理")
+        try:
+            impact = repository.purge_reference_work(str(work_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="参考资产不存在") from error
+        return ReferenceWorkImpactResponse(
+            work=impact.work,
+            projects=impact.projects,
+            cache_entries=impact.cache_entries,
+        )
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetail)
     def get_job(
@@ -838,6 +891,221 @@ def create_app(
                 status_code=415,
                 detail="当前只支持 UTF-8 TXT 或 Markdown 参考作品",
             ) from error
+
+    async def read_reference_upload(request: Request) -> bytes:
+        content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if content_type not in {
+            "application/octet-stream",
+            "application/pdf",
+            "text/plain",
+            "text/markdown",
+        }:
+            raise HTTPException(status_code=415, detail="参考文件类型不受支持")
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > MAX_PDF_FILE_BYTES:
+                    raise HTTPException(status_code=413, detail="参考文件超过安全体积上限")
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail="参考文件请求无效") from error
+        payload = bytearray()
+        async for chunk in request.stream():
+            payload.extend(chunk)
+            if len(payload) > MAX_PDF_FILE_BYTES:
+                raise HTTPException(status_code=413, detail="参考文件超过安全体积上限")
+        return bytes(payload)
+
+    def parse_safe_reference(source_filename: str, payload: bytes) -> ParsedReferenceFile:
+        try:
+            return parse_reference_file(source_filename, payload)
+        except UnsafeImportError as error:
+            code = str(error)
+            if code == "file_too_large":
+                raise HTTPException(status_code=413, detail="参考文件超过安全体积上限") from error
+            if code in {"unsupported_format", "invalid_pdf_magic"}:
+                raise HTTPException(status_code=415, detail="参考文件格式与内容不匹配") from error
+            messages = {
+                "encrypted_pdf": "加密 PDF 不允许导入",
+                "active_pdf_content": "包含脚本或主动内容的 PDF 不允许导入",
+                "empty_pdf_text": "PDF 没有可提取的正文文本",
+                "pdf_page_limit": "PDF 页数超过安全上限",
+                "pdf_expansion_limit": "PDF 解压后的文本量异常",
+                "unsupported_or_mixed_encoding": "文本编码混杂或不受支持",
+            }
+            raise HTTPException(
+                status_code=422,
+                detail=messages.get(code, "参考文件无法安全解析"),
+            ) from error
+
+    @application.post(
+        "/api/reference-library/file-previews",
+        response_model=ReferenceFilePreview,
+    )
+    async def preview_reference_file(
+        request: Request,
+        source_filename: Annotated[str, Query(min_length=1, max_length=255)],
+    ) -> ReferenceFilePreview:
+        parsed = parse_safe_reference(source_filename, await read_reference_upload(request))
+        return ReferenceFilePreview(
+            source_filename=source_filename,
+            source_format=ReferenceFormat(parsed.source_format),
+            source_encoding=parsed.source_encoding,
+            encoding_confidence=parsed.encoding_confidence,
+            import_state=parsed.import_state,
+            source_sha256=parsed.source_sha256,
+            content_sha256=parsed.content_sha256,
+            total_characters=len(parsed.content),
+            page_count=parsed.page_count,
+            preview=parsed.preview,
+            warnings=list(parsed.warnings),
+            source_spans=[
+                ReferenceSourceSpan(
+                    page_number=span.page_number,
+                    start_char=span.start_char,
+                    end_char=span.end_char,
+                )
+                for span in parsed.spans
+            ],
+        )
+
+    @application.post(
+        "/api/reference-library/file-imports",
+        response_model=ReferenceWork,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def import_reference_file(
+        request: Request,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+        source_filename: Annotated[str, Query(min_length=1, max_length=255)],
+        title: Annotated[str, Query(min_length=1, max_length=200)],
+        rights_basis: ReferenceRightsBasis,
+        expected_source_sha256: Annotated[str, Query(min_length=64, max_length=64)],
+        segment_target_characters: int = 500_000,
+        confirm_preview: bool = False,
+        confirm_uncertain_encoding: bool = False,
+        project_id: UUID | None = None,
+    ) -> ReferenceWork:
+        if not 100_000 <= segment_target_characters <= 1_000_000:
+            raise HTTPException(status_code=422, detail="参考区段大小无效")
+        if not confirm_preview:
+            raise HTTPException(status_code=409, detail="请先查看文件预览并确认")
+        if project_id is not None and not repository.project_exists(str(project_id)):
+            raise HTTPException(status_code=404, detail="作品不存在")
+        parsed = parse_safe_reference(source_filename, await read_reference_upload(request))
+        if parsed.source_sha256 != expected_source_sha256.lower():
+            raise HTTPException(status_code=409, detail="文件已变化，请重新预览")
+        if parsed.import_state == "needs_review" and not confirm_uncertain_encoding:
+            raise HTTPException(status_code=409, detail="编码置信度不足，请确认预览文本")
+        try:
+            imported = repository.import_parsed_reference_work(
+                title=title.strip(),
+                source_filename=source_filename,
+                rights_basis=rights_basis,
+                segment_target_characters=segment_target_characters,
+                parsed=parsed,
+            )
+            return (
+                repository.link_reference_work(str(project_id), imported.id)
+                if project_id is not None
+                else imported
+            )
+        except (InvalidReferenceImportError, ValueError) as error:
+            raise HTTPException(status_code=422, detail="参考文件导入参数无效") from error
+
+    @application.get(
+        "/api/source-library/documents",
+        response_model=list[SourceDocument],
+    )
+    def list_source_documents(
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> list[SourceDocument]:
+        return repository.list_source_documents()
+
+    @application.post(
+        "/api/source-library/file-imports",
+        response_model=SourceCard,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def import_reality_source_file(
+        request: Request,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+        project_id: UUID,
+        source_filename: Annotated[str, Query(min_length=1, max_length=255)],
+        title: Annotated[str, Query(min_length=1, max_length=200)],
+        source_kind: SourceKind,
+        source_reference: Annotated[str, Query(min_length=1, max_length=1000)],
+        applicable_year_start: int,
+        applicable_year_end: int,
+        expected_source_sha256: Annotated[str, Query(min_length=64, max_length=64)],
+        confidence: SourceConfidence = SourceConfidence.MEDIUM,
+        source_date: Annotated[str | None, Query(max_length=40)] = None,
+        confirm_preview: bool = False,
+        confirm_uncertain_encoding: bool = False,
+    ) -> SourceCard:
+        if not repository.project_exists(str(project_id)):
+            raise HTTPException(status_code=404, detail="作品不存在")
+        if not confirm_preview:
+            raise HTTPException(status_code=409, detail="请先查看文件预览并确认")
+        try:
+            card_request = CreateSourceCardRequest(
+                source_kind=source_kind,
+                title=title,
+                source_reference=source_reference,
+                applicable_year_start=applicable_year_start,
+                applicable_year_end=applicable_year_end,
+                confidence=confidence,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="现实资料参数无效") from error
+        parsed = parse_safe_reference(source_filename, await read_reference_upload(request))
+        if parsed.source_sha256 != expected_source_sha256.lower():
+            raise HTTPException(status_code=409, detail="文件已变化，请重新预览")
+        if parsed.import_state == "needs_review" and not confirm_uncertain_encoding:
+            raise HTTPException(status_code=409, detail="编码置信度不足，请确认预览文本")
+        document = repository.import_source_document(
+            title=title.strip(),
+            source_filename=source_filename,
+            parsed=parsed,
+        )
+        return repository.apply_source_document(
+            str(project_id),
+            document.id,
+            card_request,
+            source_date=source_date,
+        )
+
+    @application.post(
+        "/api/projects/{project_id}/source-documents/{document_id}/cards",
+        response_model=SourceCard,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def apply_existing_source_document(
+        project_id: UUID,
+        document_id: UUID,
+        body: CreateSourceCardRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+        source_date: Annotated[str | None, Query(max_length=40)] = None,
+    ) -> SourceCard:
+        try:
+            return repository.apply_source_document(
+                str(project_id), str(document_id), body, source_date=source_date
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或现实资料不存在") from error
+
+    @application.delete("/api/source-library/documents/{document_id}")
+    def delete_source_document(
+        document_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+        confirm_purge: bool = False,
+    ) -> dict[str, int]:
+        if not confirm_purge:
+            raise HTTPException(status_code=409, detail="请确认清理现实资料原文")
+        try:
+            impacted_cards = repository.delete_source_document(str(document_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="现实资料不存在") from error
+        return {"affected_cards": impacted_cards}
 
     @application.post(
         "/api/projects/{project_id}/reference-works/{work_id}",

@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from sqlite3 import Connection, IntegrityError, Row
@@ -36,6 +37,7 @@ from app.models import (
     ReferenceFormat,
     ReferencePatternApplication,
     ReferencePatternCard,
+    ReferenceRightsBasis,
     ReferenceSegment,
     ReferenceSynthesisProposal,
     ReferenceWork,
@@ -43,6 +45,7 @@ from app.models import (
     ReviewFutureKnowledgeRequest,
     SetSourceCardConfirmationRequest,
     SourceCard,
+    SourceDocument,
     StoryEntity,
     StoryFact,
     StoryThread,
@@ -58,6 +61,7 @@ from app.models import (
     WorkspaceSummary,
 )
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
+from app.safe_import import ParsedReferenceFile
 
 
 class NotFoundError(Exception):
@@ -102,6 +106,27 @@ class InvalidReferenceSelectionError(Exception):
 
 class InvalidReferenceApplicationError(Exception):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceAnalysisCacheEntry:
+    cache_key: str
+    asset_level: str
+    reference_work_id: str | None
+    source_fingerprint_sha256: str
+    prompt_version: str
+    provider: str
+    model: str
+    payload: str
+    metadata: dict[str, object]
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceWorkImpact:
+    work: ReferenceWork
+    projects: list[Project]
+    cache_entries: int
 
 
 ALLOWED_CHAPTER_TRANSITIONS: dict[ChapterStatus, set[ChapterStatus]] = {
@@ -161,6 +186,12 @@ class ProjectRepository:
                 "SELECT * FROM projects ORDER BY updated_at DESC, id DESC"
             ).fetchall()
         return [self._project(row) for row in rows]
+
+    def project_exists(self, project_id: str) -> bool:
+        with self.database.connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone() is not None
 
     def get_workspace(self, project_id: str) -> Workspace:
         return cast(Workspace, self._get_workspace(project_id, include_chapter_content=True))
@@ -394,24 +425,70 @@ class ProjectRepository:
         content = request.content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
         return self._create_global_reference_work(request, content)
 
+    def import_parsed_reference_work(
+        self,
+        *,
+        title: str,
+        source_filename: str,
+        rights_basis: ReferenceRightsBasis,
+        segment_target_characters: int,
+        parsed: ParsedReferenceFile,
+    ) -> ReferenceWork:
+        request = ImportReferenceWorkRequest(
+            title=title,
+            source_filename=source_filename,
+            rights_basis=rights_basis,
+            segment_target_characters=segment_target_characters,
+            content="validated-by-safe-parser",
+        ).model_copy(update={"content": parsed.content})
+        return self._create_global_reference_work(
+            request,
+            parsed.content,
+            source_format=ReferenceFormat(parsed.source_format),
+            source_sha256=parsed.source_sha256,
+            source_encoding=parsed.source_encoding,
+            encoding_confidence=parsed.encoding_confidence,
+            import_state=parsed.import_state,
+            source_spans=[
+                {
+                    "page_number": span.page_number,
+                    "start_char": span.start_char,
+                    "end_char": span.end_char,
+                }
+                for span in parsed.spans
+            ],
+        )
+
     def _create_global_reference_work(
         self,
         request: ImportReferenceWorkRequest,
         content: str,
+        *,
+        source_format: ReferenceFormat | None = None,
+        source_sha256: str | None = None,
+        source_encoding: str = "utf-8",
+        encoding_confidence: float = 1.0,
+        import_state: str = "ready",
+        source_spans: list[dict[str, int]] | None = None,
     ) -> ReferenceWork:
         extension = request.source_filename.lower().rsplit(".", 1)[-1]
-        if extension == "txt":
-            source_format = ReferenceFormat.TXT
-        elif extension in {"md", "markdown"}:
-            source_format = ReferenceFormat.MARKDOWN
-        else:
-            raise InvalidReferenceImportError("unsupported_format")
+        if source_format is None:
+            if extension == "txt":
+                source_format = ReferenceFormat.TXT
+            elif extension in {"md", "markdown"}:
+                source_format = ReferenceFormat.MARKDOWN
+            else:
+                raise InvalidReferenceImportError("unsupported_format")
         segments = segment_reference_text(content, request.segment_target_characters)
         if not segments:
             raise InvalidReferenceImportError("empty_content")
         work_id = str(uuid4())
         timestamp = now_iso()
         content_sha256 = sha256(content.encode("utf-8")).hexdigest()
+        raw_source_sha256 = source_sha256 or content_sha256
+        source_spans_json = json.dumps(
+            source_spans or [], ensure_ascii=False, separators=(",", ":")
+        )
         with self.database.connect() as connection:
             duplicate = connection.execute(
                 "SELECT id FROM reference_works WHERE content_sha256 = ? ORDER BY created_at, id LIMIT 1",
@@ -422,9 +499,9 @@ class ProjectRepository:
                 INSERT INTO reference_works (
                     id, title, source_filename, source_format, rights_basis,
                     total_characters, segment_target_characters, content_sha256,
-                    source_encoding, encoding_confidence, import_state,
-                    duplicate_of_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'utf-8', 1.0, 'ready', ?, ?, ?)
+                    source_sha256, source_encoding, encoding_confidence, import_state,
+                    source_spans_json, duplicate_of_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     work_id,
@@ -435,6 +512,11 @@ class ProjectRepository:
                     len(content),
                     request.segment_target_characters,
                     content_sha256,
+                    raw_source_sha256,
+                    source_encoding,
+                    encoding_confidence,
+                    import_state,
+                    source_spans_json,
                     duplicate["id"] if duplicate is not None else None,
                     timestamp,
                     timestamp,
@@ -535,6 +617,128 @@ class ProjectRepository:
                 "UPDATE projects SET updated_at = ? WHERE id = ?",
                 (timestamp, project_id),
             )
+
+    def get_reference_analysis_cache(
+        self,
+        cache_key: str,
+    ) -> ReferenceAnalysisCacheEntry | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM reference_analysis_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ReferenceAnalysisCacheEntry(
+            cache_key=row["cache_key"],
+            asset_level=row["asset_level"],
+            reference_work_id=row["reference_work_id"],
+            source_fingerprint_sha256=row["source_fingerprint_sha256"],
+            prompt_version=row["prompt_version"],
+            provider=row["provider"],
+            model=row["model"],
+            payload=row["payload_json"],
+            metadata=json.loads(row["metadata_json"]),
+            created_at=row["created_at"],
+        )
+
+    def put_reference_analysis_cache(
+        self,
+        *,
+        cache_key: str,
+        asset_level: str,
+        reference_work_id: str | None,
+        source_fingerprint_sha256: str,
+        prompt_version: str,
+        provider: str,
+        model: str,
+        payload: str,
+        metadata: dict[str, object],
+        source_work_ids: list[str],
+    ) -> ReferenceAnalysisCacheEntry:
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO reference_analysis_cache (
+                    cache_key, asset_level, reference_work_id,
+                    source_fingerprint_sha256, prompt_version, provider, model,
+                    payload_json, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO NOTHING
+                """,
+                (
+                    cache_key,
+                    asset_level,
+                    reference_work_id,
+                    source_fingerprint_sha256,
+                    prompt_version,
+                    provider,
+                    model,
+                    payload,
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                    timestamp,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO reference_analysis_cache_sources(cache_key, reference_work_id)
+                VALUES (?, ?)
+                ON CONFLICT(cache_key, reference_work_id) DO NOTHING
+                """,
+                [(cache_key, work_id) for work_id in source_work_ids],
+            )
+        cached = self.get_reference_analysis_cache(cache_key)
+        if cached is None:
+            raise RuntimeError("参考分析缓存写入失败")
+        return cached
+
+    def get_reference_work_impact(self, work_id: str) -> ReferenceWorkImpact:
+        work = self.get_reference_work(work_id)
+        with self.database.connect() as connection:
+            project_rows = connection.execute(
+                """
+                SELECT p.* FROM projects p
+                JOIN project_reference_works r ON r.project_id = p.id
+                WHERE r.reference_work_id = ?
+                ORDER BY p.updated_at DESC, p.id DESC
+                """,
+                (work_id,),
+            ).fetchall()
+            cache_entries = connection.execute(
+                """
+                SELECT COUNT(DISTINCT cache_key)
+                FROM reference_analysis_cache_sources
+                WHERE reference_work_id = ?
+                """,
+                (work_id,),
+            ).fetchone()[0]
+        return ReferenceWorkImpact(
+            work=work,
+            projects=[self._project(row) for row in project_rows],
+            cache_entries=int(cache_entries),
+        )
+
+    def purge_reference_work(self, work_id: str) -> ReferenceWorkImpact:
+        impact = self.get_reference_work_impact(work_id)
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                DELETE FROM reference_analysis_cache
+                WHERE cache_key IN (
+                    SELECT cache_key FROM reference_analysis_cache_sources
+                    WHERE reference_work_id = ?
+                )
+                """,
+                (work_id,),
+            )
+            result = connection.execute(
+                "DELETE FROM reference_works WHERE id = ?",
+                (work_id,),
+            )
+            if result.rowcount == 0:
+                raise NotFoundError(work_id)
+        return impact
 
     def get_reference_work(self, work_id: str) -> ReferenceWork:
         with self.database.connect() as connection:
@@ -945,6 +1149,163 @@ class ProjectRepository:
         if row is None:
             raise NotFoundError(card_id)
         return self._source_card(row)
+
+    def import_source_document(
+        self,
+        *,
+        title: str,
+        source_filename: str,
+        parsed: ParsedReferenceFile,
+    ) -> SourceDocument:
+        document_id = str(uuid4())
+        timestamp = now_iso()
+        spans_json = json.dumps(
+            [
+                {
+                    "page_number": span.page_number,
+                    "start_char": span.start_char,
+                    "end_char": span.end_char,
+                }
+                for span in parsed.spans
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        with self.database.connect() as connection:
+            duplicate = connection.execute(
+                "SELECT id FROM source_documents WHERE content_sha256 = ? ORDER BY created_at, id LIMIT 1",
+                (parsed.content_sha256,),
+            ).fetchone()
+            connection.execute(
+                """
+                INSERT INTO source_documents (
+                    id, title, source_filename, source_format, source_sha256,
+                    content_sha256, source_encoding, encoding_confidence,
+                    import_state, source_spans_json, duplicate_of_id, content,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document_id,
+                    title,
+                    source_filename,
+                    parsed.source_format,
+                    parsed.source_sha256,
+                    parsed.content_sha256,
+                    parsed.source_encoding,
+                    parsed.encoding_confidence,
+                    parsed.import_state,
+                    spans_json,
+                    duplicate["id"] if duplicate is not None else None,
+                    parsed.content,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return self.get_source_document(document_id)
+
+    def get_source_document(self, document_id: str) -> SourceDocument:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, title, source_filename, source_format, source_sha256,
+                       content_sha256, source_encoding, encoding_confidence,
+                       import_state, source_spans_json, duplicate_of_id,
+                       LENGTH(content) AS total_characters, created_at, updated_at
+                FROM source_documents WHERE id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(document_id)
+        return self._source_document(row)
+
+    def list_source_documents(self) -> list[SourceDocument]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, title, source_filename, source_format, source_sha256,
+                       content_sha256, source_encoding, encoding_confidence,
+                       import_state, source_spans_json, duplicate_of_id,
+                       LENGTH(content) AS total_characters, created_at, updated_at
+                FROM source_documents ORDER BY created_at DESC, id DESC
+                """
+            ).fetchall()
+        return [self._source_document(row) for row in rows]
+
+    def apply_source_document(
+        self,
+        project_id: str,
+        document_id: str,
+        request: CreateSourceCardRequest,
+        *,
+        source_date: str | None,
+    ) -> SourceCard:
+        card_id = str(uuid4())
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            if connection.execute(
+                "SELECT id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone() is None:
+                raise NotFoundError(project_id)
+            document = connection.execute(
+                "SELECT content, source_spans_json FROM source_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if document is None:
+                raise NotFoundError(document_id)
+            excerpt = str(document["content"])[:4000]
+            spans = json.loads(document["source_spans_json"])
+            page_start = spans[0]["page_number"] if spans else None
+            page_end = spans[-1]["page_number"] if spans else None
+            connection.execute(
+                """
+                INSERT INTO source_cards (
+                    id, project_id, source_kind, title, source_reference,
+                    applicable_year_start, applicable_year_end, confidence,
+                    excerpt, source_document_id, source_date, page_number_start,
+                    page_number_end, start_char, end_char,
+                    confirmed, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?)
+                """,
+                (
+                    card_id,
+                    project_id,
+                    request.source_kind.value,
+                    request.title,
+                    request.source_reference,
+                    request.applicable_year_start,
+                    request.applicable_year_end,
+                    request.confidence.value,
+                    excerpt,
+                    document_id,
+                    source_date,
+                    page_start,
+                    page_end,
+                    len(excerpt),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM source_cards WHERE id = ?", (card_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(card_id)
+        return self._source_card(row)
+
+    def delete_source_document(self, document_id: str) -> int:
+        with self.database.connect() as connection:
+            impacted = connection.execute(
+                "SELECT COUNT(*) FROM source_cards WHERE source_document_id = ?",
+                (document_id,),
+            ).fetchone()[0]
+            result = connection.execute(
+                "DELETE FROM source_documents WHERE id = ?", (document_id,)
+            )
+            if result.rowcount == 0:
+                raise NotFoundError(document_id)
+        return int(impacted)
 
     def set_source_card_confirmation(
         self,
@@ -1873,6 +2234,15 @@ class ProjectRepository:
         return SourceCard.model_validate(dict(row))
 
     @staticmethod
+    def _source_document(row: Row) -> SourceDocument:
+        payload = dict(row)
+        raw_spans = payload.pop("source_spans_json", "[]")
+        return SourceDocument.model_validate({
+            **payload,
+            "source_spans": json.loads(raw_spans),
+        })
+
+    @staticmethod
     def _reference_segment(row: Row) -> ReferenceSegment:
         return ReferenceSegment.model_validate(dict(row))
 
@@ -1884,10 +2254,13 @@ class ProjectRepository:
         project_ids: list[str] | None = None,
     ) -> ReferenceWork:
         projects = project_ids or []
+        payload = dict(row)
+        raw_spans = payload.pop("source_spans_json", "[]")
         return ReferenceWork.model_validate({
-            **dict(row),
+            **payload,
             "project_id": projects[0] if len(projects) == 1 else None,
             "project_ids": projects,
+            "source_spans": json.loads(raw_spans),
             "segments": segments,
         })
 
