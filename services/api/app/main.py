@@ -702,9 +702,13 @@ def create_app(
     def export_project(
         project_id: UUID,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
+        include_reference_assets: bool = False,
     ) -> dict[str, object]:
         try:
-            return ProjectArchiveService(repository.database).export_project(str(project_id))
+            return ProjectArchiveService(repository.database).export_project(
+                str(project_id),
+                include_reference_assets=include_reference_assets,
+            )
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
 
@@ -808,6 +812,61 @@ def create_app(
                 status_code=415,
                 detail="当前只支持 UTF-8 TXT 或 Markdown 参考作品",
             ) from error
+
+    @application.get(
+        "/api/reference-library/works",
+        response_model=list[ReferenceWork],
+    )
+    def list_global_reference_works(
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> list[ReferenceWork]:
+        return repository.list_reference_works()
+
+    @application.post(
+        "/api/reference-library/works",
+        response_model=ReferenceWork,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_global_reference_work(
+        body: ImportReferenceWorkRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferenceWork:
+        try:
+            return repository.import_global_reference_work(body)
+        except InvalidReferenceImportError as error:
+            raise HTTPException(
+                status_code=415,
+                detail="当前只支持 UTF-8 TXT 或 Markdown 参考作品",
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/reference-works/{work_id}",
+        response_model=ReferenceWork,
+    )
+    def link_global_reference_work(
+        project_id: UUID,
+        work_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferenceWork:
+        try:
+            return repository.link_reference_work(str(project_id), str(work_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或参考资产不存在") from error
+
+    @application.delete(
+        "/api/projects/{project_id}/reference-works/{work_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def unlink_global_reference_work(
+        project_id: UUID,
+        work_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> Response:
+        try:
+            repository.unlink_reference_work(str(project_id), str(work_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品未关联该参考资产") from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @application.post(
         "/api/projects/{project_id}/reference-analysis-jobs",

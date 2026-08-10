@@ -249,15 +249,22 @@ export interface ReferenceSegment {
 
 export interface ReferenceWork {
   id: string
-  project_id: string
+  project_id: string | null
+  project_ids: string[]
   title: string
   source_filename: string
   source_format: ReferenceFormat
   rights_basis: ReferenceRightsBasis
   total_characters: number
   segment_target_characters: number
+  content_sha256: string
+  source_encoding: string
+  encoding_confidence: number
+  import_state: 'ready' | 'needs_review'
+  duplicate_of_id: string | null
   segments: ReferenceSegment[]
   created_at: string
+  updated_at: string
 }
 
 export interface ContinuityIssue {

@@ -7,12 +7,13 @@ import pytest
 
 import app.database as database_module
 from app.database import (
+    SCHEMA,
     Database,
     DatabaseIntegrityError,
     DatabaseMigrationError,
     UnsupportedDatabaseVersionError,
 )
-from app.migrations import MIGRATIONS, Migration
+from app.migrations import MIGRATIONS, Migration, v9
 
 
 def test_database_initializes_required_tables(tmp_path: Path) -> None:
@@ -43,6 +44,7 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "job_events",
         "jobs",
         "project_recovery_points",
+        "project_reference_works",
         "projects",
         "reference_pattern_applications",
         "reference_pattern_cards",
@@ -117,21 +119,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v8-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v9-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (9,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v8-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v9-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v8_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v9_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -187,7 +189,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v8_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (8,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (9,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -200,8 +202,85 @@ def test_database_runs_v1_and_v2_fixtures_to_v8_without_losing_data(
         (6, "ai_provider_profiles"),
         (7, "ai_task_defaults"),
         (8, "context_packets"),
+        (9, "global_reference_library"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v8-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v9-*.db"))) == 1
+
+
+def test_v9_migrates_project_reference_text_to_global_asset_without_loss() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            """
+            CREATE TABLE projects (id TEXT PRIMARY KEY);
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE reference_works (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                source_filename TEXT NOT NULL,
+                source_format TEXT NOT NULL,
+                rights_basis TEXT NOT NULL,
+                total_characters INTEGER NOT NULL,
+                segment_target_characters INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE reference_segments (
+                id TEXT PRIMARY KEY,
+                reference_work_id TEXT NOT NULL REFERENCES reference_works(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL,
+                start_char INTEGER NOT NULL,
+                end_char INTEGER NOT NULL,
+                character_count INTEGER NOT NULL,
+                chapter_start TEXT,
+                chapter_end TEXT,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            INSERT INTO projects(id) VALUES ('project-1');
+            INSERT INTO reference_works VALUES (
+                'work-1', 'project-1', '旧库参考', 'legacy.txt', 'txt',
+                'self_owned', 4, 500000, '2026-08-01T00:00:00Z'
+            );
+            INSERT INTO reference_segments VALUES (
+                'segment-1', 'work-1', 1, 0, 4, 4, NULL, NULL,
+                '原文四字', '2026-08-01T00:00:00Z'
+            );
+            """
+        )
+
+        v9.upgrade(connection, SCHEMA)
+
+        work_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(reference_works)").fetchall()
+        }
+        migrated_work = connection.execute(
+            "SELECT id, content_sha256, source_encoding, import_state FROM reference_works"
+        ).fetchone()
+        migrated_link = connection.execute(
+            "SELECT project_id, reference_work_id FROM project_reference_works"
+        ).fetchone()
+        migrated_content = connection.execute(
+            "SELECT content FROM reference_segments WHERE id = 'segment-1'"
+        ).fetchone()
+
+    assert "project_id" not in work_columns
+    assert migrated_work is not None
+    assert tuple(migrated_work) == (
+        "work-1",
+        sha256("原文四字".encode()).hexdigest(),
+        "utf-8",
+        "ready",
+    )
+    assert migrated_link is not None
+    assert tuple(migrated_link) == ("project-1", "work-1")
+    assert migrated_content is not None
+    assert tuple(migrated_content) == ("原文四字",)
 
 
 def test_failed_migration_keeps_original_database_and_readable_backup(
@@ -245,7 +324,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
         ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v8-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v9-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

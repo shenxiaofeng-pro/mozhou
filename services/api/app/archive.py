@@ -5,7 +5,7 @@ import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hmac import compare_digest
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -36,7 +36,7 @@ from app.models import (
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 1
+ARCHIVE_FORMAT_VERSION = 2
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -395,17 +395,21 @@ ARCHIVE_TABLES = (
         "reference_works",
         (
             "id",
-            "project_id",
             "title",
             "source_filename",
             "source_format",
             "rights_basis",
             "total_characters",
             "segment_target_characters",
+            "content_sha256",
+            "source_encoding",
+            "encoding_confidence",
+            "import_state",
+            "duplicate_of_id",
             "created_at",
+            "updated_at",
         ),
-        "project_id = ?",
-        (("project_id", "projects", False),),
+        "id IN (SELECT reference_work_id FROM project_reference_works WHERE project_id = ?)",
     ),
     ArchiveTable(
         "reference_segments",
@@ -421,7 +425,7 @@ ARCHIVE_TABLES = (
             "content",
             "created_at",
         ),
-        "reference_work_id IN (SELECT id FROM reference_works WHERE project_id = ?)",
+        "reference_work_id IN (SELECT reference_work_id FROM project_reference_works WHERE project_id = ?)",
         (("reference_work_id", "reference_works", False),),
     ),
     ArchiveTable(
@@ -612,7 +616,7 @@ def _validate_business_rows(
                 card.ending,
             ):
                 referenced_ids.update(dimension.source_segment_ids)
-            if not referenced_ids <= segment_ids:
+            if segment_ids and not referenced_ids <= segment_ids:
                 raise InvalidProjectArchiveError("external_pattern_segment")
         for row in tables["reference_pattern_applications"]:
             selected_dimensions = _parse_json(row["selected_dimensions_json"])
@@ -686,7 +690,12 @@ class ProjectArchiveService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def export_project(self, project_id: str) -> dict[str, Any]:
+    def export_project(
+        self,
+        project_id: str,
+        *,
+        include_reference_assets: bool = False,
+    ) -> dict[str, Any]:
         with self.database.connect() as connection:
             project = connection.execute(
                 "SELECT id, title FROM projects WHERE id = ?",
@@ -696,12 +705,22 @@ class ProjectArchiveService:
                 raise NotFoundError(project_id)
             tables: dict[str, list[dict[str, Any]]] = {}
             for table in ARCHIVE_TABLES:
+                if (
+                    table.name in {"reference_works", "reference_segments"}
+                    and not include_reference_assets
+                ):
+                    tables[table.name] = []
+                    continue
                 columns = ", ".join(table.columns)
                 rows = connection.execute(
                     f"SELECT {columns} FROM {table.name} WHERE {table.scope} ORDER BY rowid",
                     (project_id,),
                 ).fetchall()
-                tables[table.name] = [dict(row) for row in rows]
+                table_rows = [dict(row) for row in rows]
+                if table.name == "reference_works":
+                    for row in table_rows:
+                        row["duplicate_of_id"] = None
+                tables[table.name] = table_rows
 
         payload: dict[str, Any] = {
             "format": ARCHIVE_FORMAT,
@@ -817,6 +836,20 @@ class ProjectArchiveService:
                         f"INSERT INTO {table.name} ({columns}) VALUES ({placeholders})",
                         [tuple(row[column] for column in table.columns) for row in remapped[table.name]],
                     )
+                connection.executemany(
+                    """
+                    INSERT INTO project_reference_works(project_id, reference_work_id, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    [
+                        (
+                            restored_project["id"],
+                            row["id"],
+                            restored_project["updated_at"],
+                        )
+                        for row in remapped["reference_works"]
+                    ],
+                )
         except sqlite3.Error as error:
             raise InvalidProjectArchiveError("invalid_table_values") from error
         project_id = restored_project["id"]
@@ -924,7 +957,7 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] != ARCHIVE_FORMAT_VERSION:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2}:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -943,6 +976,9 @@ class ProjectArchiveService:
         if not compare_digest(checksum, expected_checksum):
             raise InvalidProjectArchiveError("checksum_mismatch")
 
+        if value["format_version"] == 1:
+            value = self._upgrade_v1_archive(value)
+
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
             raise InvalidProjectArchiveError("invalid_tables")
@@ -955,4 +991,57 @@ class ProjectArchiveService:
             for row in rows:
                 if not isinstance(row, dict) or set(row) != set(table.columns):
                     raise InvalidProjectArchiveError("invalid_columns")
-        return value
+        return cast(dict[str, Any], value)
+
+    @staticmethod
+    def _upgrade_v1_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        work_rows = tables.get("reference_works")
+        segment_rows = tables.get("reference_segments")
+        if not isinstance(work_rows, list) or not isinstance(segment_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        contents_by_work: dict[str, str] = {}
+        for segment in sorted(
+            (row for row in segment_rows if isinstance(row, dict)),
+            key=lambda row: (str(row.get("reference_work_id", "")), int(row.get("ordinal", 0))),
+        ):
+            work_id = segment.get("reference_work_id")
+            content = segment.get("content")
+            if not isinstance(work_id, str) or not isinstance(content, str):
+                raise InvalidProjectArchiveError("invalid_reference_content")
+            contents_by_work[work_id] = contents_by_work.get(work_id, "") + content
+        upgraded_works: list[dict[str, Any]] = []
+        legacy_columns = {
+            "id", "project_id", "title", "source_filename", "source_format",
+            "rights_basis", "total_characters", "segment_target_characters", "created_at",
+        }
+        for work in work_rows:
+            if not isinstance(work, dict) or set(work) != legacy_columns:
+                raise InvalidProjectArchiveError("invalid_columns")
+            work_id = work["id"]
+            created_at = work["created_at"]
+            if not isinstance(work_id, str) or not isinstance(created_at, str):
+                raise InvalidProjectArchiveError("invalid_business_values")
+            upgraded_works.append({
+                key: item for key, item in work.items() if key != "project_id"
+            } | {
+                "content_sha256": hashlib.sha256(
+                    contents_by_work.get(work_id, "").encode("utf-8")
+                ).hexdigest(),
+                "source_encoding": "utf-8",
+                "encoding_confidence": 1.0,
+                "import_state": "ready",
+                "duplicate_of_id": None,
+                "updated_at": created_at,
+            })
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["reference_works"] = upgraded_works
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded

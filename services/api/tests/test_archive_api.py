@@ -72,12 +72,18 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
             },
         ).json()
 
-        response = client.get(f"/api/projects/{project_id}/export")
+        default_response = client.get(f"/api/projects/{project_id}/export")
+        response = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        )
 
     assert response.status_code == 200
     archive = response.json()
+    default_archive = default_response.json()
+    assert default_archive["tables"]["reference_works"] == []
+    assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 1
+    assert archive["format_version"] == 2
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -96,6 +102,58 @@ def test_export_returns_not_found_without_leaking_details(tmp_path: Path) -> Non
 
     assert response.status_code == 404
     assert response.json() == {"detail": "项目不存在"}
+
+
+def test_import_upgrades_v1_project_owned_reference_archive(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "旧归档迁移",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        client.post(
+            f"/api/projects/{project_id}/reference-works",
+            json={
+                "title": "旧版参考",
+                "source_filename": "legacy.txt",
+                "rights_basis": "self_owned",
+                "content": "旧版原文",
+                "segment_target_characters": 500_000,
+            },
+        )
+        archive = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        ).json()
+        archive["format_version"] = 1
+        archive["tables"]["reference_works"] = [
+            {
+                key: value
+                for key, value in work.items()
+                if key not in {
+                    "content_sha256", "source_encoding", "encoding_confidence",
+                    "import_state", "duplicate_of_id", "updated_at",
+                }
+            } | {"project_id": project_id}
+            for work in archive["tables"]["reference_works"]
+        ]
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201
+    assert restored.json()["reference_works"][0]["title"] == "旧版参考"
+    assert restored.json()["reference_works"][0]["segments"][0]["character_count"] == 4
 
 
 def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
@@ -155,7 +213,9 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             provider="openai",
             model="gpt-5.6",
         )
-        archive = client.get(f"/api/projects/{project_id}/export").json()
+        archive = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        ).json()
         pattern_card_id = str(uuid4())
         dimension = {
             "summary": "现实秩序发生松动",
