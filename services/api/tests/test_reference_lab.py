@@ -453,3 +453,267 @@ def test_author_applies_selected_pattern_dimensions_to_current_project(tmp_path:
         context["applied_reference_patterns"],
         ensure_ascii=False,
     )
+
+
+def _create_pattern_fixture(
+    client: TestClient,
+    *,
+    title: str,
+    source_phrase: str,
+) -> tuple[dict[str, object], dict[str, object], str]:
+    workspace = client.post(
+        "/api/projects",
+        json={
+            "title": title,
+            "genre": "urban_rebirth",
+            "rebirth_year": 1998,
+            "rebirth_location": "福建南平",
+        },
+    ).json()
+    project_id = workspace["project"]["id"]
+    segment_ids: list[str] = []
+    for index in range(2):
+        work = client.post(
+            f"/api/projects/{project_id}/reference-works",
+            json={
+                "title": f"{title}参考{index + 1}",
+                "source_filename": f"originality-{index + 1}.txt",
+                "rights_basis": "self_owned",
+                "content": f"第一章 开局\n{source_phrase}\n参考段{index + 1}",
+            },
+        ).json()
+        segment_ids.append(work["segments"][0]["id"])
+    card = client.post(
+        f"/api/projects/{project_id}/reference-synthesis-proposals",
+        json={
+            "selected_segment_ids": segment_ids,
+            "author_focus": "重点比较重生后的资源增长",
+            "confirm_external_processing": True,
+        },
+    ).json()
+    return workspace, card, project_id
+
+
+def _blueprint(
+    card: dict[str, object],
+    dimensions: list[str],
+    *,
+    era_summary: str | None = None,
+) -> dict[str, object]:
+    states: dict[str, object] = {}
+    for dimension in dimensions:
+        source = card[dimension]
+        assert isinstance(source, dict)
+        states[dimension] = {
+            "source": source,
+            "mode": "preserve",
+            "author_edits": "保留功能，重写事件。",
+            "generated_variant": {
+                "summary": (
+                    era_summary
+                    if dimension == "era" and era_summary is not None
+                    else source["summary"]
+                ),
+                "transferable_logic": source["transferable_logic"],
+            },
+            "version": 1,
+            "locked": False,
+            "named_entities": [],
+            "source_beats": [],
+            "key_beats": [],
+        }
+    return {
+        "dimensions": states,
+        "relationship": {
+            "source": card["relationship_recomposition"],
+            "mode": "reconstruct",
+            "author_edits": "人物关系完全重组。",
+            "generated_variant": "家庭伙伴与地方创业者形成互相制衡。",
+            "version": 1,
+            "locked": False,
+            "relationships": [],
+        },
+    }
+
+
+def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
+    tmp_path: Path,
+) -> None:
+    source_phrase = "雨夜里的旧码头藏着改变整座城市命运与所有人生选择的唯一密钥"
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "mozhou.db", ai_manager=manager)) as client:
+        workspace, card, project_id = _create_pattern_fixture(
+            client,
+            title="高风险蓝图",
+            source_phrase=source_phrase,
+        )
+        dimensions = ["era", "core_desire", "conflict_causality"]
+        blueprint = _blueprint(card, dimensions, era_summary=source_phrase)
+        applied = client.post(
+            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
+            json={
+                "selected_dimensions": dimensions,
+                "application_note": "进行风险验证",
+                "confirm_original_adaptation": True,
+                "blueprint": blueprint,
+            },
+        )
+        application = applied.json()
+        report = client.get(
+            f"/api/originality-reports/{application['latest_report_id']}"
+        )
+        chapter_id = workspace["chapters"][0]["id"]
+        sync_blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-proposals",
+            json={"expected_revision": 0, "author_intent": "开篇入局"},
+        )
+        preview_blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-preview",
+            json={"expected_revision": 0, "author_intent": "开篇入局"},
+        )
+        job_blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-jobs",
+            json={"expected_revision": 0, "author_intent": "开篇入局"},
+        )
+        draft_sync_blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-draft-runs",
+            json={"expected_revision": 0, "author_intent": "开篇入局"},
+        )
+        draft_preview_blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-draft-preview",
+            json={"expected_revision": 0, "author_intent": "开篇入局"},
+        )
+        draft_job_blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-draft-jobs",
+            json={"expected_revision": 0, "author_intent": "开篇入局"},
+        )
+        acknowledge_blocked = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+
+        changed_blueprint = application["blueprint"]
+        changed_blueprint["dimensions"]["era"].update({
+            "mode": "reconstruct",
+            "author_edits": "改为南平旧城的口碑网络机会。",
+            "generated_variant": {
+                "summary": "主角通过街坊需求发现小微服务窗口。",
+                "transferable_logic": "先验证本地需求，再扩展服务网络。",
+            },
+        })
+        updated = client.patch(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}",
+            json={
+                "blueprint": changed_blueprint,
+                "changed_dimensions": ["era"],
+                "relationship_changed": False,
+                "expected_revision": 0,
+            },
+        )
+        updated_report = client.get(
+            f"/api/originality-reports/{updated.json()['latest_report_id']}"
+        )
+        archive = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        ).json()
+        restored = client.post("/api/project-imports", json=archive)
+        restored_application = restored.json()["reference_pattern_applications"][0]
+        restored_report = client.get(
+            f"/api/originality-reports/{restored_application['latest_report_id']}"
+        )
+
+    assert applied.status_code == 201
+    assert application["risk_level"] == "high"
+    assert application["originality_status"] == "blocked"
+    assert report.status_code == 200
+    assert report.json()["score"] >= 70
+    assert source_phrase not in report.text
+    assert all(
+        item["evidence_sha256"] and "密钥" not in item["summary"]
+        for item in report.json()["evidence"]
+    )
+    assert {
+        sync_blocked.status_code,
+        preview_blocked.status_code,
+        job_blocked.status_code,
+        draft_sync_blocked.status_code,
+        draft_preview_blocked.status_code,
+        draft_job_blocked.status_code,
+    } == {409}
+    assert acknowledge_blocked.status_code == 409
+    assert updated.status_code == 200
+    assert updated.json()["originality_status"] == "passed"
+    assert updated.json()["blueprint"]["dimensions"]["era"]["version"] == 2
+    assert updated.json()["blueprint"]["dimensions"]["core_desire"]["version"] == 1
+    assert updated_report.json()["checked_dimensions"] == ["era"]
+    assert restored.status_code == 201
+    assert restored_application["originality_status"] == "passed"
+    assert restored_report.status_code == 200
+    assert restored_report.json()["application_id"] == restored_application["id"]
+    assert source_phrase not in restored_report.text
+
+
+def test_medium_risk_requires_report_acknowledgement_before_writing(
+    tmp_path: Path,
+) -> None:
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "mozhou.db", ai_manager=manager)) as client:
+        workspace, card, project_id = _create_pattern_fixture(
+            client,
+            title="中风险蓝图",
+            source_phrase="普通的时代机会参考内容",
+        )
+        dimensions = [
+            "era",
+            "core_desire",
+            "conflict_causality",
+            "resource_system",
+            "key_scene_sequence",
+            "ending",
+        ]
+        applied = client.post(
+            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
+            json={
+                "selected_dimensions": dimensions,
+                "application_note": "检查多维组合",
+                "confirm_original_adaptation": True,
+                "blueprint": _blueprint(card, dimensions),
+            },
+        ).json()
+        chapter_id = workspace["chapters"][0]["id"]
+        blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-preview",
+            json={"expected_revision": 0, "author_intent": ""},
+        )
+        premature_acknowledgement = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{applied['id']}/originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+        opened_report = client.get(
+            f"/api/originality-reports/{applied['latest_report_id']}"
+        )
+        acknowledged = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{applied['id']}/originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+        viewed_report = client.get(
+            f"/api/originality-reports/{applied['latest_report_id']}"
+        )
+        reloaded = client.get(f"/api/projects/{project_id}").json()
+
+    assert applied["risk_level"] == "medium"
+    assert applied["originality_status"] == "review_required"
+    assert blocked.status_code == 409
+    assert premature_acknowledgement.status_code == 409
+    assert opened_report.json()["viewed_at"] is not None
+    assert acknowledged.status_code == 200
+    assert acknowledged.json()["originality_status"] == "passed"
+    assert acknowledged.json()["revision"] == 0
+    assert viewed_report.json()["viewed_at"] is not None
+    reloaded_workspace = Workspace.model_validate(reloaded)
+    context = json.loads(build_chapter_context(
+        reloaded_workspace,
+        reloaded_workspace.chapters[0],
+        "",
+    ))
+    assert len(context["applied_reference_patterns"]) == 1

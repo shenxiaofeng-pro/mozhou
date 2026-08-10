@@ -329,12 +329,52 @@ CREATE TABLE IF NOT EXISTS reference_pattern_applications (
     dimensions_json TEXT NOT NULL CHECK(length(dimensions_json) BETWEEN 2 AND 20000),
     relationship_recomposition TEXT NOT NULL CHECK(length(relationship_recomposition) BETWEEN 1 AND 1200),
     application_note TEXT NOT NULL CHECK(length(application_note) <= 1000),
+    blueprint_json TEXT NOT NULL CHECK(length(blueprint_json) BETWEEN 2 AND 100000),
+    originality_status TEXT NOT NULL CHECK(originality_status IN ('needs_check', 'blocked', 'review_required', 'passed')),
+    risk_level TEXT CHECK(risk_level IS NULL OR risk_level IN ('low', 'medium', 'high')),
+    latest_report_id TEXT,
+    threshold_version TEXT CHECK(threshold_version IS NULL OR length(threshold_version) BETWEEN 1 AND 80),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(project_id, pattern_card_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_reference_pattern_applications_project_created
 ON reference_pattern_applications(project_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS reference_blueprint_versions (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES reference_pattern_applications(id) ON DELETE CASCADE,
+    blueprint_revision INTEGER NOT NULL CHECK(blueprint_revision >= 0),
+    blueprint_json TEXT NOT NULL CHECK(length(blueprint_json) BETWEEN 2 AND 100000),
+    changed_dimensions_json TEXT NOT NULL CHECK(length(changed_dimensions_json) BETWEEN 2 AND 500),
+    relationship_changed INTEGER NOT NULL CHECK(relationship_changed IN (0, 1)),
+    created_at TEXT NOT NULL,
+    UNIQUE(application_id, blueprint_revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reference_blueprint_versions_application
+ON reference_blueprint_versions(application_id, blueprint_revision DESC);
+
+CREATE TABLE IF NOT EXISTS originality_reports (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES reference_pattern_applications(id) ON DELETE CASCADE,
+    blueprint_revision INTEGER NOT NULL CHECK(blueprint_revision >= 0),
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high')),
+    score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 100),
+    threshold_version TEXT NOT NULL CHECK(length(threshold_version) BETWEEN 1 AND 80),
+    checked_dimensions_json TEXT NOT NULL CHECK(length(checked_dimensions_json) BETWEEN 2 AND 500),
+    evidence_json TEXT NOT NULL CHECK(length(evidence_json) BETWEEN 2 AND 50000),
+    source_segment_ids_json TEXT NOT NULL CHECK(length(source_segment_ids_json) BETWEEN 2 AND 5000),
+    input_sha256 TEXT NOT NULL CHECK(length(input_sha256) = 64),
+    viewed_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(application_id, blueprint_revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_originality_reports_application
+ON originality_reports(application_id, blueprint_revision DESC);
 
 CREATE TABLE IF NOT EXISTS ai_provider_profiles (
     id TEXT PRIMARY KEY,

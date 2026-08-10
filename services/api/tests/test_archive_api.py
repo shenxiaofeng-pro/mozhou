@@ -33,6 +33,8 @@ ARCHIVE_TABLES = {
     "reference_segments",
     "reference_pattern_cards",
     "reference_pattern_applications",
+    "reference_blueprint_versions",
+    "originality_reports",
 }
 
 
@@ -84,7 +86,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 2
+    assert archive["format_version"] == 3
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -307,8 +309,37 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             "source_job_id": source_job.id,
             "created_at": archive["exported_at"],
         })
+        application_id = str(uuid4())
+        blueprint = {
+            "dimensions": {
+                "era": {
+                    "source": dimension,
+                    "mode": "preserve",
+                    "author_edits": "只保留抽象因果",
+                    "generated_variant": {
+                        "summary": "现实秩序发生松动",
+                        "transferable_logic": "先给主角一个可验证的小窗口",
+                    },
+                    "version": 1,
+                    "locked": False,
+                    "named_entities": [],
+                    "source_beats": [],
+                    "key_beats": [],
+                }
+            },
+            "relationship": {
+                "source": "将原关系重组为师徒竞争",
+                "mode": "preserve",
+                "author_edits": "只保留抽象因果",
+                "generated_variant": "将原关系重组为师徒竞争",
+                "version": 1,
+                "locked": False,
+                "relationships": [],
+            },
+        }
+        blueprint_json = json.dumps(blueprint, ensure_ascii=False)
         archive["tables"]["reference_pattern_applications"].append({
-            "id": str(uuid4()),
+            "id": application_id,
             "project_id": project_id,
             "pattern_card_id": pattern_card_id,
             "selected_dimensions_json": json.dumps(["era"]),
@@ -320,6 +351,22 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             }, ensure_ascii=False),
             "relationship_recomposition": "将原关系重组为师徒竞争",
             "application_note": "只保留抽象因果",
+            "blueprint_json": blueprint_json,
+            "originality_status": "needs_check",
+            "risk_level": None,
+            "latest_report_id": None,
+            "threshold_version": None,
+            "revision": 0,
+            "created_at": archive["exported_at"],
+            "updated_at": archive["exported_at"],
+        })
+        archive["tables"]["reference_blueprint_versions"].append({
+            "id": str(uuid4()),
+            "application_id": application_id,
+            "blueprint_revision": 0,
+            "blueprint_json": blueprint_json,
+            "changed_dimensions_json": json.dumps(["era"]),
+            "relationship_changed": 1,
             "created_at": archive["exported_at"],
         })
         unsigned = dict(archive)

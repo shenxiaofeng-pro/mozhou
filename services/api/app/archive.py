@@ -21,8 +21,10 @@ from app.models import (
     FutureKnowledge,
     GenerationRun,
     GenerationState,
+    OriginalityReport,
     Project,
     RecoveryPointSummary,
+    ReferenceBlueprintState,
     ReferencePatternApplication,
     ReferencePatternCard,
     ReferenceSegment,
@@ -34,10 +36,11 @@ from app.models import (
     StoryThread,
     TimelineEvent,
 )
+from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 2
+ARCHIVE_FORMAT_VERSION = 3
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -494,14 +497,61 @@ ARCHIVE_TABLES = (
             "dimensions_json",
             "relationship_recomposition",
             "application_note",
+            "blueprint_json",
+            "originality_status",
+            "risk_level",
+            "latest_report_id",
+            "threshold_version",
+            "revision",
             "created_at",
+            "updated_at",
         ),
         "project_id = ?",
         (
             ("project_id", "projects", False),
             ("pattern_card_id", "reference_pattern_cards", False),
+            ("latest_report_id", "originality_reports", True),
         ),
-        ("selected_dimensions_json", "dimensions_json"),
+        ("selected_dimensions_json", "dimensions_json", "blueprint_json"),
+    ),
+    ArchiveTable(
+        "reference_blueprint_versions",
+        (
+            "id",
+            "application_id",
+            "blueprint_revision",
+            "blueprint_json",
+            "changed_dimensions_json",
+            "relationship_changed",
+            "created_at",
+        ),
+        "application_id IN (SELECT id FROM reference_pattern_applications WHERE project_id = ?)",
+        (("application_id", "reference_pattern_applications", False),),
+        ("blueprint_json", "changed_dimensions_json"),
+    ),
+    ArchiveTable(
+        "originality_reports",
+        (
+            "id",
+            "application_id",
+            "blueprint_revision",
+            "risk_level",
+            "score",
+            "threshold_version",
+            "checked_dimensions_json",
+            "evidence_json",
+            "source_segment_ids_json",
+            "input_sha256",
+            "viewed_at",
+            "created_at",
+        ),
+        "application_id IN (SELECT id FROM reference_pattern_applications WHERE project_id = ?)",
+        (("application_id", "reference_pattern_applications", False),),
+        (
+            "checked_dimensions_json",
+            "evidence_json",
+            "source_segment_ids_json",
+        ),
     ),
 )
 
@@ -674,11 +724,38 @@ def _validate_business_rows(
         for row in tables["reference_pattern_applications"]:
             selected_dimensions = _parse_json(row["selected_dimensions_json"])
             dimensions = _parse_json(row["dimensions_json"])
+            blueprint = _parse_json(row["blueprint_json"])
             ReferencePatternApplication.model_validate(
                 {
                     **row,
                     "selected_dimensions": selected_dimensions,
                     "dimensions": dimensions,
+                    "blueprint": blueprint,
+                }
+            )
+        for row in tables["reference_blueprint_versions"]:
+            blueprint = _parse_json(row["blueprint_json"])
+            changed_dimensions = _parse_json(row["changed_dimensions_json"])
+            state = ReferenceBlueprintState.model_validate(blueprint)
+            if (
+                not isinstance(changed_dimensions, list)
+                or not set(changed_dimensions) <= {
+                    dimension.value for dimension in state.dimensions
+                }
+                or row["relationship_changed"] not in {0, 1}
+            ):
+                raise InvalidProjectArchiveError("invalid_blueprint_version")
+        for row in tables["originality_reports"]:
+            checked_dimensions = _parse_json(row["checked_dimensions_json"])
+            evidence = _parse_json(row["evidence_json"])
+            source_segment_ids = _parse_json(row["source_segment_ids_json"])
+            OriginalityReport.model_validate(
+                {
+                    **row,
+                    "checked_dimensions": checked_dimensions,
+                    "evidence": evidence,
+                    "source_segment_ids": source_segment_ids,
+                    "legal_notice": LEGAL_NOTICE,
                 }
             )
 
@@ -722,6 +799,7 @@ def _validate_business_rows(
             "heartbeat_at",
             "started_at",
             "completed_at",
+            "viewed_at",
         }
         for table in ARCHIVE_TABLES:
             for row in tables[table.name]:
@@ -1016,7 +1094,7 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3}:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1037,6 +1115,8 @@ class ProjectArchiveService:
 
         if value["format_version"] == 1:
             value = self._upgrade_v1_archive(value)
+        if value["format_version"] == 2:
+            value = self._upgrade_v2_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1120,6 +1200,113 @@ class ProjectArchiveService:
             for row in source_card_rows
         ]
         upgraded_tables["reference_works"] = upgraded_works
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 2
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v2_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        application_rows = tables.get("reference_pattern_applications")
+        card_rows = tables.get("reference_pattern_cards")
+        if not isinstance(application_rows, list) or not isinstance(card_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        proposals: dict[str, dict[str, Any]] = {}
+        for card in card_rows:
+            if not isinstance(card, dict):
+                raise InvalidProjectArchiveError("invalid_columns")
+            raw_proposal = card.get("proposal_json")
+            if not isinstance(raw_proposal, (bytes, str)):
+                raise InvalidProjectArchiveError("invalid_pattern_card_json")
+            proposal = _parse_json(raw_proposal)
+            if not isinstance(card.get("id"), str) or not isinstance(proposal, dict):
+                raise InvalidProjectArchiveError("invalid_pattern_card_json")
+            proposals[card["id"]] = proposal
+
+        upgraded_applications: list[dict[str, Any]] = []
+        versions: list[dict[str, Any]] = []
+        expected_columns = {
+            "id", "project_id", "pattern_card_id", "selected_dimensions_json",
+            "dimensions_json", "relationship_recomposition", "application_note",
+            "created_at",
+        }
+        for row in application_rows:
+            if not isinstance(row, dict) or set(row) != expected_columns:
+                raise InvalidProjectArchiveError("invalid_columns")
+            selected = _parse_json(row["selected_dimensions_json"])
+            dimensions = _parse_json(row["dimensions_json"])
+            proposal = proposals.get(row["pattern_card_id"])
+            if (
+                not isinstance(selected, list)
+                or not isinstance(dimensions, dict)
+                or not isinstance(proposal, dict)
+                or not all(
+                    isinstance(name, str)
+                    and name in proposal
+                    and name in dimensions
+                    for name in selected
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_legacy_blueprint")
+            blueprint = {
+                "dimensions": {
+                    name: {
+                        "source": proposal[name],
+                        "mode": "preserve",
+                        "author_edits": row["application_note"],
+                        "generated_variant": dimensions[name],
+                        "version": 1,
+                        "locked": False,
+                        "named_entities": [],
+                        "source_beats": [],
+                        "key_beats": [],
+                    }
+                    for name in selected
+                },
+                "relationship": {
+                    "source": proposal.get("relationship_recomposition", "人物关系待重组"),
+                    "mode": "preserve",
+                    "author_edits": row["application_note"],
+                    "generated_variant": row["relationship_recomposition"],
+                    "version": 1,
+                    "locked": False,
+                    "relationships": [],
+                },
+            }
+            ReferenceBlueprintState.model_validate(blueprint)
+            blueprint_json = json.dumps(
+                blueprint, ensure_ascii=False, separators=(",", ":")
+            )
+            upgraded_applications.append({
+                **row,
+                "blueprint_json": blueprint_json,
+                "originality_status": "needs_check",
+                "risk_level": None,
+                "latest_report_id": None,
+                "threshold_version": None,
+                "revision": 0,
+                "updated_at": row["created_at"],
+            })
+            versions.append({
+                "id": str(uuid4()),
+                "application_id": row["id"],
+                "blueprint_revision": 0,
+                "blueprint_json": blueprint_json,
+                "changed_dimensions_json": row["selected_dimensions_json"],
+                "relationship_changed": 1,
+                "created_at": row["created_at"],
+            })
+
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["reference_pattern_applications"] = upgraded_applications
+        upgraded_tables["reference_blueprint_versions"] = versions
+        upgraded_tables["originality_reports"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

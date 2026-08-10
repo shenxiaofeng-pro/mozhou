@@ -15,7 +15,14 @@ from app.context.models import (
     ContextTier,
     ContextTierUsage,
 )
-from app.models import Chapter, KnowledgeStatus, StoryThreadStatus, TimelineLayer, Workspace
+from app.models import (
+    Chapter,
+    KnowledgeStatus,
+    OriginalityStatus,
+    StoryThreadStatus,
+    TimelineLayer,
+    Workspace,
+)
 
 CONTEXT_COMPILER_VERSION = "rule-compiler-v1"
 
@@ -609,6 +616,7 @@ class ContextCompiler:
             ))
 
         for application in workspace.reference_pattern_applications:
+            passed = application.originality_status == OriginalityStatus.PASSED
             candidates.append(self._candidate(
                 item_id=f"blueprint:{application.id}",
                 kind=ContextItemKind.APPROVED_BLUEPRINT,
@@ -630,6 +638,11 @@ class ContextCompiler:
                 source_id=application.id,
                 source_label=f"模式卡 {application.pattern_card_id}",
                 updated_at=application.created_at,
+                force_exclusion=(
+                    None
+                    if passed
+                    else "蓝图尚未通过当前版本的原创性门禁"
+                ),
             ))
         return candidates, conflict_notes
 

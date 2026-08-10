@@ -33,6 +33,7 @@ from app.models import (
     Chapter,
     ChapterStatus,
     GenerationRun,
+    OriginalityStatus,
     Workspace,
 )
 from app.providers import (
@@ -48,6 +49,7 @@ from app.providers import (
 from app.repository import (
     InvalidChapterStateError,
     NotFoundError,
+    OriginalityGateBlockedError,
     ProjectRepository,
     StaleRevisionError,
 )
@@ -87,7 +89,10 @@ def _chapter_data_types(workspace: Workspace, chapter: Chapter) -> list[str]:
         data_types.append("时间线与未来知识")
     if any(card.confirmed for card in workspace.source_cards):
         data_types.append("已确认现实资料")
-    if workspace.reference_pattern_applications:
+    if any(
+        application.originality_status == OriginalityStatus.PASSED
+        for application in workspace.reference_pattern_applications
+    ):
         data_types.append("已应用拆书蓝图")
     return data_types
 
@@ -725,6 +730,11 @@ class ChapterJobService:
             raise StaleRevisionError(str(chapter.revision))
         if chapter.status not in {ChapterStatus.PLANNED, ChapterStatus.DRAFTED}:
             raise InvalidChapterStateError(chapter.status.value)
+        if any(
+            application.originality_status != OriginalityStatus.PASSED
+            for application in workspace.reference_pattern_applications
+        ):
+            raise OriginalityGateBlockedError("reference_blueprint_not_passed")
         if require_brief and not all(
             getattr(chapter, field).strip()
             for field in ("opening_hook", "state_change", "ending_cliffhanger")

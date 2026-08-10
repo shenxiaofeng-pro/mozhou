@@ -57,6 +57,21 @@ export type ReferencePatternDimension =
   | 'key_scene_sequence'
   | 'ending'
 
+export type BlueprintMode = 'preserve' | 'adjust' | 'reconstruct'
+
+export type BlueprintEntityKind = 'character' | 'location' | 'organization' | 'proper_noun'
+
+export type OriginalityRiskLevel = 'low' | 'medium' | 'high'
+
+export type OriginalityStatus = 'needs_check' | 'blocked' | 'review_required' | 'passed'
+
+export type OriginalitySignal =
+  | 'phrase_overlap'
+  | 'proper_noun'
+  | 'character_combination'
+  | 'beat_sequence'
+  | 'multi_dimension'
+
 export type AiProvider = 'unavailable' | 'openai' | 'openai_compatible'
 
 export type ContinuitySeverity = 'warning' | 'info'
@@ -92,7 +107,7 @@ export interface Project {
 
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1 | 2
+  format_version: 1 | 2 | 3
   exported_at: string
   source_project_id: string
   source_project_title: string
@@ -687,6 +702,73 @@ export interface AppliedReferenceDimension {
   transferable_logic: string
 }
 
+export interface BlueprintNamedEntity {
+  kind: BlueprintEntityKind
+  name: string
+  function: string
+}
+
+export interface BlueprintRelationship {
+  left_role: string
+  right_role: string
+  relation: string
+  notes: string
+}
+
+export interface BlueprintDimensionState {
+  source: ReferenceDimensionSynthesis
+  mode: BlueprintMode
+  author_edits: string
+  generated_variant: AppliedReferenceDimension
+  version: number
+  locked: boolean
+  named_entities: BlueprintNamedEntity[]
+  source_beats: string[]
+  key_beats: string[]
+}
+
+export interface BlueprintRelationshipState {
+  source: string
+  mode: BlueprintMode
+  author_edits: string
+  generated_variant: string
+  version: number
+  locked: boolean
+  relationships: BlueprintRelationship[]
+}
+
+export interface ReferenceBlueprintState {
+  dimensions: Partial<Record<ReferencePatternDimension, BlueprintDimensionState>>
+  relationship: BlueprintRelationshipState
+}
+
+export interface OriginalityEvidence {
+  signal: OriginalitySignal
+  score: number
+  summary: string
+  dimension: ReferencePatternDimension | null
+  source_segment_id: string | null
+  source_character_start: number | null
+  source_character_end: number | null
+  evidence_sha256: string
+}
+
+export interface OriginalityReport {
+  id: string
+  application_id: string
+  blueprint_revision: number
+  risk_level: OriginalityRiskLevel
+  score: number
+  threshold_version: string
+  checked_dimensions: ReferencePatternDimension[]
+  evidence: OriginalityEvidence[]
+  source_segment_ids: string[]
+  input_sha256: string
+  legal_notice: string
+  viewed_at: string | null
+  created_at: string
+}
+
 export interface ReferencePatternApplication {
   id: string
   project_id: string
@@ -695,13 +777,32 @@ export interface ReferencePatternApplication {
   dimensions: Partial<Record<ReferencePatternDimension, AppliedReferenceDimension>>
   relationship_recomposition: string
   application_note: string
+  blueprint: ReferenceBlueprintState | null
+  originality_status: OriginalityStatus
+  risk_level: OriginalityRiskLevel | null
+  latest_report_id: string | null
+  threshold_version: string | null
+  revision: number
   created_at: string
+  updated_at: string | null
 }
 
 export interface ApplyReferencePatternInput {
   selected_dimensions: ReferencePatternDimension[]
   application_note: string
   confirm_original_adaptation: boolean
+  blueprint?: ReferenceBlueprintState
+}
+
+export interface UpdateReferenceBlueprintInput {
+  blueprint: ReferenceBlueprintState
+  changed_dimensions: ReferencePatternDimension[]
+  relationship_changed: boolean
+  expected_revision: number
+}
+
+export interface AcknowledgeOriginalityReportInput {
+  expected_revision: number
 }
 
 export interface UpdateChapterInput {

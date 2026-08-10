@@ -5,6 +5,7 @@ import type {
   JobDetail,
   JobKind,
   ModelProfile,
+  ReferenceBlueprintState,
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
@@ -1540,18 +1541,89 @@ describe('App', () => {
       reference_works: [existingWork, importedWork],
       reference_pattern_cards: [patternCard],
     }))
-    const applyPattern = vi.spyOn(api, 'applyReferencePattern').mockResolvedValue({
+    const appliedDimensions = ['era', 'core_desire', 'conflict_causality', 'resource_system', 'key_scene_sequence'] as const
+    const appliedBlueprint: ReferenceBlueprintState = {
+      dimensions: Object.fromEntries(appliedDimensions.map((key) => [key, {
+        source: patternCard[key],
+        mode: 'adjust',
+        author_edits: '落到南平本地产业，人物关系全部重组。',
+        generated_variant: {
+          summary: patternCard[key].summary,
+          transferable_logic: patternCard[key].transferable_logic,
+        },
+        version: 1,
+        locked: false,
+        named_entities: [],
+        source_beats: [],
+        key_beats: [],
+      }])) as ReferenceBlueprintState['dimensions'],
+      relationship: {
+        source: patternCard.relationship_recomposition,
+        mode: 'reconstruct',
+        author_edits: '人物关系全部重组。',
+        generated_variant: '改为家庭伙伴与创业竞争者的三角制衡。',
+        version: 1,
+        locked: false,
+        relationships: [],
+      },
+    }
+    const patternApplication = {
       id: 'pattern-application-1',
       project_id: workspace.project.id,
       pattern_card_id: patternCard.id,
-      selected_dimensions: ['era', 'core_desire', 'conflict_causality', 'resource_system', 'key_scene_sequence'],
+      selected_dimensions: [...appliedDimensions],
       dimensions: {
         era: { summary: patternCard.era.summary, transferable_logic: patternCard.era.transferable_logic },
       },
       relationship_recomposition: patternCard.relationship_recomposition,
       application_note: '落到南平本地产业，人物关系全部重组。',
+      blueprint: appliedBlueprint,
+      originality_status: 'review_required' as const,
+      risk_level: 'medium' as const,
+      latest_report_id: 'originality-report-1',
+      threshold_version: 'originality-rules-v1',
+      revision: 0,
+      created_at: '2026-08-09T01:05:00Z',
+      updated_at: '2026-08-09T01:05:00Z',
+    }
+    const applyPattern = vi.spyOn(api, 'applyReferencePattern').mockResolvedValue(patternApplication)
+    vi.spyOn(api, 'getOriginalityReport').mockResolvedValue({
+      id: 'originality-report-1',
+      application_id: patternApplication.id,
+      blueprint_revision: 0,
+      risk_level: 'medium',
+      score: 35,
+      threshold_version: 'originality-rules-v1',
+      checked_dimensions: [...appliedDimensions],
+      evidence: [{
+        signal: 'multi_dimension',
+        score: 35,
+        summary: '最终组合保留了 5 个来源维度；需要作者明确确认。',
+        dimension: null,
+        source_segment_id: null,
+        source_character_start: null,
+        source_character_end: null,
+        evidence_sha256: 'd'.repeat(64),
+      }],
+      source_segment_ids: sourceSegmentIds,
+      input_sha256: 'e'.repeat(64),
+      legal_notice: '原创性风险提示用于创作风控，不是法律结论。',
+      viewed_at: null,
       created_at: '2026-08-09T01:05:00Z',
     })
+    const acknowledgeReport = vi.spyOn(api, 'acknowledgeOriginalityReport').mockResolvedValue({
+      ...patternApplication,
+      originality_status: 'passed',
+    })
+    const updateBlueprint = vi.spyOn(api, 'updateReferenceBlueprint').mockImplementation(
+      async (_projectId, _applicationId, input) => ({
+        ...patternApplication,
+        blueprint: input.blueprint,
+        originality_status: 'passed',
+        risk_level: 'low',
+        revision: 1,
+      }),
+    )
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
@@ -1602,6 +1674,30 @@ describe('App', () => {
       confirm_original_adaptation: true,
     })
     expect(await screen.findByText('已应用到当前作品')).toBeVisible()
+    expect(screen.getByText('需查看完整报告并显式确认，当前不传给 AI。')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '查看原创性报告' }))
+    const originalityReport = await screen.findByLabelText('原创性报告')
+    expect(originalityReport).toHaveTextContent('35/100')
+    expect(within(originalityReport).getByText('原创性风险提示用于创作风控，不是法律结论。')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '我已查看报告，确认继续使用这份蓝图' }))
+    expect(acknowledgeReport).toHaveBeenCalledWith(
+      workspace.project.id,
+      patternApplication.id,
+      { expected_revision: 0 },
+    )
+    const eraSummary = screen.getByLabelText('时代候选蓝图摘要')
+    await user.clear(eraSummary)
+    await user.type(eraSummary, '南平旧城的口碑服务网络起步。')
+    await user.click(screen.getByRole('button', { name: '保存并重检 1 项' }))
+    expect(updateBlueprint).toHaveBeenCalledWith(
+      workspace.project.id,
+      patternApplication.id,
+      expect.objectContaining({
+        changed_dimensions: ['era'],
+        relationship_changed: false,
+        expected_revision: 0,
+      }),
+    )
     await user.click(screen.getByRole('button', { name: '返回创作台' }))
     expect(screen.getByLabelText('章节正文')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '先拆成规律，再带回你的书' })).not.toBeInTheDocument()

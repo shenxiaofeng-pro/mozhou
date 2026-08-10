@@ -102,6 +102,40 @@ class ReferencePatternDimension(StrEnum):
     ENDING = "ending"
 
 
+class BlueprintMode(StrEnum):
+    PRESERVE = "preserve"
+    ADJUST = "adjust"
+    RECONSTRUCT = "reconstruct"
+
+
+class BlueprintEntityKind(StrEnum):
+    CHARACTER = "character"
+    LOCATION = "location"
+    ORGANIZATION = "organization"
+    PROPER_NOUN = "proper_noun"
+
+
+class OriginalityRiskLevel(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class OriginalityStatus(StrEnum):
+    NEEDS_CHECK = "needs_check"
+    BLOCKED = "blocked"
+    REVIEW_REQUIRED = "review_required"
+    PASSED = "passed"
+
+
+class OriginalitySignal(StrEnum):
+    PHRASE_OVERLAP = "phrase_overlap"
+    PROPER_NOUN = "proper_noun"
+    CHARACTER_COMBINATION = "character_combination"
+    BEAT_SEQUENCE = "beat_sequence"
+    MULTI_DIMENSION = "multi_dimension"
+
+
 class ContinuitySeverity(StrEnum):
     WARNING = "warning"
     INFO = "info"
@@ -617,8 +651,113 @@ class ReferencePatternCard(ReferenceSynthesisProposal):
 
 
 class AppliedReferenceDimension(BaseModel):
-    summary: str
-    transferable_logic: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    summary: str = Field(min_length=1, max_length=1200)
+    transferable_logic: str = Field(min_length=1, max_length=1200)
+
+
+class BlueprintNamedEntity(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    kind: BlueprintEntityKind
+    name: str = Field(min_length=1, max_length=80)
+    function: str = Field(default="", max_length=300)
+
+    @field_validator("name", "function")
+    @classmethod
+    def reject_entity_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("蓝图实体不能包含空字节")
+        return value
+
+
+class BlueprintRelationship(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    left_role: str = Field(min_length=1, max_length=80)
+    right_role: str = Field(min_length=1, max_length=80)
+    relation: str = Field(min_length=1, max_length=120)
+    notes: str = Field(default="", max_length=300)
+
+
+class BlueprintDimensionState(BaseModel):
+    source: ReferenceDimensionSynthesis
+    mode: BlueprintMode
+    author_edits: str = Field(default="", max_length=1200)
+    generated_variant: AppliedReferenceDimension
+    version: int = Field(default=1, ge=1)
+    locked: bool = False
+    named_entities: list[BlueprintNamedEntity] = Field(default_factory=list, max_length=20)
+    source_beats: list[str] = Field(default_factory=list, max_length=20)
+    key_beats: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("author_edits")
+    @classmethod
+    def reject_dimension_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("蓝图编辑不能包含空字节")
+        return value
+
+    @field_validator("source_beats", "key_beats")
+    @classmethod
+    def validate_blueprint_beats(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 240 or "\x00" in item for item in value):
+            raise ValueError("场景节拍格式无效")
+        return value
+
+
+class BlueprintRelationshipState(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    source: str = Field(min_length=1, max_length=1200)
+    mode: BlueprintMode
+    author_edits: str = Field(default="", max_length=1200)
+    generated_variant: str = Field(min_length=1, max_length=1200)
+    version: int = Field(default=1, ge=1)
+    locked: bool = False
+    relationships: list[BlueprintRelationship] = Field(default_factory=list, max_length=20)
+
+
+class ReferenceBlueprintState(BaseModel):
+    dimensions: dict[ReferencePatternDimension, BlueprintDimensionState]
+    relationship: BlueprintRelationshipState
+
+    @model_validator(mode="after")
+    def require_dimensions(self) -> ReferenceBlueprintState:
+        if not self.dimensions:
+            raise ValueError("蓝图至少需要一个结构维度")
+        return self
+
+
+class OriginalityEvidence(BaseModel):
+    signal: OriginalitySignal
+    score: int = Field(ge=0, le=100)
+    summary: str = Field(min_length=1, max_length=300)
+    dimension: ReferencePatternDimension | None = None
+    source_segment_id: str | None = None
+    source_character_start: int | None = Field(default=None, ge=0)
+    source_character_end: int | None = Field(default=None, ge=0)
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class OriginalityAssessment(BaseModel):
+    risk_level: OriginalityRiskLevel
+    score: int = Field(ge=0, le=100)
+    threshold_version: str = Field(min_length=1, max_length=80)
+    checked_dimensions: list[ReferencePatternDimension]
+    evidence: list[OriginalityEvidence] = Field(max_length=30)
+    source_segment_ids: list[str] = Field(max_length=72)
+    input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    legal_notice: str = Field(min_length=1, max_length=200)
+
+
+class OriginalityReport(OriginalityAssessment):
+    id: str
+    application_id: str
+    blueprint_revision: int = Field(ge=0)
+    viewed_at: str | None = None
+    created_at: str
 
 
 class ReferencePatternApplication(BaseModel):
@@ -629,7 +768,14 @@ class ReferencePatternApplication(BaseModel):
     dimensions: dict[ReferencePatternDimension, AppliedReferenceDimension]
     relationship_recomposition: str
     application_note: str
+    blueprint: ReferenceBlueprintState | None = None
+    originality_status: OriginalityStatus = OriginalityStatus.NEEDS_CHECK
+    risk_level: OriginalityRiskLevel | None = None
+    latest_report_id: str | None = None
+    threshold_version: str | None = None
+    revision: int = Field(default=0, ge=0)
     created_at: str
+    updated_at: str | None = None
 
 
 class ApplyReferencePatternRequest(BaseModel):
@@ -638,6 +784,7 @@ class ApplyReferencePatternRequest(BaseModel):
     selected_dimensions: list[ReferencePatternDimension] = Field(min_length=1, max_length=6)
     application_note: str = Field(default="", max_length=1000)
     confirm_original_adaptation: bool
+    blueprint: ReferenceBlueprintState | None = None
 
     @field_validator("selected_dimensions")
     @classmethod
@@ -662,6 +809,28 @@ class ApplyReferencePatternRequest(BaseModel):
         if not value:
             raise ValueError("必须确认原创改编边界")
         return value
+
+
+class UpdateReferenceBlueprintRequest(BaseModel):
+    blueprint: ReferenceBlueprintState
+    changed_dimensions: list[ReferencePatternDimension] = Field(max_length=6)
+    relationship_changed: bool = False
+    expected_revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_change_scope(self) -> UpdateReferenceBlueprintRequest:
+        changed = set(self.changed_dimensions)
+        if len(changed) != len(self.changed_dimensions):
+            raise ValueError("蓝图变更维度不能重复")
+        if not changed and not self.relationship_changed:
+            raise ValueError("蓝图没有声明任何变更")
+        if not changed <= set(self.blueprint.dimensions):
+            raise ValueError("蓝图变更维度不存在")
+        return self
+
+
+class AcknowledgeOriginalityReportRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
 
 
 class Workspace(BaseModel):
