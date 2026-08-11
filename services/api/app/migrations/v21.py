@@ -26,7 +26,16 @@ def upgrade(connection: sqlite3.Connection, schema: str) -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            INSERT INTO source_documents_v21 SELECT * FROM source_documents;
+            INSERT INTO source_documents_v21 (
+                id, title, source_filename, source_format, source_sha256, content_sha256,
+                source_encoding, encoding_confidence, import_state, source_spans_json,
+                duplicate_of_id, content, created_at, updated_at
+            )
+            SELECT
+                id, title, source_filename, source_format, source_sha256, content_sha256,
+                source_encoding, encoding_confidence, import_state, source_spans_json,
+                duplicate_of_id, content, created_at, updated_at
+            FROM source_documents;
             DROP TABLE source_documents;
             ALTER TABLE source_documents_v21 RENAME TO source_documents;
             CREATE INDEX idx_source_documents_hash_created ON source_documents(content_sha256, created_at, id);
@@ -49,7 +58,18 @@ def upgrade(connection: sqlite3.Connection, schema: str) -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            INSERT INTO reference_works_v21 SELECT * FROM reference_works;
+            INSERT INTO reference_works_v21 (
+                id, title, source_filename, source_format, rights_basis, total_characters,
+                segment_target_characters, content_sha256, source_sha256, source_encoding,
+                encoding_confidence, import_state, source_spans_json, duplicate_of_id,
+                created_at, updated_at
+            )
+            SELECT
+                id, title, source_filename, source_format, rights_basis, total_characters,
+                segment_target_characters, content_sha256, source_sha256, source_encoding,
+                encoding_confidence, import_state, source_spans_json, duplicate_of_id,
+                created_at, updated_at
+            FROM reference_works;
             DROP TABLE reference_works;
             ALTER TABLE reference_works_v21 RENAME TO reference_works;
             CREATE INDEX idx_reference_works_hash_created ON reference_works(content_sha256, created_at, id);

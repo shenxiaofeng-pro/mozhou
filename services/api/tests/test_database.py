@@ -15,7 +15,7 @@ from app.database import (
     UnsupportedDatabaseVersionError,
 )
 from app.jobs import JobKind, JobRepository
-from app.migrations import MIGRATIONS, Migration, v9, v12
+from app.migrations import MIGRATIONS, Migration, v9, v12, v21
 from app.models import CreateProjectRequest, Genre
 from app.repository import ProjectRepository
 
@@ -378,6 +378,78 @@ def test_v9_migrates_project_reference_text_to_global_asset_without_loss() -> No
     assert tuple(migrated_link) == ("project-1", "work-1")
     assert migrated_content is not None
     assert tuple(migrated_content) == ("原文四字",)
+
+
+def test_v21_maps_populated_v20_document_columns_by_name() -> None:
+    """v10 appended reference provenance columns, so SELECT * would shift every later value."""
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            """
+            CREATE TABLE projects (id TEXT PRIMARY KEY);
+            CREATE TABLE chapters (id TEXT PRIMARY KEY);
+            CREATE TABLE story_entities (id TEXT PRIMARY KEY);
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE source_documents (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, source_filename TEXT NOT NULL,
+                source_format TEXT NOT NULL, source_sha256 TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL, source_encoding TEXT NOT NULL,
+                encoding_confidence REAL NOT NULL, import_state TEXT NOT NULL,
+                source_spans_json TEXT NOT NULL, duplicate_of_id TEXT, content TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE reference_works (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, source_filename TEXT NOT NULL,
+                source_format TEXT NOT NULL, rights_basis TEXT NOT NULL,
+                total_characters INTEGER NOT NULL, segment_target_characters INTEGER NOT NULL,
+                content_sha256 TEXT NOT NULL, source_encoding TEXT NOT NULL,
+                encoding_confidence REAL NOT NULL, import_state TEXT NOT NULL,
+                duplicate_of_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL, source_spans_json TEXT NOT NULL
+            );
+            INSERT INTO source_documents VALUES (
+                'document-1', '南平工业志', 'industry.pdf', 'pdf',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                'pdf-text', 1.0, 'ready', '[]', NULL, '每件成本十二元',
+                '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'
+            );
+            INSERT INTO reference_works VALUES (
+                'work-1', '厂城旧梦', 'factory.md', 'markdown', 'self_owned', 8, 500000,
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                'utf-8', 1.0, 'ready', NULL,
+                '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z',
+                'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '[]'
+            );
+            """
+        )
+
+        v21.upgrade(connection, SCHEMA)
+        document = connection.execute(
+            "SELECT source_format, source_encoding, import_state, content FROM source_documents"
+        ).fetchone()
+        work = connection.execute(
+            """SELECT source_format, source_sha256, source_encoding, encoding_confidence,
+                      import_state, source_spans_json, duplicate_of_id
+               FROM reference_works"""
+        ).fetchone()
+
+    assert document is not None
+    assert tuple(document) == ("pdf", "pdf-text", "ready", "每件成本十二元")
+    assert work is not None
+    assert tuple(work) == (
+        "markdown",
+        "d" * 64,
+        "utf-8",
+        1.0,
+        "ready",
+        "[]",
+        None,
+    )
 
 
 def test_v12_turns_legacy_application_into_unchecked_versioned_blueprint() -> None:
