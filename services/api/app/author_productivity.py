@@ -213,8 +213,9 @@ class AuthorProductivityService:
                 )
             )
         streak = 0
-        for item in reversed(calendar_days):
-            if item.net_characters <= 0:
+        streak_days = calendar_days[:-1] if calendar_days and calendar_days[-1].net_characters == 0 else calendar_days
+        for item in reversed(streak_days):
+            if item.net_characters == 0:
                 break
             streak += 1
         return WritingCalendar(

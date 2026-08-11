@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -70,6 +71,68 @@ def test_calendar_annotation_anchor_and_stale_detection(tmp_path: Path) -> None:
         calendar = client.get(f"/api/projects/{project_id}/writing-calendar").json()
         assert len(calendar["days"]) == 42
         assert calendar["total_net_characters"] == len("文字已完全重写。")
+
+
+def test_calendar_keeps_yesterday_streak_before_today_starts(tmp_path: Path) -> None:
+    database_path = tmp_path / "mozhou.db"
+    with TestClient(create_app(database_path)) as client:
+        project_id, chapter_id = _project(client)
+        first = client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": "甲", "expected_revision": 0},
+        ).json()
+        client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": "甲乙", "expected_revision": first["revision"]},
+        )
+        today = datetime.now(UTC).astimezone().date()
+        with Database(database_path).connect() as connection:
+            connection.execute(
+                "UPDATE chapter_versions SET created_at=? WHERE chapter_id=? AND content=?",
+                ((today - timedelta(days=2)).isoformat(), chapter_id, "甲"),
+            )
+            connection.execute(
+                "UPDATE chapter_versions SET created_at=? WHERE chapter_id=? AND content=?",
+                ((today - timedelta(days=1)).isoformat(), chapter_id, "甲乙"),
+            )
+            connection.commit()
+
+        calendar = client.get(f"/api/projects/{project_id}/writing-calendar").json()
+        assert calendar["days"][-1]["net_characters"] == 0
+        assert calendar["streak_days"] == 2
+
+
+def test_calendar_counts_negative_editing_day_in_creation_streak(tmp_path: Path) -> None:
+    database_path = tmp_path / "mozhou.db"
+    with TestClient(create_app(database_path)) as client:
+        project_id, chapter_id = _project(client)
+        first = client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": "甲", "expected_revision": 0},
+        ).json()
+        second = client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": "甲乙", "expected_revision": first["revision"]},
+        ).json()
+        client.patch(
+            f"/api/chapters/{chapter_id}",
+            json={"content": "甲", "expected_revision": second["revision"]},
+        )
+        today = datetime.now(UTC).astimezone().date()
+        with Database(database_path).connect() as connection:
+            connection.execute(
+                "UPDATE chapter_versions SET created_at=? WHERE id=(SELECT id FROM chapter_versions WHERE chapter_id=? AND content=? ORDER BY version_number LIMIT 1)",
+                ((today - timedelta(days=2)).isoformat(), chapter_id, "甲"),
+            )
+            connection.execute(
+                "UPDATE chapter_versions SET created_at=? WHERE chapter_id=? AND content=?",
+                ((today - timedelta(days=1)).isoformat(), chapter_id, "甲乙"),
+            )
+            connection.commit()
+
+        calendar = client.get(f"/api/projects/{project_id}/writing-calendar").json()
+        assert calendar["days"][-1]["net_characters"] == -1
+        assert calendar["streak_days"] == 3
 
 
 def test_idea_candidate_isolation_and_formal_graph_sources(tmp_path: Path) -> None:
