@@ -18,6 +18,7 @@
 - 东方玄幻/西方奇幻界面不再显示“必须重生”的文案，年份输入允许架空纪年。
 - 整书导演、章纲、正文和审校 Prompt 明确识别四种题材，并对玄幻检查力量体系/境界代价，对奇幻检查魔法规则/种族阵营/资源成本。
 - 封测模板新增东方玄幻和西方奇幻各一个十章起航方案。
+- 资料研究、双轨时间线和知识账本使用世界设定语境；剧情沙盘按项目题材提供东方宗门或西方王国模板。
 - 旧项目、schema v22 和归档 v10 无需数据迁移，现有测试全部保持通过。
 
 ## Tech Stack
@@ -44,6 +45,7 @@ services/api/app/models.py          # Genre 契约
 services/api/app/ai.py              # 题材感知 AI 指令
 services/api/app/context/           # 通用作品锚点与资料选择
 services/api/app/beta.py            # 四题材起航模板
+services/api/app/sandbox.py         # 四题材剧情沙盘模板
 apps/web/src/genre.ts               # 前端题材标签和锚点文案
 apps/web/src/components/            # 新建、导入、书架、工作区、导演和审校
 packages/contracts/src/index.ts     # TypeScript Genre 契约
@@ -72,7 +74,7 @@ export function getStoryAnchorLabels(genre: Genre) {
 - 契约测试：四个枚举值都能创建项目，未知题材仍返回 422。
 - 兼容测试：新题材项目归档/恢复保持 genre 和锚点字段；旧归档不变。
 - AI 测试：系统指令列出四题材，字段重生成白名单接受新枚举；示范模型对两个新题材输出对应场景。
-- UI 测试：新建表单显示四类，选择玄幻/奇幻后切换为故事纪年/起始地域并提交正确 payload；旧重生题材仍显示旧标签。
+- UI 测试：新建表单显示四类，选择玄幻/奇幻后切换为故事纪年/起始地域并提交正确 payload；研究台与剧情沙盘按题材切换；旧重生题材仍显示旧标签。
 - 完整验证：运行仓库统一 `pnpm run verify`，并在 1280/1040/760px 真实浏览器检查无横向溢出和控制台错误。
 
 ## Boundaries

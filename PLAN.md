@@ -1,7 +1,7 @@
 # 墨舟：网络文学创作 AI 工作台完整开发计划
 
-> 状态：M0–M23 已完成；M24–M27 东方玄幻/西方奇幻题材扩展于 2026-08-12 进入实施
-> 计划日期：2026-08-09，扩展日期：2026-08-11（AI 漫剧批次）
+> 状态：M0–M27 已完成；东方玄幻/西方奇幻题材扩展于 2026-08-12 验收完成
+> 计划日期：2026-08-09，扩展日期：2026-08-11（AI 漫剧批次）、2026-08-12（幻想题材批次）
 > 当前版本：0.2.0
 > 适用范围：本地优先的中文网文创作工作台，正式支持历史重生、都市重生、东方玄幻与西方奇幻
 > 实施约束：按里程碑增量实施；模型外发、文件解析和来源导入继续经过预览、确认与批准门
@@ -1482,7 +1482,7 @@ System Services
 - 风险：浏览器状态依赖真实付费模型。缓解：开发验收使用已存候选或测试适配器，禁止产生未确认费用。
 - 回滚：按 M18–M22 原子提交逐层回退；v22 数据先导出或恢复升级前备份。
 
-### M24：四题材契约与无损兼容
+### M24：四题材契约与无损兼容（已完成）
 
 #### 交付结果
 
@@ -1512,7 +1512,7 @@ System Services
 - 风险：字符串分支遗漏导致错误显示。缓解：共享 label helper 与穷尽 Record。
 - 回滚：移除新建入口但保留枚举读取能力，避免已创建项目变得不可恢复。
 
-### M25：题材感知 AI、上下文与审校
+### M25：题材感知 AI、上下文与审校（已完成）
 
 #### 交付结果
 
@@ -1543,16 +1543,17 @@ System Services
 - 风险：通用 Prompt 稀释原有重生专长。缓解：按 genre 明确列出不同检查维度。
 - 回滚：Prompt 可独立回退，数据契约不受影响。
 
-### M26：四题材 UI 与起航模板
+### M26：四题材 UI 与起航模板（已完成）
 
 #### 交付结果
 
 - 新建、旧稿导入、书架、工作区、拆书库、总导演和审校显示四题材正确文案。
 - 增加东方玄幻/西方奇幻十章模板，保留历史/都市/现实锚点模板。
+- 资料研究、时间线、知识账本与剧情沙盘切换为题材语境，并只展示当前题材可用模板。
 
 #### 涉及模块
 
-- `genre.ts`、CreateProjectForm、ManuscriptImportDialog、ProjectLibraryPage、WorkspaceShell、BookDirectorPanel、ReviewWorkbench、beta templates。
+- `genre.ts`、CreateProjectForm、ManuscriptImportDialog、ProjectLibraryPage、WorkspaceShell、BookDirectorPanel、ReviewWorkbench、ResearchWorkbenchPage、NarrativeSandboxDialog、beta/sandbox templates。
 
 #### 前置依赖
 
@@ -1573,7 +1574,7 @@ System Services
 - 风险：四选项挤压窄屏。缓解：桌面两列、窄屏单列并真实浏览器验证。
 - 回滚：共享 helper 和模板可独立回退，不删除项目数据。
 
-### M27：完整验证与产品文档
+### M27：完整验证与产品文档（已完成）
 
 #### 交付结果
 

@@ -2,19 +2,19 @@
 
 ## 东方玄幻与西方奇幻（M24–M27）
 
-- [ ] M24 四题材契约与无损兼容
+- [x] M24 四题材契约与无损兼容
   - Acceptance：创建/导入/查询/归档接受四题材，未知 genre 拒绝，旧库与 v10 归档不迁移。
   - Verify：API、契约和归档专项测试。
   - Files：models、contracts、archive tests。
-- [ ] M25 题材感知 AI、上下文与审校
+- [x] M25 题材感知 AI、上下文与审校
   - Acceptance：新题材不强加重生逻辑，东方玄幻检查修炼规则，西方奇幻检查魔法/阵营规则。
   - Verify：Prompt、假模型、导演、上下文和审校测试。
   - Files：ai、fake_model、context、continuity、review。
-- [ ] M26 四题材 UI 与起航模板
+- [x] M26 四题材 UI 与起航模板
   - Acceptance：所有创建/导入/显示入口支持四题材，非重生题材显示故事纪年/起始地域，两类新模板可用。
   - Verify：beta、CreateProjectForm 和共享题材 helper 测试；真实浏览器多视口。
   - Files：beta、genre.ts、相关 React 组件和测试。
-- [ ] M27 最终验收
+- [x] M27 最终验收
   - Acceptance：完整 verify、浏览器和文档通过，工作树干净。
   - Verify：`pnpm run verify`、安全扫描、1280/1040/760 浏览器。
 
