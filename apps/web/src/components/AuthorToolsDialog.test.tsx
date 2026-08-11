@@ -47,7 +47,7 @@ describe('AuthorToolsDialog', () => {
     expect(await screen.findByText('已准备：chapter_brief')).toBeInTheDocument()
   })
 
-  it('presents 42 days as six readable writing weeks with goal and editing states', async () => {
+  it('keeps the latest seven days prominent and compresses the previous 35 days', async () => {
     const days: WritingCalendar['days'] = Array.from({ length: 42 }, (_, index) => {
       const date = new Date(Date.UTC(2026, 6, index + 1)).toISOString().slice(0, 10)
       const netCharacters = index === 10 ? -280 : index === 41 ? 1200 : index % 5 === 0 ? 800 : 0
@@ -63,12 +63,17 @@ describe('AuthorToolsDialog', () => {
 
     render(<AuthorToolsDialog project={project} chapter={chapter} initialTab="calendar" selection={null} onClose={vi.fn()} />)
 
-    expect(await screen.findByRole('heading', { name: '六周码字轨迹' })).toBeInTheDocument()
-    const today = screen.getByText('今日净增').parentElement!
+    expect(await screen.findByRole('heading', { name: '码字节奏' })).toBeInTheDocument()
+    const today = screen.getByText('今日字数变化').parentElement!
     expect(within(today).getByText('+1,200')).toBeInTheDocument()
     expect(screen.getByText('达标天数')).toBeInTheDocument()
-    expect(screen.getAllByRole('listitem')).toHaveLength(42)
-    expect(screen.getByRole('listitem', { name: /7月11日 净删改/ })).toHaveAttribute('data-negative', 'true')
-    expect(screen.getByRole('listitem', { name: /8月11日 已达标/ })).toHaveAttribute('data-today', 'true')
+    expect(screen.getByText('近42天变化')).toBeInTheDocument()
+    const currentWeek = screen.getByRole('region', { name: '近 7 天' })
+    const history = screen.getByRole('region', { name: '过去 35 天' })
+    expect(within(currentWeek).getAllByRole('listitem')).toHaveLength(7)
+    expect(within(history).getAllByRole('listitem')).toHaveLength(35)
+    expect(within(currentWeek).getByText('今天')).toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: /7月11日 以修改为主/ })).toHaveAttribute('data-negative', 'true')
+    expect(screen.getByRole('listitem', { name: /8月11日 已达目标/ })).toHaveAttribute('data-today', 'true')
   })
 })

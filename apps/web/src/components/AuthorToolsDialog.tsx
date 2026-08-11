@@ -89,62 +89,79 @@ export function AuthorToolsDialog({ project, chapter, initialTab, selection, onC
 
 function CalendarView({ calendar }: { calendar: WritingCalendar }) {
   const weeks = Array.from({ length: Math.ceil(calendar.days.length / 7) }, (_, index) => calendar.days.slice(index * 7, index * 7 + 7))
+  const currentWeek = weeks.at(-1) ?? []
+  const historyWeeks = weeks.slice(0, -1).reverse()
   const today = calendar.days.at(-1)
   const goalDays = calendar.days.filter((day) => day.met_goal).length
   const activeDays = calendar.days.filter((day) => day.net_characters !== 0).length
   const formatCharacters = (value: number) => `${value > 0 ? '+' : ''}${value.toLocaleString('zh-CN')}`
-  const formatDate = (date: string) => {
-    const [, month, day] = date.split('-')
-    return `${Number(month)}月${Number(day)}日`
-  }
-  const weekday = (date: string) => ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(`${date}T00:00:00Z`).getUTCDay()]
+  const asUtcDate = (date: string) => new Date(`${date}T00:00:00Z`)
+  const formatDate = (date: string) => new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', timeZone: 'UTC' }).format(asUtcDate(date))
+  const formatCompactDate = (date: string) => new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', timeZone: 'UTC' }).format(asUtcDate(date))
+  const weekday = (date: string) => new Intl.DateTimeFormat('zh-CN', { weekday: 'short', timeZone: 'UTC' }).format(asUtcDate(date))
+  const dayStatus = (day: WritingCalendar['days'][number]) => day.met_goal ? '已达目标' : day.net_characters < 0 ? '以修改为主' : day.net_characters > 0 ? '写作中' : '未写作'
+  const timezone = /(?:CST|Shanghai|China)/i.test(calendar.timezone) ? '北京时间' : calendar.timezone
   const range = calendar.days.length ? `${formatDate(calendar.days[0].date)}—${formatDate(calendar.days.at(-1)!.date)}` : '尚无记录'
   const todayMessage = !today || today.net_characters === 0 ? '今天还没有落笔，先写下第一段。'
-    : today.net_characters < 0 ? `今天以删改为主，正文净变化 ${formatCharacters(today.net_characters)} 字。`
+    : today.net_characters < 0 ? `今天以修改为主，正文减少 ${Math.abs(today.net_characters).toLocaleString('zh-CN')} 字。`
     : `今天已完成 ${formatCharacters(today.net_characters)} 字，${today.met_goal ? '目标达成。' : '继续保持手感。'}`
 
   return <section className="writing-calendar">
     <header className="calendar-hero">
       <div className="calendar-heading">
-        <small>WRITING RHYTHM · {range}</small>
-        <h3>六周码字轨迹</h3>
+        <small>近 42 天 · {range}</small>
+        <h3>码字节奏</h3>
         <p>{todayMessage}</p>
       </div>
       <div className="calendar-today" data-state={today?.met_goal ? 'met' : today && today.net_characters < 0 ? 'negative' : 'open'}>
-        <span>今日净增</span>
+        <span>今日字数变化</span>
         <strong>{today ? formatCharacters(today.net_characters) : '—'}<small>字</small></strong>
         <small>{today?.met_goal ? `已完成 ${Math.round(today.net_characters / Math.max(1, today.target_characters) * 100)}% 日目标` : `日目标 ${today?.target_characters.toLocaleString('zh-CN') ?? '—'} 字`}</small>
       </div>
     </header>
 
     <dl className="calendar-metrics">
-      <div><dt>六周净增</dt><dd>{calendar.total_net_characters.toLocaleString('zh-CN')}<small>字</small></dd></div>
-      <div><dt>连续写作</dt><dd>{calendar.streak_days}<small>天</small></dd></div>
+      <div><dt>近42天变化</dt><dd>{calendar.total_net_characters.toLocaleString('zh-CN')}<small>字</small></dd></div>
+      <div><dt>连续创作</dt><dd>{calendar.streak_days}<small>天</small></dd></div>
       <div><dt>达标天数</dt><dd>{goalDays}<small>天</small></dd></div>
-      <div><dt>有记录</dt><dd>{activeDays}<small>天</small></dd></div>
+      <div><dt>创作日</dt><dd>{activeDays}<small>天</small></dd></div>
     </dl>
 
     <div className="calendar-board">
-      <header className="calendar-board-head">
-        <div><strong>每日手稿</strong><small>{calendar.timezone}</small></div>
-        <div className="calendar-legend" aria-label="状态图例"><span data-tone="met">达标</span><span data-tone="writing">写作中</span><span data-tone="negative">净删改</span></div>
-      </header>
-      <div className="calendar-grid" role="list" aria-label="过去六周码字记录">
-        {weeks.map((week, weekIndex) => <div className="calendar-week-row" key={week[0]?.date ?? weekIndex} aria-label={`第 ${weekIndex + 1} 周`}>
-          <div className="calendar-week-label" aria-hidden="true"><strong>W{String(weekIndex + 1).padStart(2, '0')}</strong><small>{week.length ? `${week[0].date.slice(5).replace('-', '.')}—${week.at(-1)!.date.slice(5).replace('-', '.')}` : ''}</small></div>
-          {week.map((day, dayIndex) => {
+      <section className="calendar-current-week" aria-labelledby="calendar-current-title">
+        <header className="calendar-board-head">
+          <div><small>NOW</small><h4 id="calendar-current-title">近 7 天</h4><span>{timezone}</span></div>
+          <div><p>正数是新增，负数表示正文变短。</p><div className="calendar-legend" aria-label="状态图例"><span data-tone="met">已达目标</span><span data-tone="writing">有新增</span><span data-tone="negative">正文减少</span></div></div>
+        </header>
+        <div className="calendar-current-grid" role="list" aria-label="近 7 天码字记录">
+          {currentWeek.map((day, dayIndex) => {
             const progress = Math.min(100, Math.max(0, day.net_characters) / Math.max(1, day.target_characters) * 100)
-            const isToday = weekIndex === weeks.length - 1 && dayIndex === week.length - 1
-            const status = day.met_goal ? '已达标' : day.net_characters < 0 ? '净删改' : day.net_characters > 0 ? '写作中' : '未开始'
-            return <article className="calendar-day" key={day.date} role="listitem" aria-label={`${formatDate(day.date)} ${status}，净增 ${day.net_characters} 字，目标 ${day.target_characters} 字`} data-met={day.met_goal} data-negative={day.net_characters < 0} data-today={isToday}>
-              <header><time dateTime={day.date}>{formatDate(day.date)}</time><span>{weekday(day.date)}</span></header>
+            const isToday = dayIndex === currentWeek.length - 1
+            const status = dayStatus(day)
+            return <article className="calendar-day" key={day.date} role="listitem" aria-label={`${formatDate(day.date)} ${status}，正文变化 ${day.net_characters} 字，目标 ${day.target_characters} 字`} data-met={day.met_goal} data-negative={day.net_characters < 0} data-today={isToday}>
+              <header><time dateTime={day.date}>{formatDate(day.date)}</time><span>{isToday ? '今天' : weekday(day.date)}</span></header>
               <strong>{day.net_characters === 0 ? '—' : formatCharacters(day.net_characters)}</strong>
               <small>{status}</small>
               <div className="calendar-day-track" aria-hidden="true"><span style={{ width: `${progress}%` }} /></div>
             </article>
           })}
-        </div>)}
-      </div>
+        </div>
+      </section>
+
+      <section className="calendar-history" aria-labelledby="calendar-history-title">
+        <header><div><small>ARCHIVE</small><h4 id="calendar-history-title">过去 35 天</h4></div><p>最近一周排在最前</p></header>
+        <div className="calendar-history-grid" role="list" aria-label="过去 35 天码字记录">
+          {historyWeeks.map((week) => <div className="calendar-history-row" role="group" aria-label={`${formatDate(week[0].date)}至${formatDate(week.at(-1)!.date)}`} key={week[0].date}>
+            <div className="calendar-history-label" aria-hidden="true"><strong>{formatCompactDate(week[0].date)}—{formatCompactDate(week.at(-1)!.date)}</strong><small>{week.reduce((total, day) => total + day.net_characters, 0).toLocaleString('zh-CN')} 字</small></div>
+            {week.map((day) => {
+              const status = dayStatus(day)
+              return <article className="calendar-history-day" key={day.date} role="listitem" title={`${formatDate(day.date)}：${status}`} aria-label={`${formatDate(day.date)} ${status}，正文变化 ${day.net_characters} 字，目标 ${day.target_characters} 字`} data-met={day.met_goal} data-negative={day.net_characters < 0} data-active={day.net_characters > 0}>
+                <time dateTime={day.date}>{formatCompactDate(day.date)}</time><strong>{day.net_characters === 0 ? '—' : formatCharacters(day.net_characters)}</strong>
+              </article>
+            })}
+          </div>)}
+        </div>
+      </section>
     </div>
   </section>
 }
