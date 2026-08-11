@@ -2,19 +2,19 @@
 
 ## 码字日历体验优化
 
-- [ ] 连续创作口径
+- [x] 连续创作口径
   - Acceptance：今天未写保留截至昨天的连续天数，负向字数变化计入创作日，候选稿仍排除。
   - Verify：`uv run --project services/api --no-sync pytest services/api/tests/test_author_productivity.py`。
   - Files：`author_productivity.py`、`test_author_productivity.py`。
-- [ ] 本周优先日历
+- [x] 本周优先日历
   - Acceptance：近 7 天及今天首屏可见，过去 35 天紧凑显示，术语改为“字数变化/以修改为主”，辅助文字至少 12px。
   - Verify：AuthorToolsDialog 组件测试、1280/1040/760 浏览器截图与尺寸检查。
   - Files：`AuthorToolsDialog.tsx`、`AuthorToolsDialog.test.tsx`、`styles.css`。
-- [ ] 作者行动与弹窗键盘体验
+- [x] 作者行动与弹窗键盘体验
   - Acceptance：可回到正文、打开既有日目标设置；支持焦点进入/恢复、Escape、焦点循环、tab 语义和加载状态。
   - Verify：组件测试与真实键盘冒烟。
   - Files：`AuthorToolsDialog.tsx`、`WorkspaceShell.tsx`、对应测试和样式。
-- [ ] 最终验收
+- [x] 最终验收
   - Acceptance：完整 Definition of Done 通过，PROGRESS 与测试基线更新，浏览器控制台无 warning/error。
   - Verify：`pnpm run verify` 与真实浏览器。
 
