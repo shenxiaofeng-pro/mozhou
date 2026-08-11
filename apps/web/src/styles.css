@@ -8454,3 +8454,152 @@ textarea:focus-visible {
   .calendar-legend { justify-content: start; }
   .calendar-current-grid, .calendar-history-row { min-width: 39rem; }
 }
+
+/* AI comic-drama workbench */
+.comic-workbench { min-height: 100vh; background: #e9e7df; color: #192d30; }
+.comic-topbar { display: flex; justify-content: space-between; align-items: center; gap: 1.2rem; padding: 1rem 1.35rem; border-bottom: 4px solid #315c6b; background: #f8f5ed; }
+.comic-topbar small, .comic-slate-heading small, .comic-inspector header small, .comic-reel header small { color: #76506e; font-size: .72rem; font-weight: 900; letter-spacing: .14em; }
+.comic-topbar h1 { margin: .08rem 0; font-family: "Songti SC", "STSong", serif; font-size: clamp(1.45rem, 2.4vw, 2rem); }
+.comic-topbar p { margin: 0; color: #5b6a69; font-size: .82rem; }
+.comic-top-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .45rem; }
+.comic-top-actions button, .comic-create-sheet button, .comic-stage button { padding: .55rem .75rem; border: 1px solid #617778; background: #fdfbf5; color: #193235; font: inherit; font-size: .8rem; font-weight: 750; }
+.comic-top-actions button:hover, .comic-stage button:hover, .comic-create-sheet button:hover { border-color: #315c6b; background: #e5eceb; }
+.comic-top-actions button:focus-visible, .comic-stage button:focus-visible, .comic-create-sheet button:focus-visible, .comic-reel button:focus-visible { outline: 3px solid #b26a2d; outline-offset: 2px; }
+.comic-error, .comic-working { position: fixed; z-index: 95; right: 1rem; top: 5.4rem; max-width: 30rem; margin: 0; padding: .75rem 1rem; border-left: 4px solid #b26a2d; background: #fffaf0; box-shadow: 0 10px 30px rgb(25 45 48 / 18%); }
+.comic-error { border-left-color: #a34c3c; color: #7d3026; }
+
+.comic-create-sheet { width: min(67rem, calc(100% - 2rem)); margin: 2rem auto; border: 1px solid #819190; background: #f9f6ee; box-shadow: 8px 8px 0 #c9ceca; }
+.comic-slate-heading { display: grid; grid-template-columns: 7rem 1fr; align-items: stretch; border-bottom: 1px solid #869492; }
+.comic-slate-heading > span { display: grid; place-items: center; background: #193235; color: white; font-size: 1.15rem; font-weight: 900; letter-spacing: .08em; }
+.comic-slate-heading > div { padding: 1.15rem 1.3rem; }
+.comic-slate-heading h2 { margin: .15rem 0 0; font-family: "Songti SC", "STSong", serif; font-size: 1.5rem; }
+.comic-existing-projects { display: flex; align-items: center; gap: .6rem; padding: .75rem 1.3rem; overflow-x: auto; border-bottom: 1px solid #c2c9c5; background: #e5e9e4; }
+.comic-existing-projects h3 { flex: 0 0 auto; margin-right: .5rem; font-size: .88rem; }
+.comic-existing-projects button { display: grid; flex: 0 0 13rem; gap: .15rem; text-align: left; }
+.comic-existing-projects button span { color: #60706f; font-size: .72rem; }
+.comic-create-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; padding: 1.3rem; }
+.comic-create-grid label, .comic-direction { display: grid; gap: .32rem; color: #425756; font-size: .75rem; font-weight: 800; }
+.comic-create-grid input, .comic-create-grid select, .comic-create-grid textarea, .comic-direction textarea { width: 100%; min-width: 0; padding: .65rem .7rem; border: 1px solid #8d9c99; border-radius: 0; background: #fffefa; color: #1b3234; font: inherit; }
+.comic-create-grid textarea { min-height: 5.5rem; resize: vertical; }
+.comic-create-grid .comic-wide { grid-column: span 3; }
+.comic-create-sheet > footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .85rem 1.3rem; border-top: 1px solid #98a5a2; background: #e1e7e2; }
+.comic-create-sheet > footer p { margin: 0; color: #566966; font-size: .78rem; }
+.comic-create-sheet > footer button { border-color: #315c6b; background: #315c6b; color: #fff; }
+
+.comic-layout { display: grid; grid-template-columns: 15.5rem minmax(31rem, 1fr) 18rem; min-height: calc(100vh - 5.2rem); }
+.comic-reel { padding: 1rem .8rem; border-right: 1px solid #869694; background: #20383c; color: #f7f5ee; }
+.comic-reel > header { padding: .3rem .35rem 1rem; }
+.comic-reel h2 { margin: .18rem 0; font-family: "Songti SC", "STSong", serif; font-size: 1.15rem; }
+.comic-reel header p { margin: 0; color: #b9c8c5; font-size: .75rem; }
+.comic-reel > button { position: relative; display: grid; grid-template-columns: 2.6rem 1fr; gap: .15rem .55rem; width: 100%; margin-bottom: .55rem; padding: .7rem .55rem; border: 1px solid #587073; background: #294448; color: white; text-align: left; }
+.comic-reel > button::before, .comic-reel > button::after { position: absolute; left: .2rem; width: .35rem; height: .35rem; border: 1px solid #839797; background: #172d30; content: ""; }
+.comic-reel > button::before { top: .22rem; }
+.comic-reel > button::after { bottom: .22rem; }
+.comic-reel > button[data-active="true"] { border-color: #d7a36b; background: #f5f0e5; color: #1b3336; box-shadow: inset 5px 0 #b26a2d; }
+.comic-reel > button > span { grid-row: span 2; align-self: center; color: #d9a36b; font-size: 1.25rem; font-weight: 900; }
+.comic-reel > button[data-active="true"] > span { color: #9a512c; }
+.comic-reel > button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comic-reel > button small { color: #c0cfcc; font-size: .68rem; }
+.comic-reel > button small:last-child { grid-column: 2; }
+.comic-reel > button[data-active="true"] small { color: #526966; }
+.comic-reel small[data-state="approved"] { color: #78b7a5; font-weight: 900; }
+.comic-reel > button[data-active="true"] small[data-state="approved"] { color: #2f7463; }
+.comic-reel-empty { padding: .8rem; color: #b9c8c5; font-size: .78rem; line-height: 1.6; }
+
+.comic-stage { min-width: 0; padding: 1.3rem clamp(1rem, 2.5vw, 2.2rem) 4rem; background: #f5f2e9; }
+.comic-stage-meta { display: flex; justify-content: space-between; align-items: end; gap: 1rem; padding-bottom: .7rem; border-bottom: 3px solid #20383c; }
+.comic-stage-meta h2 { margin: .15rem 0 0; font-family: "Songti SC", "STSong", serif; font-size: clamp(1.35rem, 2.6vw, 2rem); }
+.comic-stage-meta small { color: #76506e; font-weight: 850; letter-spacing: .08em; }
+.comic-stage-meta > span { padding: .25rem .5rem; background: #315c6b; color: white; font-size: .7rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.comic-direction { margin: .8rem 0 1rem; }
+.comic-direction textarea { min-height: 4rem; resize: vertical; }
+.comic-empty-stage { display: grid; justify-items: start; margin-top: 1rem; padding: 2.3rem; border: 1px dashed #819390; background: #eceee8; }
+.comic-empty-stage.compact { padding: 1.4rem; }
+.comic-empty-stage > span { display: grid; place-items: center; width: 3.2rem; height: 2rem; margin-bottom: .8rem; background: #315c6b; color: white; font-weight: 900; }
+.comic-empty-stage h3 { margin: 0; font-family: "Songti SC", "STSong", serif; font-size: 1.35rem; }
+.comic-empty-stage p { color: #566866; }
+.comic-empty-stage button, .comic-cost-card button, .comic-season-card > button { border-color: #315c6b; background: #315c6b; color: white; }
+
+.comic-season-card, .comic-outline-card, .comic-script-card { margin-top: 1rem; border: 1px solid #82918f; background: #fffdf8; box-shadow: 5px 5px 0 #d0d4cf; }
+.comic-season-card > header, .comic-outline-card > header, .comic-script-card > header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .65rem .85rem; border-bottom: 1px solid #aab5b1; background: #e5eae5; }
+.comic-season-card > header span, .comic-outline-card > header span, .comic-script-card > header span { color: #76506e; font-size: .7rem; font-weight: 900; letter-spacing: .12em; }
+.comic-season-card [data-state], .comic-outline-card [data-state], .comic-script-card [data-state] { padding: .2rem .45rem; color: #76506e; font-size: .72rem; }
+.comic-season-card [data-state="approved"], .comic-outline-card [data-state="approved"], .comic-script-card [data-state="approved"] { background: #2f7463; color: white; }
+.comic-season-card h3, .comic-outline-card h3 { margin: 1rem; font-family: "Songti SC", "STSong", serif; font-size: 1.25rem; }
+.comic-season-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0 1rem 1rem; background: #c3ccc7; }
+.comic-season-card dl > div { padding: .75rem; background: #f0f1eb; }
+.comic-season-card dt { color: #60716e; font-size: .7rem; font-weight: 900; }
+.comic-season-card dd { margin: .25rem 0 0; line-height: 1.6; }
+.comic-season-card ol { margin: 0 1rem 1rem; padding: 0; list-style: none; }
+.comic-season-card li { display: grid; grid-template-columns: 2.4rem 1fr; gap: .65rem; padding: .65rem 0; border-top: 1px solid #d2d6d0; }
+.comic-season-card li > span { color: #315c6b; font-size: 1.1rem; font-weight: 900; }
+.comic-season-card li p { margin: .2rem 0 0; color: #596a67; font-size: .78rem; }
+.comic-season-card > button { margin: 0 1rem 1rem; }
+.comic-beat-line { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0 1rem 1rem; border: 1px solid #b4bdb8; }
+.comic-beat-line p { margin: 0; padding: .7rem; border-right: 1px solid #c3cbc7; font-size: .8rem; line-height: 1.5; }
+.comic-beat-line p:last-child { border-right: 0; }
+.comic-beat-line small { display: block; margin-bottom: .25rem; color: #9b522e; font-weight: 900; }
+.comic-outline-card > footer { display: flex; flex-wrap: wrap; gap: 1rem; padding: .7rem 1rem; border-top: 1px solid #c7cec9; color: #5b6b69; font-size: .75rem; }
+.comic-approval-bar { position: sticky; z-index: 4; bottom: .6rem; display: flex; align-items: center; gap: .55rem; margin: 1rem 0; padding: .65rem; border: 1px solid #8d7787; background: #f3eaf0; box-shadow: 0 8px 25px rgb(44 37 42 / 16%); }
+.comic-approval-bar.second { border-color: #578678; background: #e3efea; }
+.comic-approval-bar span { margin-right: auto; color: #5d4657; font-size: .78rem; font-weight: 850; }
+.comic-approval-bar .approve { border-color: #2f7463; background: #2f7463; color: white; }
+
+.comic-script-card > header h3 { margin: .2rem 0 0; }
+.comic-script-card > article { margin: 1rem; border: 1px solid #a9b4b0; background: #f8f6ef; content-visibility: auto; contain-intrinsic-size: 28rem; }
+.comic-script-card > article > header { display: grid; grid-template-columns: 3.2rem 1fr auto; gap: .7rem; align-items: center; padding: .6rem .75rem; background: #20383c; color: white; }
+.comic-script-card > article > header span { color: #e0a970; font-weight: 900; }
+.comic-script-card > article > header small { color: #c1cecb; }
+.comic-action { margin: 0; padding: 1rem; border-bottom: 1px solid #cad0cc; line-height: 1.75; }
+.comic-dialogue { padding: .5rem 1rem; }
+.comic-dialogue p { display: grid; grid-template-columns: 5rem 6rem 1fr; margin: 0; padding: .45rem 0; border-bottom: 1px dotted #bdc5c0; }
+.comic-dialogue em { color: #76506e; font-size: .78rem; }
+.comic-script-card blockquote { margin: 0 1rem 1rem; padding: .7rem; border-left: 3px solid #76506e; background: #eee8ed; }
+.comic-script-card > article > footer { display: grid; gap: .3rem; padding: .7rem 1rem; background: #e7ebe6; color: #526462; font-size: .78rem; }
+.comic-script-card > article > footer strong { color: #8b4b2d; }
+
+.comic-cost-card { margin-top: 1rem; padding: 1rem; border-left: 5px solid #b26a2d; background: #fff9eb; }
+.comic-cost-card header { display: flex; justify-content: space-between; gap: 1rem; }
+.comic-cost-card header span, .comic-cost-card p, .comic-cost-card li { color: #5e6c69; font-size: .78rem; }
+.comic-cost-card label { display: block; margin: .8rem 0; font-size: .8rem; font-weight: 750; }
+
+.comic-inspector { min-width: 0; border-left: 1px solid #8d9a98; background: #e1e5e0; }
+.comic-inspector > section { padding: 1rem; border-bottom: 1px solid #abb5b0; }
+.comic-inspector h2 { margin: .18rem 0 .7rem; font-family: "Songti SC", "STSong", serif; font-size: 1rem; }
+.comic-inspector article { margin-bottom: .55rem; padding: .65rem; border-left: 3px solid #6e8583; background: #f7f5ee; }
+.comic-inspector article[data-severity="warning"] { border-left-color: #b26a2d; }
+.comic-inspector article[data-severity="error"] { border-left-color: #a34c3c; }
+.comic-inspector article p { margin: .3rem 0 0; color: #566866; font-size: .76rem; line-height: 1.5; }
+.comic-inspector article span { display: block; color: #76506e; font-size: .7rem; }
+.comic-clear { color: #62726f; font-size: .78rem; }
+.comic-inspector > footer { margin: 1rem; padding: .75rem; border: 1px solid #9ca9a5; background: #f6f2e8; }
+.comic-inspector > footer strong { color: #8f4d2e; }
+.comic-inspector > footer p { margin: .3rem 0 0; color: #596966; font-size: .75rem; line-height: 1.5; }
+
+@media (max-width: 1100px) {
+  .comic-layout { grid-template-columns: 14rem minmax(0, 1fr); }
+  .comic-inspector { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 18rem; border-top: 1px solid #8d9a98; border-left: 0; }
+  .comic-inspector > section { border-right: 1px solid #abb5b0; border-bottom: 0; }
+}
+
+@media (max-width: 760px) {
+  .comic-topbar { align-items: stretch; flex-direction: column; }
+  .comic-top-actions { justify-content: start; }
+  .comic-create-grid { grid-template-columns: 1fr; }
+  .comic-create-grid .comic-wide { grid-column: auto; }
+  .comic-create-sheet > footer { align-items: stretch; flex-direction: column; }
+  .comic-layout { grid-template-columns: 1fr; }
+  .comic-reel { display: flex; gap: .5rem; overflow-x: auto; border-right: 0; border-bottom: 1px solid #869694; }
+  .comic-reel > header { flex: 0 0 12rem; }
+  .comic-reel > button { flex: 0 0 12.5rem; margin: 0; }
+  .comic-stage { padding: 1rem .75rem 3rem; }
+  .comic-stage-meta { align-items: start; }
+  .comic-season-card dl, .comic-beat-line { grid-template-columns: 1fr; }
+  .comic-beat-line p { border-right: 0; border-bottom: 1px solid #c3cbc7; }
+  .comic-dialogue p { grid-template-columns: 4.5rem 1fr; }
+  .comic-dialogue p span { grid-column: 1 / -1; padding-top: .25rem; }
+  .comic-inspector { grid-template-columns: 1fr; }
+  .comic-inspector > section { border-right: 0; border-bottom: 1px solid #abb5b0; }
+  .comic-approval-bar { align-items: stretch; flex-wrap: wrap; }
+  .comic-approval-bar span { flex-basis: 100%; }
+}

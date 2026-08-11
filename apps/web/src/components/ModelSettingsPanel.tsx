@@ -43,6 +43,8 @@ const taskRoutes: Array<{ type: AiTaskType; label: string; detail: string }> = [
   { type: 'review', label: '一致性审校', detail: '事实、人物与伏笔检查' },
   { type: 'sandbox', label: '剧情沙盘', detail: '角色行动建议与候选后果' },
   { type: 'research', label: '资料研究', detail: '带原文范围的证据候选归纳' },
+  { type: 'comic_season_plan', label: '漫剧季方案', detail: '季纲与逐集大纲候选' },
+  { type: 'comic_episode_script', label: '漫剧单集剧本', detail: '场次、动作与对白完整稿' },
 ]
 
 function profileForm(profile: ModelProfile): ProfileForm {

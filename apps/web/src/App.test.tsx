@@ -187,6 +187,7 @@ beforeEach(() => {
   vi.spyOn(api, 'listAiProfiles').mockResolvedValue([])
   vi.spyOn(api, 'listAiTaskDefaults').mockResolvedValue([])
   vi.spyOn(api, 'listContextDirectives').mockResolvedValue([])
+  vi.spyOn(api, 'listComicProjects').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -196,6 +197,20 @@ afterEach(() => {
 })
 
 describe('App', () => {
+  it('opens the AI comic drama workbench from the writing header', async () => {
+    vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', {
+      name: `打开《${workspace.project.title}》`,
+    }))
+    await user.click(await screen.findByRole('button', { name: '打开 AI 漫剧改编' }))
+
+    expect(await screen.findByRole('heading', { name: 'AI 漫剧改编' })).toBeVisible()
+    expect(screen.getByText('文字剧本与制作包，不修改小说原稿', { exact: false })).toBeVisible()
+  })
+
   it('shows existing projects in the library and opens the selected workspace', async () => {
     vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
     const user = userEvent.setup()

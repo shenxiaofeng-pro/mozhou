@@ -12,6 +12,15 @@ import type {
   ApplyTextChangeSetInput,
   Chapter,
   ChapterVersion,
+  ComicAiPreview,
+  ComicAsset,
+  ComicAuditIssue,
+  ComicEpisodeSubmission,
+  ComicProductionPackage,
+  ComicProject,
+  ComicSeasonSubmission,
+  ComicWorkspace,
+  CreateComicProjectInput,
   BookBlueprint,
   BookBlueprintField,
   BetaEvaluationReport,
@@ -230,6 +239,131 @@ async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Bl
 }
 
 export const api = {
+  listComicProjects(projectId: string) {
+    return request<ComicProject[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/comic-projects`,
+    )
+  },
+  createComicProject(projectId: string, input: CreateComicProjectInput) {
+    return request<ComicWorkspace>(
+      `/api/projects/${encodeURIComponent(projectId)}/comic-projects`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getComicProject(comicProjectId: string) {
+    return request<ComicWorkspace>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}`,
+    )
+  },
+  previewComicSeason(comicProjectId: string, authorDirection = '') {
+    return request<ComicAiPreview>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/season-plan/preview`,
+      { method: 'POST', body: JSON.stringify({ author_direction: authorDirection }) },
+    )
+  },
+  submitComicSeason(
+    comicProjectId: string,
+    input: {
+      author_direction: string
+      expected_source_snapshot_sha256: string
+      confirm_external_processing: boolean
+      max_estimated_cost_microusd?: number
+    },
+  ) {
+    return request<ComicSeasonSubmission>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/season-plan`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  adoptComicSeason(comicProjectId: string, versionId: string, expectedRevision: number) {
+    return request<ComicWorkspace>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/season-plan/adopt`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ version_id: versionId, expected_revision: expectedRevision }),
+      },
+    )
+  },
+  reviewComicOutline(
+    episodeId: string,
+    action: 'approve' | 'reject',
+    expectedRevision: number,
+    versionId?: string,
+  ) {
+    return request<ComicWorkspace>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/outline/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          expected_revision: expectedRevision,
+          ...(versionId ? { version_id: versionId } : {}),
+        }),
+      },
+    )
+  },
+  previewComicEpisode(episodeId: string, authorDirection = '') {
+    return request<ComicAiPreview>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/script/preview`,
+      { method: 'POST', body: JSON.stringify({ author_direction: authorDirection }) },
+    )
+  },
+  submitComicEpisode(
+    episodeId: string,
+    input: {
+      author_direction: string
+      expected_source_snapshot_sha256: string
+      expected_outline_revision: number
+      confirm_external_processing: boolean
+      max_estimated_cost_microusd?: number
+    },
+  ) {
+    return request<ComicEpisodeSubmission>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/script`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  reviewComicScript(
+    episodeId: string,
+    action: 'approve' | 'reject',
+    expectedRevision: number,
+    versionId?: string,
+  ) {
+    return request<ComicWorkspace>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/script/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          expected_revision: expectedRevision,
+          ...(versionId ? { version_id: versionId } : {}),
+        }),
+      },
+    )
+  },
+  getComicAudit(comicProjectId: string) {
+    return request<ComicAuditIssue[]>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/audit`,
+    )
+  },
+  getComicAssets(comicProjectId: string) {
+    return request<ComicAsset[]>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/assets`,
+    )
+  },
+  getComicProductionPackage(comicProjectId: string) {
+    return request<ComicProductionPackage>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/production-package`,
+    )
+  },
+  exportComicProductionPackage(
+    comicProjectId: string,
+    format: 'json' | 'markdown' | 'docx',
+  ) {
+    return requestBlob(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/export?format=${encodeURIComponent(format)}`,
+    )
+  },
   getDiagnostics() {
     return request<DiagnosticSummary>('/api/diagnostics')
   },

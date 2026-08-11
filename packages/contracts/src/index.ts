@@ -13,6 +13,8 @@ export type JobKind =
   | 'review'
   | 'sandbox_ai_round'
   | 'research_extraction'
+  | 'comic_season_plan'
+  | 'comic_episode_script'
 
 export type JobState =
   | 'queued'
@@ -1321,7 +1323,15 @@ export interface ConfigureAiInput {
 
 export type ProviderKind = 'openai' | 'openai_compatible'
 
-export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review' | 'sandbox' | 'research'
+export type AiTaskType =
+  | 'chapter_brief'
+  | 'chapter_draft'
+  | 'reference_analysis'
+  | 'review'
+  | 'sandbox'
+  | 'research'
+  | 'comic_season_plan'
+  | 'comic_episode_script'
 
 export type ResearchCategory = 'historical_event' | 'local_system' | 'industry_rule' | 'price_technology' | 'controversy'
 export type ResearchMode = 'local' | 'ai'
@@ -2075,4 +2085,207 @@ export interface JobDetail extends Job {
   attempts: JobAttempt[]
   artifacts: JobArtifact[]
   events: JobEvent[]
+}
+
+export type ComicAdaptationMode = 'faithful' | 'balanced' | 'dramatic'
+export type ComicProjectState = 'draft' | 'planning' | 'outlined' | 'producing' | 'completed'
+export type ComicApprovalState = 'candidate' | 'approved' | 'rejected'
+export type ComicScriptState = 'empty' | ComicApprovalState
+export type ComicTargetKind = 'season' | 'episode_outline' | 'episode_script'
+
+export interface ComicDialogueDraft {
+  character: string
+  line: string
+  emotion: string
+}
+
+export interface ComicAssetRequirement {
+  kind: 'character' | 'location' | 'costume' | 'prop' | 'effect' | 'other'
+  name: string
+  description: string
+}
+
+export interface ComicSceneDraft {
+  scene_number: number
+  interior_exterior: 'INT' | 'EXT' | 'INT/EXT'
+  location: string
+  time_of_day: string
+  cast: string[]
+  action: string
+  dialogue: ComicDialogueDraft[]
+  narration: string
+  visual_focus: string
+  ending_beat: string
+  source_chapter_ids: string[]
+  asset_requirements: ComicAssetRequirement[]
+}
+
+export interface ComicEpisodeOutlineDraft {
+  episode_number: number
+  title: string
+  source_chapter_ids: string[]
+  opening_hook: string
+  episode_goal: string
+  core_conflict: string
+  reversal: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  cast: string[]
+  locations: string[]
+  key_props: string[]
+  next_episode_promise: string
+}
+
+export interface ComicSeasonDraft {
+  logline: string
+  theme: string
+  core_desire: string
+  main_conflict: string
+  adaptation_strategy: string
+  character_recomposition: string[]
+  episode_outlines: ComicEpisodeOutlineDraft[]
+}
+
+export interface ComicEpisodeScriptDraft {
+  episode_number: number
+  title: string
+  estimated_seconds: number
+  scenes: ComicSceneDraft[]
+}
+
+export interface CreateComicProjectInput {
+  title: string
+  source_chapter_ids: string[]
+  episode_target_count: number
+  episode_duration_seconds: number
+  aspect_ratio: '9:16' | '16:9' | '1:1'
+  art_style: string
+  adaptation_mode: ComicAdaptationMode
+  narration_preference: string
+  author_requirements: string
+}
+
+export interface ComicProject {
+  id: string
+  project_id: string
+  title: string
+  source_chapter_ids: string[]
+  source_snapshot_sha256: string
+  episode_target_count: number
+  episode_duration_seconds: number
+  aspect_ratio: '9:16' | '16:9' | '1:1'
+  art_style: string
+  adaptation_mode: ComicAdaptationMode
+  narration_preference: string
+  author_requirements: string
+  state: ComicProjectState
+  season_revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ComicEpisode {
+  id: string
+  comic_project_id: string
+  episode_number: number
+  title: string
+  source_chapter_ids: string[]
+  outline_state: ComicApprovalState
+  script_state: ComicScriptState
+  outline_revision: number
+  script_revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ComicVersion {
+  id: string
+  comic_project_id: string
+  episode_id: string | null
+  target_kind: ComicTargetKind
+  target_id: string
+  version_number: number
+  state: ComicApprovalState
+  content: ComicSeasonDraft | ComicEpisodeOutlineDraft | ComicEpisodeScriptDraft
+  content_sha256: string
+  source_snapshot_sha256: string
+  job_id: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
+export interface ComicScene {
+  id: string
+  comic_project_id: string
+  episode_id: string
+  script_version_id: string
+  scene_number: number
+  content: ComicSceneDraft
+  source_chapter_ids: string[]
+  created_at: string
+}
+
+export interface ComicWorkspace {
+  project: ComicProject
+  episodes: ComicEpisode[]
+  versions: ComicVersion[]
+  scenes: ComicScene[]
+}
+
+export interface ComicAiPreview {
+  source_snapshot_sha256: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  profile_id: string
+  profile_name: string
+  provider: string
+  model: string
+  requires_external_confirmation: boolean
+  data_types: string[]
+  content_scope: string
+}
+
+export interface ComicSeasonSubmission { comic_project_id: string; job: Job }
+export interface ComicEpisodeSubmission { comic_project_id: string; episode_id: string; job: Job }
+
+export interface ComicAuditIssue {
+  severity: 'error' | 'warning' | 'info'
+  code: string
+  message: string
+  episode_id: string
+  episode_number: number
+  scene_number: number | null
+}
+
+export interface ComicAsset {
+  kind: string
+  name: string
+  description: string
+  first_episode: number
+  episode_numbers: number[]
+}
+
+export interface ComicDeleteImpact {
+  comic_project_id: string
+  episode_count: number
+  version_count: number
+  scene_count: number
+  can_delete: boolean
+}
+
+export interface ComicProductionPackage {
+  format: 'mozhou-ai-comic-production-package'
+  format_version: 1
+  ai_generated: true
+  project: ComicProject
+  season: ComicSeasonDraft | null
+  season_version: number | null
+  episodes: Array<Record<string, unknown>>
+  assets: ComicAsset[]
+  audit: ComicAuditIssue[]
+  compliance_checklist: string[]
+  source_snapshot_sha256: string
+  package_sha256: string
 }

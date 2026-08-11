@@ -33,6 +33,8 @@ const kindLabels: Record<JobKind, string> = {
   review: 'AI 审校',
   sandbox_ai_round: 'AI 剧情沙盘',
   research_extraction: '资料研究',
+  comic_season_plan: '漫剧季方案',
+  comic_episode_script: '漫剧单集剧本',
 }
 
 const stateLabels: Record<JobState, string> = {

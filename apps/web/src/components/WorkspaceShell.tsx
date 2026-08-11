@@ -21,6 +21,7 @@ interface WorkspaceShellProps {
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
   onOpenResearch?: () => void
+  onOpenComicDrama?: () => void
   onOpenTaskCenter: () => void
   onClose: () => void
 }
@@ -63,6 +64,7 @@ export function WorkspaceShell({
   onWorkspaceChanged,
   onOpenReferenceLibrary,
   onOpenResearch = () => undefined,
+  onOpenComicDrama = () => undefined,
   onOpenTaskCenter,
   onClose,
 }: WorkspaceShellProps) {
@@ -134,6 +136,7 @@ export function WorkspaceShell({
       onWorkspaceChanged={onWorkspaceChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
       onOpenResearch={onOpenResearch}
+      onOpenComicDrama={onOpenComicDrama}
       onOpenTaskCenter={onOpenTaskCenter}
       onSelectChapter={selectChapter}
       onCreateChapter={createNextChapter}
@@ -153,6 +156,7 @@ function ActiveChapterWorkspace({
   onWorkspaceChanged,
   onOpenReferenceLibrary,
   onOpenResearch = () => undefined,
+  onOpenComicDrama = () => undefined,
   onOpenTaskCenter,
   onSelectChapter,
   onCreateChapter,
@@ -328,6 +332,13 @@ function ActiveChapterWorkspace({
             disabled={isNavigating}
             onClick={() => { void navigateAfterSave(onOpenTaskCenter) }}
           >任务中心</button>
+          <button
+            className="library-action comic-action"
+            type="button"
+            aria-label="打开 AI 漫剧改编"
+            disabled={isNavigating}
+            onClick={() => { void navigateAfterSave(onOpenComicDrama) }}
+          >AI 漫剧</button>
           <button
             className="library-action"
             type="button"

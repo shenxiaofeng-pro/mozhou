@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { api } from './api'
 import { CreateProjectForm } from './components/CreateProjectForm'
+import { ComicDramaWorkbenchPage } from './components/ComicDramaWorkbenchPage'
 import { GlobalReferenceLibraryPage } from './components/GlobalReferenceLibraryPage'
 import { ProjectLibraryPage } from './components/ProjectLibraryPage'
 import { ReferenceLibraryPage } from './components/ReferenceLibraryPage'
@@ -56,7 +57,7 @@ export function App() {
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null)
-  const [activeView, setActiveView] = useState<'writing' | 'reference-library' | 'research'>('writing')
+  const [activeView, setActiveView] = useState<'writing' | 'reference-library' | 'research' | 'comic-drama'>('writing')
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false)
   const [isGlobalLibraryOpen, setIsGlobalLibraryOpen] = useState(false)
 
@@ -244,6 +245,13 @@ export function App() {
         onBack={() => setActiveView('writing')}
         onSourceCardsChanged={() => handleProjectAssetsChanged(workspace.project.id)}
       />
+    ) : activeView === 'comic-drama' ? (
+      <ComicDramaWorkbenchPage
+        project={workspace.project}
+        chapters={workspace.chapters}
+        onBack={() => setActiveView('writing')}
+        onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
+      />
     ) : (
       <WorkspaceShell
         workspace={workspace}
@@ -252,6 +260,7 @@ export function App() {
         onWorkspaceChanged={handleWorkspaceChanged}
         onOpenReferenceLibrary={() => setActiveView('reference-library')}
         onOpenResearch={() => setActiveView('research')}
+        onOpenComicDrama={() => setActiveView('comic-drama')}
         onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
         onClose={handleClose}
       />
