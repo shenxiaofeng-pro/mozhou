@@ -1,5 +1,31 @@
 # 当前任务
 
+## AI 漫剧改编工作台（M18–M23）
+
+- [ ] M18 漫剧领域、schema v22 与归档 v10
+  - Acceptance：连续小说来源可冻结，季/集/场/版本独立保存，旧库和旧归档无损升级。
+  - Verify：数据库、领域和归档专项测试。
+  - Files：migration、database、archive、comic_drama、contracts、API。
+- [ ] M19 AI 季纲与分集候选
+  - Acceptance：外发/费用确认、幂等 Job/Artifact、严格来源校验和候选采用完成。
+  - Verify：季纲任务专项测试。
+  - Files：AI gateway、provider task、job runtime、comic service/API。
+- [ ] M20 逐集剧本与双批准门
+  - Acceptance：大纲未批准不能生成剧本，剧本未批准不物化场次，旧 revision 被阻断。
+  - Verify：状态机、任务恢复和小说域零写入专项测试。
+  - Files：comic service、AI、API/contracts。
+- [ ] M21 审校、资产与制作包
+  - Acceptance：审校可解释，资产可追踪，MD/JSON/DOCX 只含批准剧集。
+  - Verify：规则和导出回环专项测试。
+  - Files：comic audit/export、API。
+- [ ] M22 漫剧工作台 UI
+  - Acceptance：作者能从选源完成至少一集批准并导出，760px 核心路径可达。
+  - Verify：组件测试与真实浏览器。
+  - Files：ComicDramaWorkbenchPage、App、WorkspaceShell、api、styles。
+- [ ] M23 最终验收
+  - Acceptance：完整 Definition of Done 通过，文档和测试基线更新，工作树干净。
+  - Verify：`pnpm run verify`、安全检查与浏览器控制台。
+
 ## 码字日历体验优化
 
 - [x] 连续创作口径
