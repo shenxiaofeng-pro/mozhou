@@ -10,6 +10,7 @@ class JobKind(StrEnum):
     REFERENCE_BOOK_REDUCE = "reference_book_reduce"
     REFERENCE_FUSION = "reference_fusion"
     REVIEW = "review"
+    SANDBOX_AI_ROUND = "sandbox_ai_round"
 
 
 class JobState(StrEnum):

@@ -676,6 +676,7 @@ CREATE TABLE IF NOT EXISTS sandbox_runs (
     actions_used INTEGER NOT NULL DEFAULT 0 CHECK(actions_used BETWEEN 0 AND 200),
     current_state_json TEXT NOT NULL CHECK(json_valid(current_state_json)),
     current_state_sha256 TEXT NOT NULL CHECK(length(current_state_sha256) = 64),
+    execution_mode TEXT NOT NULL DEFAULT 'rules' CHECK(execution_mode IN ('rules', 'ai')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT
@@ -694,6 +695,10 @@ CREATE TABLE IF NOT EXISTS sandbox_rounds (
     evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
     state_before_sha256 TEXT NOT NULL CHECK(length(state_before_sha256) = 64),
     state_after_sha256 TEXT NOT NULL CHECK(length(state_after_sha256) = 64),
+    origin TEXT NOT NULL DEFAULT 'rules' CHECK(origin IN ('rules', 'ai')),
+    model_proposals_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(model_proposals_json)),
+    rejected_proposals_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(rejected_proposals_json)),
+    job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     UNIQUE(run_id, ordinal)
 );
@@ -737,7 +742,7 @@ CREATE TABLE IF NOT EXISTS ai_provider_profiles (
 
 CREATE TABLE IF NOT EXISTS ai_task_defaults (
     task_type TEXT PRIMARY KEY
-        CHECK(task_type IN ('chapter_brief', 'chapter_draft', 'reference_analysis', 'review')),
+        CHECK(task_type IN ('chapter_brief', 'chapter_draft', 'reference_analysis', 'review', 'sandbox')),
     profile_id TEXT NOT NULL REFERENCES ai_provider_profiles(id) ON DELETE CASCADE,
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
     updated_at TEXT NOT NULL

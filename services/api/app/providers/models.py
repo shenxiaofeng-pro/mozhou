@@ -15,6 +15,7 @@ class AiTaskType(StrEnum):
     CHAPTER_DRAFT = "chapter_draft"
     REFERENCE_ANALYSIS = "reference_analysis"
     REVIEW = "review"
+    SANDBOX = "sandbox"
 
 
 class AiErrorCategory(StrEnum):

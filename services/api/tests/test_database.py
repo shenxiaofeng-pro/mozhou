@@ -14,7 +14,10 @@ from app.database import (
     DatabaseMigrationError,
     UnsupportedDatabaseVersionError,
 )
+from app.jobs import JobKind, JobRepository
 from app.migrations import MIGRATIONS, Migration, v9, v12
+from app.models import CreateProjectRequest, Genre
+from app.repository import ProjectRepository
 
 
 def test_database_initializes_required_tables(tmp_path: Path) -> None:
@@ -145,21 +148,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v18-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v19-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (18,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (19,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v18-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v19-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v18_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v19_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -215,7 +218,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v18_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (18,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (19,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -238,8 +241,57 @@ def test_database_runs_v1_and_v2_fixtures_to_v18_without_losing_data(
         (16, "closed_beta_evaluation"),
         (17, "narrative_sandbox"),
         (18, "scene_plot_graph_originality"),
+        (19, "ai_narrative_sandbox"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v18-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v19-*.db"))) == 1
+
+
+def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "v18-jobs.db"
+    with monkeypatch.context() as migration_patch:
+        migration_patch.setattr(database_module, "MIGRATIONS", MIGRATIONS[:18])
+        Database(database_path).initialize()
+    database = Database(database_path)
+    workspace = ProjectRepository(database).create_project(
+        CreateProjectRequest(
+            title="迁移验证",
+            genre=Genre.URBAN_REBIRTH,
+            rebirth_year=1992,
+            rebirth_location="南平",
+            chapter_target_words=3000,
+            safety_buffer_chapters=3,
+        )
+    )
+    legacy_job, _ = JobRepository(database).create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.REVIEW,
+        idempotency_key="legacy-review",
+        input_payload={"legacy": True},
+        provider="local",
+        model="rules-v1",
+    )
+
+    Database(database_path).initialize()
+
+    jobs = JobRepository(Database(database_path))
+    assert jobs.get_job(legacy_job.id).kind == JobKind.REVIEW
+    created, was_created = jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.SANDBOX_AI_ROUND,
+        workflow="sandbox_ai_round_v1",
+        idempotency_key="new-ai-round",
+        input_payload={"run_id": "test"},
+        provider="test",
+        model="test",
+    )
+    assert was_created is True
+    assert created.kind == JobKind.SANDBOX_AI_ROUND
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (19,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_v9_migrates_project_reference_text_to_global_asset_without_loss() -> None:
@@ -467,7 +519,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
         ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v18-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v19-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

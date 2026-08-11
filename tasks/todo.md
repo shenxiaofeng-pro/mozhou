@@ -11,10 +11,10 @@
 
 ### M14 AI 增强剧情沙盘
 
-- [ ] AI 沙盘结构化契约、Prompt 与 provider adapter 能力。
-- [ ] 外发/费用预览、可恢复单轮 Job、取消和 Artifact 重放。
-- [ ] 服务端动作裁决、确定性回退和候选隔离回归。
-- [ ] AI/规则模式 UI、本地兼容协议浏览器验收与完整 verify。
+- [x] AI 沙盘结构化契约、Prompt 与 provider adapter 能力。
+- [x] 外发/费用预览、可恢复单轮 Job、取消和 Artifact 重放。
+- [x] 服务端动作裁决、确定性回退和候选隔离回归。
+- [x] AI/规则模式 UI、本地兼容协议浏览器验收与完整 verify。
 
 ### M15 资料研究员 Agent
 

@@ -11,6 +11,7 @@ export type JobKind =
   | 'reference_book_reduce'
   | 'reference_fusion'
   | 'review'
+  | 'sandbox_ai_round'
 
 export type JobState =
   | 'queued'
@@ -284,6 +285,8 @@ export type SandboxCandidateState = 'candidate' | 'approved' | 'rejected'
 
 export type SandboxVariableValue = boolean | number | string
 
+export type SandboxRoundOrigin = 'rules' | 'ai'
+
 export interface SandboxActor {
   id: string
   name: string
@@ -364,6 +367,16 @@ export interface SandboxAction {
   summary: string
 }
 
+export interface SandboxAiActionDraft {
+  actor_id: string
+  action_kind: SandboxActionKind
+  target_actor_id: string | null
+  location: string
+  required_knowledge: string[]
+  motive: string
+  intended_consequence: string
+}
+
 export interface SandboxOutcome {
   actor_id: string
   summary: string
@@ -382,6 +395,10 @@ export interface SandboxRound {
   outcomes: SandboxOutcome[]
   assumptions: string[]
   evidence: Array<Record<string, string>>
+  origin: SandboxRoundOrigin
+  model_proposals: SandboxAiActionDraft[]
+  rejected_proposals: Array<Record<string, string>>
+  job_id: string | null
   state_before_sha256: string
   state_after_sha256: string
   created_at: string
@@ -397,6 +414,7 @@ export interface SandboxRun {
   action_budget: number
   actions_used: number
   current_state_sha256: string
+  execution_mode: SandboxRoundOrigin
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -474,6 +492,33 @@ export interface SandboxWorkspace {
   branches: SandboxBranch[]
   runs: SandboxRun[]
   candidates: SandboxCandidate[]
+}
+
+export interface SandboxAiPreview {
+  task_type: 'sandbox'
+  run_id: string
+  round_number: number
+  state_sha256: string
+  snapshot_sha256: string
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  data_types: string[]
+  content_scope: string
+  actor_count: number
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  prompt_version: string
+  context_sha256: string
+}
+
+export interface SubmitSandboxAiRoundInput {
+  expected_state_sha256: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
 }
 
 export interface ProjectArchive {
@@ -1275,7 +1320,7 @@ export interface ConfigureAiInput {
 
 export type ProviderKind = 'openai' | 'openai_compatible'
 
-export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review'
+export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review' | 'sandbox'
 
 export interface ModelCapabilities {
   structured_output: boolean

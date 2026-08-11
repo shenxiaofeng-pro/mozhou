@@ -81,6 +81,7 @@ class OpenAiResponsesAdapter:
         instructions: str,
         input_text: str,
         output_model: type[StructuredOutput],
+        max_output_tokens: int | None = None,
     ) -> ProviderResult[StructuredOutput]:
         started = perf_counter()
         try:
@@ -89,6 +90,7 @@ class OpenAiResponsesAdapter:
                 instructions=instructions,
                 input=input_text,
                 text_format=output_model,
+                max_output_tokens=max_output_tokens,
                 store=False,
             )
             output = response.output_parsed
@@ -195,6 +197,7 @@ class OpenAiCompatibleChatAdapter:
         instructions: str,
         input_text: str,
         output_model: type[StructuredOutput],
+        max_output_tokens: int | None = None,
     ) -> ProviderResult[StructuredOutput]:
         started = perf_counter()
         schema_instruction = (
@@ -205,6 +208,8 @@ class OpenAiCompatibleChatAdapter:
             "model": self.config.model,
             "messages": _messages(instructions + schema_instruction, input_text),
         }
+        if max_output_tokens is not None:
+            request["max_completion_tokens"] = max_output_tokens
         if self.config.capabilities.structured_output:
             request["response_format"] = {"type": "json_object"}
         try:

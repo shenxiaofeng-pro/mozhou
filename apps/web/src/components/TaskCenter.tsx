@@ -31,6 +31,7 @@ const kindLabels: Record<JobKind, string> = {
   reference_book_reduce: '单书结构归纳',
   reference_fusion: '多书六维合成',
   review: 'AI 审校',
+  sandbox_ai_round: 'AI 剧情沙盘',
 }
 
 const stateLabels: Record<JobState, string> = {

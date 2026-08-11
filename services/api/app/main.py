@@ -245,6 +245,11 @@ from app.sandbox import (
     SandboxValidationError,
     SandboxWorkspace,
 )
+from app.sandbox_ai import (
+    SandboxAiPreview,
+    SandboxAiService,
+    SubmitSandboxAiRoundRequest,
+)
 
 
 def create_app(
@@ -279,6 +284,12 @@ def create_app(
         application.state.context_repository = ContextRepository(database)
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
+        application.state.sandbox_ai_service = SandboxAiService(
+            application.state.narrative_sandbox,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
         application.state.director_repository = DirectorRepository(database)
         application.state.review_repository = ReviewRepository(database)
         application.state.reference_job_service = ReferenceJobService(
@@ -324,6 +335,7 @@ def create_app(
                 JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
                 JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
                 JobKind.REVIEW: handle_review_job,
+                JobKind.SANDBOX_AI_ROUND: application.state.sandbox_ai_service.handle,
             },
         )
         if not defer_job_runtime:
@@ -581,6 +593,64 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(error)) from error
         except SandboxConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.get(
+        "/api/sandbox/runs/{run_id}/ai-preview",
+        response_model=SandboxAiPreview,
+    )
+    def preview_sandbox_ai_round(run_id: UUID) -> SandboxAiPreview:
+        try:
+            return application.state.sandbox_ai_service.preview(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置剧情沙盘模型线路") from error
+        except (SandboxValidationError, SandboxConflictError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            messages = {
+                "sandbox_run_not_found": "沙盘运行不存在",
+                "sandbox_context_too_large": "沙盘外发上下文超过安全上限",
+                "originality_gate_blocked": "场景原创性检查为高风险，AI 沙盘已阻断",
+            }
+            raise HTTPException(
+                status_code=409,
+                detail=messages.get(str(error), "当前 AI 沙盘无法预览"),
+            ) from error
+
+    @application.post(
+        "/api/sandbox/runs/{run_id}/ai-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_sandbox_ai_round(
+        run_id: UUID,
+        body: SubmitSandboxAiRoundRequest,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = application.state.sandbox_ai_service.submit(str(run_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置剧情沙盘模型线路") from error
+        except (SandboxValidationError, SandboxConflictError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            messages = {
+                "sandbox_run_not_found": "沙盘运行不存在",
+                "sandbox_context_too_large": "沙盘外发上下文超过安全上限",
+                "external_processing_not_confirmed": "请先确认本轮沙盘外发范围",
+                "estimated_cost_exceeds_limit": "预计费用超过本次上限",
+                "sandbox_state_changed": "沙盘状态已经变化，请重新预览",
+                "originality_gate_blocked": "场景原创性检查为高风险，AI 沙盘已阻断",
+            }
+            raise HTTPException(
+                status_code=409,
+                detail=messages.get(str(error), "当前 AI 沙盘任务无法提交"),
+            ) from error
 
     @application.post("/api/sandbox/runs/{run_id}/cancel", response_model=SandboxRun)
     def cancel_sandbox_run(run_id: UUID) -> SandboxRun:

@@ -1,5 +1,7 @@
 import type {
+  Job,
   Project,
+  SandboxAiPreview,
   SandboxBranch,
   SandboxCandidate,
   SandboxReport,
@@ -72,7 +74,11 @@ const branch: SandboxBranch = {
   created_at: '2026-08-11T00:01:00Z',
 }
 
-function run(state: SandboxRun['state'], completedRounds: number): SandboxRun {
+function run(
+  state: SandboxRun['state'],
+  completedRounds: number,
+  executionMode: SandboxRun['execution_mode'] = 'rules',
+): SandboxRun {
   return {
     id: '33333333-3333-4333-8333-333333333333',
     project_id: project.id,
@@ -83,6 +89,7 @@ function run(state: SandboxRun['state'], completedRounds: number): SandboxRun {
     action_budget: 15,
     actions_used: completedRounds * 5,
     current_state_sha256: String(completedRounds).repeat(64),
+    execution_mode: executionMode,
     created_at: '2026-08-11T00:02:00Z',
     updated_at: '2026-08-11T00:02:00Z',
     completed_at: state === 'completed' ? '2026-08-11T00:03:00Z' : null,
@@ -102,6 +109,10 @@ function run(state: SandboxRun['state'], completedRounds: number): SandboxRun {
       }],
       assumptions: ['只依据快照'],
       evidence: [],
+      origin: executionMode,
+      model_proposals: [],
+      rejected_proposals: [],
+      job_id: executionMode === 'ai' ? 'job-ai' : null,
       state_before_sha256: 'b'.repeat(64),
       state_after_sha256: 'c'.repeat(64),
       created_at: '2026-08-11T00:02:00Z',
@@ -211,5 +222,103 @@ describe('NarrativeSandboxDialog', () => {
 
     expect(api.cancelSandboxRun).toHaveBeenCalledWith(ready.id)
     expect(await screen.findByText(/已取消 · 0\/3 轮/)).toBeVisible()
+  })
+
+  it('previews and confirms one AI round while showing rule arbitration', async () => {
+    const ready = run('ready', 0, 'ai')
+    const advanced = run('running', 1, 'ai')
+    advanced.rounds[0].rejected_proposals = [{
+      actor_id: 'actor_2',
+      reason: '资源不足',
+      fallback: 'deterministic_rule',
+    }]
+    const preview: SandboxAiPreview = {
+      task_type: 'sandbox',
+      run_id: ready.id,
+      round_number: 1,
+      state_sha256: ready.current_state_sha256,
+      snapshot_sha256: snapshot.snapshot_sha256,
+      profile_id: 'profile-1',
+      profile_name: '本地兼容线路',
+      provider: 'openai_compatible',
+      model: 'test-model',
+      data_types: ['角色状态', '分支变量'],
+      content_scope: '第 1 轮 · 5 个角色',
+      actor_count: 5,
+      character_count: 1800,
+      estimated_input_tokens: 900,
+      estimated_output_tokens: 1140,
+      estimated_cost_microusd: 2040,
+      prompt_version: 'sandbox-ai-prompt-v1',
+      context_sha256: 'd'.repeat(64),
+    }
+    const job: Job = {
+      id: 'job-ai',
+      project_id: project.id,
+      chapter_id: null,
+      parent_job_id: null,
+      kind: 'sandbox_ai_round',
+      workflow: 'sandbox_ai_round_v1',
+      state: 'queued',
+      idempotency_key: 'ai-round-1',
+      progress_current: 0,
+      progress_total: 1,
+      current_step: '',
+      estimated_calls: 1,
+      completed_calls: 0,
+      provider: 'openai_compatible',
+      provider_profile_id: 'profile-1',
+      model: 'test-model',
+      lease_owner: null,
+      lease_expires_at: null,
+      heartbeat_at: null,
+      error_code: null,
+      error_message: null,
+      created_at: '2026-08-11T00:00:00Z',
+      updated_at: '2026-08-11T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+    }
+    vi.spyOn(api, 'listSandboxTemplates').mockResolvedValue([template])
+    vi.spyOn(api, 'listJobs').mockResolvedValue([])
+    vi.spyOn(api, 'getSandboxWorkspace').mockResolvedValue({
+      ...empty,
+      snapshots: [snapshot],
+      branches: [branch],
+      runs: [ready],
+    })
+    vi.spyOn(api, 'previewSandboxAiRound').mockResolvedValue(preview)
+    vi.spyOn(api, 'submitSandboxAiRound').mockResolvedValue(job)
+    vi.spyOn(api, 'getJob').mockResolvedValue({
+      ...job,
+      state: 'succeeded',
+      progress_current: 1,
+      completed_calls: 1,
+      current_step: 'AI 第 1 轮已完成规则裁决',
+      chunks: [],
+      attempts: [],
+      artifacts: [],
+      events: [],
+    })
+    vi.spyOn(api, 'getSandboxRun').mockResolvedValue(advanced)
+    vi.spyOn(api, 'getSandboxReport').mockResolvedValue({ ...report, state: 'running' })
+    const user = userEvent.setup()
+
+    render(<NarrativeSandboxDialog project={project} onClose={vi.fn()} />)
+    await user.click(await screen.findByRole('button', { name: '预览 AI 本轮' }))
+
+    expect(await screen.findByRole('heading', { name: '第 1 轮只发送冻结沙盘摘要' })).toBeVisible()
+    const submit = screen.getByRole('button', { name: '确认并推进一轮' })
+    expect(submit).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: /我确认把以上范围发送/ }))
+    await user.click(submit)
+
+    expect(await screen.findByText('1 个模型行动被规则拒绝并安全回退')).toBeVisible()
+    expect(screen.getByText(/模型提议 \/ 规则裁决/)).toBeVisible()
+    expect(api.submitSandboxAiRound).toHaveBeenCalledWith(ready.id, {
+      expected_state_sha256: ready.current_state_sha256,
+      confirm_external_processing: true,
+      max_estimated_cost_microusd: 2040,
+    })
   })
 })

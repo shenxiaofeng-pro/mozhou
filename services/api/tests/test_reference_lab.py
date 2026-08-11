@@ -874,7 +874,7 @@ def test_v18_migration_blocks_legacy_application_until_scene_check_runs(
             "UPDATE originality_reports SET acknowledged_at = NULL WHERE id = ?",
             (application["latest_report_id"],),
         )
-        connection.execute("DELETE FROM schema_migrations WHERE version = 18")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 18")
         connection.execute("PRAGMA user_version=17")
         connection.commit()
 

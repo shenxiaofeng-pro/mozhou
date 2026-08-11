@@ -1134,6 +1134,67 @@ textarea:focus-visible {
   background: var(--paper);
 }
 
+.sandbox-ai-preview,
+.sandbox-ai-job {
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--paper) 92%, #dbe9df);
+  padding: 18px;
+}
+
+.sandbox-ai-preview dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.sandbox-ai-preview dl div {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  padding: 10px;
+}
+
+.sandbox-ai-preview dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sandbox-ai-preview dd {
+  margin: 4px 0 0;
+}
+
+.sandbox-ai-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.sandbox-ai-confirm input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.sandbox-ai-preview > button,
+.sandbox-ai-job > button {
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  margin-top: 12px;
+  padding: 9px 14px;
+}
+
+.sandbox-ai-preview > button:disabled,
+.sandbox-ai-job > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .sandbox-runs > header,
 .sandbox-active-run > header,
 .sandbox-report > header {

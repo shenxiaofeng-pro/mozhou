@@ -21,6 +21,7 @@ from app.migrations import (
     v16,
     v17,
     v18,
+    v19,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -60,6 +61,7 @@ MIGRATIONS = (
         name="scene_plot_graph_originality",
         upgrade=v18.upgrade,
     ),
+    Migration(version=19, name="ai_narrative_sandbox", upgrade=v19.upgrade),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

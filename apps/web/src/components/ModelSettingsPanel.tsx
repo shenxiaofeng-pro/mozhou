@@ -41,6 +41,7 @@ const taskRoutes: Array<{ type: AiTaskType; label: string; detail: string }> = [
   { type: 'chapter_draft', label: '正文主笔', detail: '完整章节候选稿' },
   { type: 'reference_analysis', label: '拆书萃取', detail: '分段分析与多书融合' },
   { type: 'review', label: '一致性审校', detail: '事实、人物与伏笔检查' },
+  { type: 'sandbox', label: '剧情沙盘', detail: '角色行动建议与候选后果' },
 ]
 
 function profileForm(profile: ModelProfile): ProfileForm {

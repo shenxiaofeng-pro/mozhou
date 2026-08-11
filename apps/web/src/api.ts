@@ -71,6 +71,7 @@ import type {
   SerialDashboard,
   SceneOriginalityCheck,
   SandboxBranch,
+  SandboxAiPreview,
   SandboxCandidate,
   SandboxComparison,
   SandboxInterview,
@@ -78,6 +79,7 @@ import type {
   SandboxRun,
   SandboxTemplate,
   SandboxWorkspace,
+  SubmitSandboxAiRoundInput,
   SourceCard,
   SourceDocument,
   StoryEntity,
@@ -258,10 +260,19 @@ export const api = {
       { method: 'POST', body: JSON.stringify(input) },
     )
   },
-  createSandboxRun(branchId: string, requestedRounds: number, actionBudget: number) {
+  createSandboxRun(
+    branchId: string,
+    requestedRounds: number,
+    actionBudget: number,
+    executionMode: 'rules' | 'ai' = 'rules',
+  ) {
     return request<SandboxRun>(`/api/sandbox/branches/${encodeURIComponent(branchId)}/runs`, {
       method: 'POST',
-      body: JSON.stringify({ requested_rounds: requestedRounds, action_budget: actionBudget }),
+      body: JSON.stringify({
+        requested_rounds: requestedRounds,
+        action_budget: actionBudget,
+        execution_mode: executionMode,
+      }),
     })
   },
   getSandboxRun(runId: string) {
@@ -270,6 +281,17 @@ export const api = {
   advanceSandboxRun(runId: string) {
     return request<SandboxRun>(`/api/sandbox/runs/${encodeURIComponent(runId)}/advance`, {
       method: 'POST',
+    })
+  },
+  previewSandboxAiRound(runId: string) {
+    return request<SandboxAiPreview>(
+      `/api/sandbox/runs/${encodeURIComponent(runId)}/ai-preview`,
+    )
+  },
+  submitSandboxAiRound(runId: string, input: SubmitSandboxAiRoundInput) {
+    return request<Job>(`/api/sandbox/runs/${encodeURIComponent(runId)}/ai-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
     })
   },
   cancelSandboxRun(runId: string) {
