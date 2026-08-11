@@ -171,6 +171,7 @@ function ActiveChapterWorkspace({
   const manuscriptRef = useRef<HTMLTextAreaElement>(null)
   const directorTriggerRef = useRef<HTMLButtonElement>(null)
   const directorCloseRef = useRef<HTMLButtonElement>(null)
+  const authorToolsTriggerRef = useRef<HTMLButtonElement>(null)
   const deferredDraft = useDeferredValue(draft)
   const wordCount = deferredDraft.replace(/\s/g, '').length
   const progress = Math.min(100, Math.round((wordCount / workspace.project.chapter_target_words) * 100))
@@ -286,6 +287,11 @@ function ActiveChapterWorkspace({
     onChapterChanged(updated)
   }
 
+  function closeAuthorTools() {
+    setAuthorTools(null)
+    authorToolsTriggerRef.current?.focus()
+  }
+
   return (
     <main className="workspace-shell" data-focus-mode={isFocusMode}>
       <header className="workspace-header">
@@ -307,7 +313,7 @@ function ActiveChapterWorkspace({
             disabled={isNavigating}
             onClick={() => { void navigateAfterSave(() => setSerialDialogMode('dashboard')) }}
           >连载台</button>
-          <button className="library-action" type="button" aria-label="打开作者工具台" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setAuthorTools({ tab: 'calendar', selection: null })) }}>作者工具</button>
+          <button ref={authorToolsTriggerRef} className="library-action" type="button" aria-label="打开作者工具台" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setAuthorTools({ tab: 'calendar', selection: null })) }}>作者工具</button>
           <button
             className="library-action"
             type="button"
@@ -476,7 +482,7 @@ function ActiveChapterWorkspace({
           onOpenChapter={openSerialChapter}
         />
       ) : null}
-      {authorTools ? <AuthorToolsDialog project={workspace.project} chapter={chapter} initialTab={authorTools.tab} selection={authorTools.selection} onClose={() => setAuthorTools(null)} /> : null}
+      {authorTools ? <AuthorToolsDialog project={workspace.project} chapter={chapter} initialTab={authorTools.tab} selection={authorTools.selection} onClose={closeAuthorTools} onAdjustGoal={() => { setAuthorTools(null); setSerialDialogMode('dashboard') }} /> : null}
       <button
         className="director-drawer-backdrop"
         type="button"

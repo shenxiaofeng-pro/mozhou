@@ -1,12 +1,17 @@
 import type { AuthorIdea, Chapter, ChapterAnnotation, Project, StoryGraphEdge, StoryGraphNode, StoryGraphs, WritingCalendar } from '@mozhou/contracts'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { api } from '../api'
 
 type Tab = 'calendar' | 'annotations' | 'ideas' | 'graphs'
-interface Props { project: Project; chapter: Chapter; initialTab: Tab; selection: { start: number; end: number } | null; onClose: () => void }
+const AUTHOR_TOOL_TABS = [['calendar', '码字日历'], ['annotations', '章节批注'], ['ideas', '灵感箱'], ['graphs', '关系 / 伏笔图谱']] as const
+const AUTHOR_TOOL_LOADING: Record<Tab, string> = { calendar: '正在读取码字日历…', annotations: '正在读取章节批注…', ideas: '正在读取灵感箱…', graphs: '正在读取关系图谱…' }
+interface Props { project: Project; chapter: Chapter; initialTab: Tab; selection: { start: number; end: number } | null; onClose: () => void; onAdjustGoal?: () => void }
 
-export function AuthorToolsDialog({ project, chapter, initialTab, selection, onClose }: Props) {
+export function AuthorToolsDialog({ project, chapter, initialTab, selection, onClose, onAdjustGoal = () => undefined }: Props) {
+  const dialogRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const onCloseRef = useRef(onClose)
   const [tab, setTab] = useState<Tab>(initialTab)
   const [calendar, setCalendar] = useState<WritingCalendar | null>(null)
   const [annotations, setAnnotations] = useState<ChapterAnnotation[]>([])
@@ -21,14 +26,64 @@ export function AuthorToolsDialog({ project, chapter, initialTab, selection, onC
   const [relationType, setRelationType] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loadingTab, setLoadingTab] = useState<Tab | null>(initialTab)
+  const loading = loadingTab === tab
+
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
 
   useEffect(() => {
-    const request = tab === 'calendar' ? api.getWritingCalendar(project.id).then(setCalendar)
-      : tab === 'annotations' ? api.listChapterAnnotations(chapter.id).then(setAnnotations)
-      : tab === 'ideas' ? api.listAuthorIdeas(project.id).then(setIdeas)
-      : api.getStoryGraphs(project.id).then(setGraphs)
-    void request.catch((caught: unknown) => setError(caught instanceof Error ? caught.message : '作者工具读取失败'))
+    const returnFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+    closeRef.current?.focus()
+    function handleDialogKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable.at(-1)!
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus()
+      }
+    }
+    window.addEventListener('keydown', handleDialogKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleDialogKeyDown)
+      returnFocus?.focus()
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    async function loadTool() {
+      try {
+        if (tab === 'calendar') {
+          const next = await api.getWritingCalendar(project.id); if (active) setCalendar(next)
+        } else if (tab === 'annotations') {
+          const next = await api.listChapterAnnotations(chapter.id); if (active) setAnnotations(next)
+        } else if (tab === 'ideas') {
+          const next = await api.listAuthorIdeas(project.id); if (active) setIdeas(next)
+        } else {
+          const next = await api.getStoryGraphs(project.id); if (active) setGraphs(next)
+        }
+      } catch (caught) {
+        if (active) setError(caught instanceof Error ? caught.message : '作者工具读取失败')
+      } finally {
+        if (active) setLoadingTab((current) => current === tab ? null : current)
+      }
+    }
+    void loadTool()
+    return () => { active = false }
   }, [chapter.id, project.id, tab])
+
+  function selectTab(next: Tab) {
+    setError(null); setLoadingTab(next); setTab(next)
+  }
 
   async function addAnnotation() {
     if (!selection || selection.end <= selection.start || !comment.trim()) return
@@ -74,20 +129,28 @@ export function AuthorToolsDialog({ project, chapter, initialTab, selection, onC
     finally { setBusy(false) }
   }
 
-  return <div className="author-tools-backdrop" role="presentation"><section className="author-tools-dialog" role="dialog" aria-modal="true" aria-label="作者效率工具">
-    <header><div><small>AUTHOR DESK</small><h2>作者工具台</h2></div><button type="button" onClick={onClose}>关闭</button></header>
-    <nav aria-label="作者工具分类">{([['calendar', '码字日历'], ['annotations', '章节批注'], ['ideas', '灵感箱'], ['graphs', '关系 / 伏笔图谱']] as const).map(([value, label]) => <button type="button" key={value} data-active={tab === value} onClick={() => { setError(null); setTab(value) }}>{label}</button>)}</nav>
-    {error ? <p className="agent-error" role="alert">{error}</p> : null}
-    <div className="author-tools-content">
-      {tab === 'calendar' && calendar ? <CalendarView calendar={calendar} /> : null}
+  return <div className="author-tools-backdrop" role="presentation"><section ref={dialogRef} className="author-tools-dialog" role="dialog" aria-modal="true" aria-label="作者效率工具">
+    <header><div><small>AUTHOR DESK</small><h2>作者工具台</h2></div><button ref={closeRef} type="button" onClick={onClose}>关闭</button></header>
+    <nav role="tablist" aria-label="作者工具分类">{AUTHOR_TOOL_TABS.map(([value, label], index) => <button type="button" role="tab" id={`author-tool-tab-${value}`} aria-controls={`author-tool-panel-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} key={value} data-active={tab === value} onClick={() => selectTab(value)} onKeyDown={(event) => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+      event.preventDefault()
+      const offset = event.key === 'ArrowRight' ? 1 : -1
+      const next = AUTHOR_TOOL_TABS[(index + offset + AUTHOR_TOOL_TABS.length) % AUTHOR_TOOL_TABS.length][0]
+      selectTab(next)
+      document.getElementById(`author-tool-tab-${next}`)?.focus()
+    }}>{label}</button>)}</nav>
+    <div className="author-tools-content" role="tabpanel" id={`author-tool-panel-${tab}`} aria-labelledby={`author-tool-tab-${tab}`} tabIndex={0} aria-busy={loading}>
+      {loading ? <p className="author-tools-loading" role="status">{AUTHOR_TOOL_LOADING[tab]}</p> : null}
+      {error ? <p className="agent-error" role="alert">{error}</p> : null}
+      {tab === 'calendar' && calendar ? <CalendarView calendar={calendar} onReturnToWriting={onClose} onAdjustGoal={onAdjustGoal} /> : null}
       {tab === 'annotations' ? <section className="annotation-tools"><header><div><h3>{chapter.title}</h3><p>批注锁定当前 revision 和原文选区；改稿后无法唯一定位会标记待定位。</p></div></header>{selection && selection.end > selection.start ? <div className="annotation-compose"><blockquote>{chapter.content.slice(selection.start, selection.end)}</blockquote><input value={comment} placeholder="这段需要处理什么？" onChange={(event) => setComment(event.target.value)} /><button type="button" disabled={busy || !comment.trim()} onClick={() => { void addAnnotation() }}>添加批注</button></div> : <p>请先在正文编辑器选中文字，再点击“批注选中文字”。</p>}<div className="annotation-list">{annotations.map((annotation) => <article key={annotation.id} data-status={annotation.status}><blockquote>{annotation.selected_text}</blockquote><p>{annotation.comment}</p><footer><span>{annotation.status === 'stale' ? '待定位' : annotation.status === 'resolved' ? '已解决' : `字符 ${annotation.start_char}–${annotation.end_char}`}</span>{annotation.status === 'open' ? <button disabled={busy} type="button" onClick={() => { void resolveAnnotation(annotation) }}>标记已解决</button> : null}</footer></article>)}</div></section> : null}
-      {tab === 'ideas' ? <section className="idea-box"><div className="idea-compose"><input value={ideaTitle} placeholder="一句话标题" onChange={(event) => setIdeaTitle(event.target.value)} autoFocus /><textarea value={ideaContent} placeholder="人物、桥段、资料线索……" onChange={(event) => setIdeaContent(event.target.value)} /><input value={ideaTags} placeholder="标签，用逗号分隔" onChange={(event) => setIdeaTags(event.target.value)} /><button type="button" disabled={busy || !ideaTitle.trim() || !ideaContent.trim()} onClick={() => { void addIdea() }}>收进灵感箱</button></div><p className="isolation-note">“准备为候选”只标记用途，不会直接改章纲、资料卡或人物账本。</p><div className="idea-list">{ideas.map((idea) => <article key={idea.id} data-status={idea.status}><header><h3>{idea.title}</h3><span>{idea.status}</span></header><p>{idea.content}</p><small>{idea.tags.join(' · ') || '无标签'}</small>{idea.status === 'inbox' ? <footer><button disabled={busy} type="button" onClick={() => { void prepareIdea(idea, 'chapter_brief') }}>准备为章纲候选</button><button disabled={busy} type="button" onClick={() => { void prepareIdea(idea, 'source_card') }}>准备为资料候选</button><button disabled={busy} type="button" onClick={() => { void prepareIdea(idea, 'character') }}>准备为人物候选</button></footer> : <strong>已准备：{idea.target_kind}</strong>}</article>)}</div></section> : null}
+      {tab === 'ideas' ? <section className="idea-box"><div className="idea-compose"><input value={ideaTitle} placeholder="一句话标题" onChange={(event) => setIdeaTitle(event.target.value)} /><textarea value={ideaContent} placeholder="人物、桥段、资料线索……" onChange={(event) => setIdeaContent(event.target.value)} /><input value={ideaTags} placeholder="标签，用逗号分隔" onChange={(event) => setIdeaTags(event.target.value)} /><button type="button" disabled={busy || !ideaTitle.trim() || !ideaContent.trim()} onClick={() => { void addIdea() }}>收进灵感箱</button></div><p className="isolation-note">“准备为候选”只标记用途，不会直接改章纲、资料卡或人物账本。</p><div className="idea-list">{ideas.map((idea) => <article key={idea.id} data-status={idea.status}><header><h3>{idea.title}</h3><span>{idea.status}</span></header><p>{idea.content}</p><small>{idea.tags.join(' · ') || '无标签'}</small>{idea.status === 'inbox' ? <footer><button disabled={busy} type="button" onClick={() => { void prepareIdea(idea, 'chapter_brief') }}>准备为章纲候选</button><button disabled={busy} type="button" onClick={() => { void prepareIdea(idea, 'source_card') }}>准备为资料候选</button><button disabled={busy} type="button" onClick={() => { void prepareIdea(idea, 'character') }}>准备为人物候选</button></footer> : <strong>已准备：{idea.target_kind}</strong>}</article>)}</div></section> : null}
       {tab === 'graphs' && graphs ? <section className="story-graphs"><h3>正式人物关系</h3><div className="relationship-compose"><select aria-label="关系起点" value={relationSource} onChange={(event) => setRelationSource(event.target.value)}><option value="">选择人物</option>{graphs.relationship_nodes.filter((node) => node.kind === 'character').map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</select><input value={relationType} placeholder="例：师徒、竞争对手" onChange={(event) => setRelationType(event.target.value)} /><select aria-label="关系终点" value={relationTarget} onChange={(event) => setRelationTarget(event.target.value)}><option value="">选择人物</option>{graphs.relationship_nodes.filter((node) => node.kind === 'character').map((node) => <option key={node.id} value={node.id}>{node.label}</option>)}</select><button type="button" disabled={busy || !relationSource || !relationTarget || relationSource === relationTarget || !relationType.trim()} onClick={() => { void addRelationship() }}>记入正式关系</button></div><GraphView nodes={graphs.relationship_nodes} edges={graphs.relationship_edges} /><GraphList nodes={graphs.relationship_nodes} edges={graphs.relationship_edges} /><h3>伏笔埋设与回收</h3><GraphView nodes={graphs.thread_nodes} edges={graphs.thread_edges} /><GraphList nodes={graphs.thread_nodes} edges={graphs.thread_edges} /></section> : null}
     </div>
   </section></div>
 }
 
-function CalendarView({ calendar }: { calendar: WritingCalendar }) {
+function CalendarView({ calendar, onReturnToWriting, onAdjustGoal }: { calendar: WritingCalendar; onReturnToWriting: () => void; onAdjustGoal: () => void }) {
   const weeks = Array.from({ length: Math.ceil(calendar.days.length / 7) }, (_, index) => calendar.days.slice(index * 7, index * 7 + 7))
   const currentWeek = weeks.at(-1) ?? []
   const historyWeeks = weeks.slice(0, -1).reverse()
@@ -112,6 +175,7 @@ function CalendarView({ calendar }: { calendar: WritingCalendar }) {
         <small>近 42 天 · {range}</small>
         <h3>码字节奏</h3>
         <p>{todayMessage}</p>
+        <div className="calendar-actions"><button type="button" onClick={onReturnToWriting}>回到正文写作</button><button type="button" onClick={onAdjustGoal}>调整日目标</button></div>
       </div>
       <div className="calendar-today" data-state={today?.met_goal ? 'met' : today && today.net_characters < 0 ? 'negative' : 'open'}>
         <span>今日字数变化</span>

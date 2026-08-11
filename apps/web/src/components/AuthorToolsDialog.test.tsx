@@ -1,5 +1,5 @@
 import type { AuthorIdea, Chapter, Project, WritingCalendar } from '@mozhou/contracts'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '../api'
@@ -25,7 +25,7 @@ function idea(status: AuthorIdea['status'] = 'inbox'): AuthorIdea {
 }
 
 describe('AuthorToolsDialog', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
   it('keeps a new idea isolated and only marks its intended candidate type', async () => {
     vi.spyOn(api, 'listAuthorIdeas').mockResolvedValue([])
@@ -61,7 +61,9 @@ describe('AuthorToolsDialog', () => {
       streak_days: 3,
     })
 
-    render(<AuthorToolsDialog project={project} chapter={chapter} initialTab="calendar" selection={null} onClose={vi.fn()} />)
+    const onClose = vi.fn()
+    const onAdjustGoal = vi.fn()
+    render(<AuthorToolsDialog project={project} chapter={chapter} initialTab="calendar" selection={null} onClose={onClose} onAdjustGoal={onAdjustGoal} />)
 
     expect(await screen.findByRole('heading', { name: '码字节奏' })).toBeInTheDocument()
     const today = screen.getByText('今日字数变化').parentElement!
@@ -75,5 +77,41 @@ describe('AuthorToolsDialog', () => {
     expect(within(currentWeek).getByText('今天')).toBeInTheDocument()
     expect(screen.getByRole('listitem', { name: /7月11日 以修改为主/ })).toHaveAttribute('data-negative', 'true')
     expect(screen.getByRole('listitem', { name: /8月11日 已达目标/ })).toHaveAttribute('data-today', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '回到正文写作' }))
+    expect(onClose).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: '调整日目标' }))
+    expect(onAdjustGoal).toHaveBeenCalledOnce()
+  })
+
+  it('moves focus into the dialog, closes with Escape, and restores focus', async () => {
+    vi.spyOn(api, 'listAuthorIdeas').mockResolvedValue([])
+    const trigger = document.createElement('button')
+    trigger.textContent = '打开作者工具'
+    document.body.append(trigger)
+    trigger.focus()
+    const onClose = vi.fn()
+
+    const { unmount } = render(<AuthorToolsDialog project={project} chapter={chapter} initialTab="ideas" selection={null} onClose={onClose} />)
+    const close = await screen.findByRole('button', { name: '关闭' })
+    await waitFor(() => expect(close).toHaveFocus())
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledOnce()
+    unmount()
+    expect(trigger).toHaveFocus()
+    trigger.remove()
+  })
+
+  it('exposes tabs and loading state while a tool is being read', async () => {
+    let finishLoading!: (ideas: AuthorIdea[]) => void
+    vi.spyOn(api, 'listAuthorIdeas').mockReturnValue(new Promise((resolve) => { finishLoading = resolve }))
+
+    render(<AuthorToolsDialog project={project} chapter={chapter} initialTab="ideas" selection={null} onClose={vi.fn()} />)
+
+    expect(screen.getByRole('tablist', { name: '作者工具分类' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '灵感箱' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: '灵感箱' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在读取灵感箱…')
+    finishLoading([])
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
   })
 })
