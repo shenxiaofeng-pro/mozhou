@@ -17,6 +17,8 @@ class AiTaskType(StrEnum):
     REVIEW = "review"
     SANDBOX = "sandbox"
     RESEARCH = "research"
+    COMIC_SEASON_PLAN = "comic_season_plan"
+    COMIC_EPISODE_SCRIPT = "comic_episode_script"
 
 
 class AiErrorCategory(StrEnum):

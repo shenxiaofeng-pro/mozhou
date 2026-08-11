@@ -42,6 +42,10 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "chapter_events",
         "chapter_versions",
         "chapters",
+        "comic_episodes",
+        "comic_projects",
+        "comic_scenes",
+        "comic_versions",
         "context_directives",
         "context_packets",
         "directory_events",
@@ -93,6 +97,44 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "timeline_events",
         "volume_plans",
     ]
+
+
+def test_database_upgrades_v21_to_v22_without_losing_existing_jobs(tmp_path: Path) -> None:
+    database_path = tmp_path / "v21.db"
+    database = Database(database_path)
+    database.initialize()
+    repository = ProjectRepository(database)
+    workspace = repository.create_project(
+        CreateProjectRequest(
+            title="旧库漫剧升级",
+            genre=Genre.URBAN_REBIRTH,
+            rebirth_year=1998,
+            rebirth_location="南平",
+        )
+    )
+    jobs = JobRepository(database)
+    job, _ = jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.RESEARCH_EXTRACTION,
+        idempotency_key="pre-v22-job",
+        input_payload={"source": "existing"},
+        provider="local",
+        model="rules-v1",
+    )
+    with database.connect() as connection:
+        for table in ("comic_scenes", "comic_versions", "comic_episodes", "comic_projects"):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 22")
+        connection.execute("PRAGMA user_version=21")
+
+    database.initialize()
+
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 22
+        assert connection.execute("SELECT id FROM jobs WHERE id = ?", (job.id,)).fetchone()[0] == job.id
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'comic_%'"
+        ).fetchone()[0] == 4
 
 
 def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -> None:
@@ -156,21 +198,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v21-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v22-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (21,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (22,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v21-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v22-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v21_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v22_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -226,7 +268,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v21_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (21,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (22,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -251,9 +293,10 @@ def test_database_runs_v1_and_v2_fixtures_to_v21_without_losing_data(
         (18, "scene_plot_graph_originality"),
         (19, "ai_narrative_sandbox"),
         (20, "research_agent"),
-        (21, "document_formats_and_author_productivity"),
-    ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v21-*.db"))) == 1
+            (21, "document_formats_and_author_productivity"),
+            (22, "ai_comic_drama_workbench"),
+        ]
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v22-*.db"))) == 1
 
 
 def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
@@ -300,7 +343,7 @@ def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
     assert was_created is True
     assert created.kind == JobKind.SANDBOX_AI_ROUND
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (21,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (22,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -605,7 +648,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             is None
         )
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v21-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v22-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

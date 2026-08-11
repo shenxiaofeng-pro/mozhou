@@ -18,6 +18,10 @@ from app.models import (
     Chapter,
     ChapterStatus,
     ChapterVersion,
+    ComicEpisode,
+    ComicProject,
+    ComicScene,
+    ComicVersion,
     FactChange,
     FactChangeSet,
     FutureKnowledge,
@@ -53,7 +57,7 @@ from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 9
+ARCHIVE_FORMAT_VERSION = 10
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -466,6 +470,95 @@ ARCHIVE_TABLES = (
         "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
         (("job_id", "jobs", False),),
         ("detail_json",),
+    ),
+    ArchiveTable(
+        "comic_projects",
+        (
+            "id",
+            "project_id",
+            "title",
+            "source_chapter_ids_json",
+            "source_snapshot_json",
+            "source_snapshot_sha256",
+            "episode_target_count",
+            "episode_duration_seconds",
+            "aspect_ratio",
+            "art_style",
+            "adaptation_mode",
+            "narration_preference",
+            "author_requirements",
+            "state",
+            "season_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("source_chapter_ids_json", "source_snapshot_json"),
+    ),
+    ArchiveTable(
+        "comic_episodes",
+        (
+            "id",
+            "comic_project_id",
+            "episode_number",
+            "title",
+            "source_chapter_ids_json",
+            "outline_state",
+            "script_state",
+            "outline_revision",
+            "script_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "comic_project_id IN (SELECT id FROM comic_projects WHERE project_id = ?)",
+        (("comic_project_id", "comic_projects", False),),
+        ("source_chapter_ids_json",),
+    ),
+    ArchiveTable(
+        "comic_versions",
+        (
+            "id",
+            "comic_project_id",
+            "episode_id",
+            "target_kind",
+            "target_id",
+            "version_number",
+            "state",
+            "content_json",
+            "content_sha256",
+            "source_snapshot_sha256",
+            "job_id",
+            "created_at",
+            "reviewed_at",
+        ),
+        "comic_project_id IN (SELECT id FROM comic_projects WHERE project_id = ?)",
+        (
+            ("comic_project_id", "comic_projects", False),
+            ("episode_id", "comic_episodes", True),
+            ("job_id", "jobs", True),
+        ),
+        ("content_json",),
+    ),
+    ArchiveTable(
+        "comic_scenes",
+        (
+            "id",
+            "comic_project_id",
+            "episode_id",
+            "script_version_id",
+            "scene_number",
+            "content_json",
+            "source_chapter_ids_json",
+            "created_at",
+        ),
+        "comic_project_id IN (SELECT id FROM comic_projects WHERE project_id = ?)",
+        (
+            ("comic_project_id", "comic_projects", False),
+            ("episode_id", "comic_episodes", False),
+            ("script_version_id", "comic_versions", False),
+        ),
+        ("content_json", "source_chapter_ids_json"),
     ),
     ArchiveTable(
         "review_findings",
@@ -1312,6 +1405,31 @@ def _validate_business_rows(
                 raise InvalidProjectArchiveError("invalid_job_event_detail")
             JobEvent.model_validate({**row, "detail": detail})
 
+        for row in tables["comic_projects"]:
+            source_ids = _parse_json(row["source_chapter_ids_json"])
+            snapshot = _parse_json(row["source_snapshot_json"])
+            if not isinstance(source_ids, list) or not isinstance(snapshot, list):
+                raise InvalidProjectArchiveError("invalid_comic_source_snapshot")
+            ComicProject.model_validate({**row, "source_chapter_ids": source_ids})
+        for row in tables["comic_episodes"]:
+            source_ids = _parse_json(row["source_chapter_ids_json"])
+            if not isinstance(source_ids, list):
+                raise InvalidProjectArchiveError("invalid_comic_episode_sources")
+            ComicEpisode.model_validate({**row, "source_chapter_ids": source_ids})
+        for row in tables["comic_versions"]:
+            content = _parse_json(row["content_json"])
+            if not isinstance(content, dict):
+                raise InvalidProjectArchiveError("invalid_comic_version_content")
+            ComicVersion.model_validate({**row, "content": content})
+        for row in tables["comic_scenes"]:
+            content = _parse_json(row["content_json"])
+            source_ids = _parse_json(row["source_chapter_ids_json"])
+            if not isinstance(content, dict) or not isinstance(source_ids, list):
+                raise InvalidProjectArchiveError("invalid_comic_scene_content")
+            ComicScene.model_validate(
+                {**row, "content": content, "source_chapter_ids": source_ids}
+            )
+
         for row in tables["review_findings"]:
             ReviewFinding.model_validate({**row, "evidence": _parse_json(row["evidence_json"])})
         text_changes_by_set: dict[str, list[dict[str, Any]]] = {}
@@ -1335,6 +1453,7 @@ def _validate_business_rows(
             "acknowledged_at",
             "deleted_at",
             "undone_at",
+            "reviewed_at",
         }
         for table in ARCHIVE_TABLES:
             for row in tables[table.name]:
@@ -1450,6 +1569,7 @@ class ProjectArchiveService:
         _validate_business_rows(tables, ids_by_table)
 
         remapped: dict[str, list[dict[str, Any]]] = {}
+        comic_source_hash_map: dict[str, str] = {}
         for table in ARCHIVE_TABLES:
             source_rows = tables[table.name]
             assert isinstance(source_rows, list)
@@ -1492,6 +1612,28 @@ class ProjectArchiveService:
                     source_id = row["source_id"]
                     if isinstance(source_id, str) and source_id in id_map:
                         row["source_id"] = id_map[source_id]
+                if table.name == "comic_versions":
+                    old_target_id = row["target_id"]
+                    if not isinstance(old_target_id, str) or old_target_id not in id_map:
+                        raise InvalidProjectArchiveError("external_comic_version_target")
+                    row["target_id"] = id_map[old_target_id]
+                    old_snapshot_hash = row["source_snapshot_sha256"]
+                    if isinstance(old_snapshot_hash, str) and old_snapshot_hash in comic_source_hash_map:
+                        row["source_snapshot_sha256"] = comic_source_hash_map[old_snapshot_hash]
+                    content_json = row["content_json"]
+                    if not isinstance(content_json, str):
+                        raise InvalidProjectArchiveError("invalid_comic_version_content")
+                    row["content_sha256"] = hashlib.sha256(
+                        content_json.encode("utf-8")
+                    ).hexdigest()
+                if table.name == "comic_projects":
+                    old_snapshot_hash = row["source_snapshot_sha256"]
+                    snapshot_json = row["source_snapshot_json"]
+                    if not isinstance(old_snapshot_hash, str) or not isinstance(snapshot_json, str):
+                        raise InvalidProjectArchiveError("invalid_comic_source_snapshot")
+                    new_snapshot_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+                    comic_source_hash_map[old_snapshot_hash] = new_snapshot_hash
+                    row["source_snapshot_sha256"] = new_snapshot_hash
                 if table.name == "job_artifacts" and row["content_type"] == "application/json":
                     embedded_payload = (
                         _parse_json(row["payload"]) if isinstance(row["payload"], str) else None
@@ -1661,6 +1803,7 @@ class ProjectArchiveService:
             7,
             8,
             9,
+            10,
         }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
@@ -1696,6 +1839,8 @@ class ProjectArchiveService:
             value = self._upgrade_v7_archive(value)
         if value["format_version"] == 8:
             value = self._upgrade_v8_archive(value)
+        if value["format_version"] == 9:
+            value = self._upgrade_v9_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -2094,6 +2239,24 @@ class ProjectArchiveService:
         upgraded_tables["author_ideas"] = []
         upgraded_tables["chapter_annotations"] = []
         upgraded_tables["story_relationships"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 9
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v9_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["comic_projects"] = []
+        upgraded_tables["comic_episodes"] = []
+        upgraded_tables["comic_versions"] = []
+        upgraded_tables["comic_scenes"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

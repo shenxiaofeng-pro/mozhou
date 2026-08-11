@@ -52,6 +52,24 @@ from app.beta import (
     CreateBetaFeedbackRequest,
 )
 from app.chapter_jobs import ChapterJobService
+from app.comic_drama import (
+    AdoptComicSeasonRequest,
+    ComicAiPreview,
+    ComicAsset,
+    ComicAuditIssue,
+    ComicDeleteImpact,
+    ComicDramaNotFoundError,
+    ComicDramaService,
+    ComicEpisodeScriptRequest,
+    ComicEpisodeSubmission,
+    ComicSeasonPlanRequest,
+    ComicSeasonSubmission,
+    ComicStateConflictError,
+    InvalidComicSourceError,
+    ReviewComicEpisodeRequest,
+    SubmitComicEpisodeScriptRequest,
+    SubmitComicSeasonPlanRequest,
+)
 from app.config import default_database_path
 from app.context import (
     ContextDirective,
@@ -113,9 +131,12 @@ from app.models import (
     BookBlueprint,
     Chapter,
     ChapterVersion,
+    ComicProject,
+    ComicWorkspace,
     ConfigureAiRequest,
     ConfirmManuscriptImportRequest,
     CreateChapterRequest,
+    CreateComicProjectRequest,
     CreateDirectoryNodeRequest,
     CreateFutureKnowledgeRequest,
     CreateProjectRequest,
@@ -323,6 +344,12 @@ def create_app(
             application.state.model_profiles,
         )
         application.state.author_productivity = AuthorProductivityService(database)
+        application.state.comic_drama_service = ComicDramaService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
         application.state.director_repository = DirectorRepository(database)
         application.state.review_repository = ReviewRepository(database)
         application.state.reference_job_service = ReferenceJobService(
@@ -370,6 +397,12 @@ def create_app(
                 JobKind.REVIEW: handle_review_job,
                 JobKind.SANDBOX_AI_ROUND: application.state.sandbox_ai_service.handle,
                 JobKind.RESEARCH_EXTRACTION: application.state.research_service.handle,
+                JobKind.COMIC_SEASON_PLAN: (
+                    application.state.comic_drama_service.handle_season_plan
+                ),
+                JobKind.COMIC_EPISODE_SCRIPT: (
+                    application.state.comic_drama_service.handle_episode_script
+                ),
             },
         )
         if not defer_job_runtime:
@@ -2567,6 +2600,236 @@ def create_app(
             return repository.get_workspace_summary(str(project_id))
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/comic-projects",
+        response_model=ComicWorkspace,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_comic_project(
+        project_id: UUID,
+        body: CreateComicProjectRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.create_project(str(project_id), body)
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except InvalidComicSourceError as error:
+            raise HTTPException(status_code=422, detail="漫剧来源章节无效") from error
+
+    @application.get(
+        "/api/projects/{project_id}/comic-projects",
+        response_model=list[ComicProject],
+    )
+    def list_comic_projects(project_id: UUID) -> list[ComicProject]:
+        try:
+            return application.state.comic_drama_service.list_projects(str(project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}",
+        response_model=ComicWorkspace,
+    )
+    def get_comic_project(comic_project_id: UUID) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.get_workspace(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}/delete-impact",
+        response_model=ComicDeleteImpact,
+    )
+    def get_comic_project_delete_impact(comic_project_id: UUID) -> ComicDeleteImpact:
+        try:
+            return application.state.comic_drama_service.delete_impact(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.post(
+        "/api/comic-projects/{comic_project_id}/season-plan/preview",
+        response_model=ComicAiPreview,
+    )
+    def preview_comic_season_plan(
+        comic_project_id: UUID,
+        body: ComicSeasonPlanRequest,
+    ) -> ComicAiPreview:
+        try:
+            return application.state.comic_drama_service.preview_season_plan(
+                str(comic_project_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="漫剧来源已变化，请重新创建项目") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-projects/{comic_project_id}/season-plan",
+        response_model=ComicSeasonSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_comic_season_plan(
+        comic_project_id: UUID,
+        body: SubmitComicSeasonPlanRequest,
+    ) -> ComicSeasonSubmission:
+        try:
+            return application.state.comic_drama_service.submit_season_plan(
+                str(comic_project_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+        except ComicStateConflictError as error:
+            details = {
+                "external_processing_not_confirmed": "请先确认外发范围与费用",
+                "estimated_cost_exceeds_limit": "预计费用超过本次上限",
+                "comic_source_changed": "漫剧来源已变化，请重新预览",
+            }
+            raise HTTPException(status_code=409, detail=details.get(str(error), "漫剧状态冲突"))
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-projects/{comic_project_id}/season-plan/adopt",
+        response_model=ComicWorkspace,
+    )
+    def adopt_comic_season_plan(
+        comic_project_id: UUID,
+        body: AdoptComicSeasonRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.adopt_season(
+                str(comic_project_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目或候选不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="季方案状态或版本已变化") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/outline/review",
+        response_model=ComicWorkspace,
+    )
+    def review_comic_episode_outline(
+        episode_id: UUID,
+        body: ReviewComicEpisodeRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.review_episode_outline(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="分集大纲状态或版本已变化") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/script/preview",
+        response_model=ComicAiPreview,
+    )
+    def preview_comic_episode_script(
+        episode_id: UUID,
+        body: ComicEpisodeScriptRequest,
+    ) -> ComicAiPreview:
+        try:
+            return application.state.comic_drama_service.preview_episode_script(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="请先批准本集大纲或刷新来源") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/script",
+        response_model=ComicEpisodeSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_comic_episode_script(
+        episode_id: UUID,
+        body: SubmitComicEpisodeScriptRequest,
+    ) -> ComicEpisodeSubmission:
+        try:
+            return application.state.comic_drama_service.submit_episode_script(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="剧本生成条件或确认信息已变化") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/script/review",
+        response_model=ComicWorkspace,
+    )
+    def review_comic_episode_script(
+        episode_id: UUID,
+        body: ReviewComicEpisodeRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.review_episode_script(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="剧本候选状态或版本已变化") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}/audit",
+        response_model=list[ComicAuditIssue],
+    )
+    def audit_comic_project(comic_project_id: UUID) -> list[ComicAuditIssue]:
+        try:
+            return application.state.comic_drama_service.audit(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}/assets",
+        response_model=list[ComicAsset],
+    )
+    def list_comic_assets(comic_project_id: UUID) -> list[ComicAsset]:
+        try:
+            return application.state.comic_drama_service.assets(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get("/api/comic-projects/{comic_project_id}/production-package")
+    def get_comic_production_package(comic_project_id: UUID) -> dict[str, object]:
+        try:
+            return application.state.comic_drama_service.production_package(
+                str(comic_project_id)
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get("/api/comic-projects/{comic_project_id}/export")
+    def export_comic_production_package(
+        comic_project_id: UUID,
+        format: Literal["json", "markdown", "docx"] = Query(default="json"),
+    ) -> Response:
+        try:
+            exported = application.state.comic_drama_service.export_production_package(
+                str(comic_project_id), format
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+        return Response(
+            content=exported.payload,
+            media_type=exported.media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(exported.filename)}",
+                "X-Content-SHA256": exported.content_sha256,
+                "Cache-Control": "no-store",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/chapters",

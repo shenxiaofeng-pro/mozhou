@@ -12,6 +12,8 @@ class JobKind(StrEnum):
     REVIEW = "review"
     SANDBOX_AI_ROUND = "sandbox_ai_round"
     RESEARCH_EXTRACTION = "research_extraction"
+    COMIC_SEASON_PLAN = "comic_season_plan"
+    COMIC_EPISODE_SCRIPT = "comic_episode_script"
 
 
 class JobState(StrEnum):

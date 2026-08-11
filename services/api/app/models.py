@@ -2085,3 +2085,203 @@ class DirectorChapterPipelineResult(BaseModel):
     brief: AiChapterBriefProposal
     pre_review: DirectorPreReview
     draft: GenerationRun
+
+
+class ComicAdaptationMode(StrEnum):
+    FAITHFUL = "faithful"
+    BALANCED = "balanced"
+    DRAMATIC = "dramatic"
+
+
+class ComicProjectState(StrEnum):
+    DRAFT = "draft"
+    PLANNING = "planning"
+    OUTLINED = "outlined"
+    PRODUCING = "producing"
+    COMPLETED = "completed"
+
+
+class ComicApprovalState(StrEnum):
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ComicScriptState(StrEnum):
+    EMPTY = "empty"
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ComicTargetKind(StrEnum):
+    SEASON = "season"
+    EPISODE_OUTLINE = "episode_outline"
+    EPISODE_SCRIPT = "episode_script"
+
+
+class ComicDialogueDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    character: str = Field(min_length=1, max_length=80)
+    line: str = Field(min_length=1, max_length=500)
+    emotion: str = Field(default="", max_length=120)
+
+
+class ComicAssetRequirement(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    kind: Literal["character", "location", "costume", "prop", "effect", "other"]
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+
+
+class ComicSceneDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    scene_number: int = Field(ge=1, le=100)
+    interior_exterior: Literal["INT", "EXT", "INT/EXT"]
+    location: str = Field(min_length=1, max_length=120)
+    time_of_day: str = Field(min_length=1, max_length=80)
+    cast: list[str] = Field(default_factory=list, max_length=20)
+    action: str = Field(min_length=1, max_length=4000)
+    dialogue: list[ComicDialogueDraft] = Field(default_factory=list, max_length=60)
+    narration: str = Field(default="", max_length=2000)
+    visual_focus: str = Field(min_length=1, max_length=1000)
+    ending_beat: str = Field(min_length=1, max_length=1000)
+    source_chapter_ids: list[str] = Field(min_length=1, max_length=50)
+    asset_requirements: list[ComicAssetRequirement] = Field(default_factory=list, max_length=50)
+
+
+class ComicEpisodeOutlineDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    episode_number: int = Field(ge=1, le=100)
+    title: str = Field(min_length=1, max_length=120)
+    source_chapter_ids: list[str] = Field(min_length=1, max_length=50)
+    opening_hook: str = Field(min_length=1, max_length=1000)
+    episode_goal: str = Field(min_length=1, max_length=1000)
+    core_conflict: str = Field(min_length=1, max_length=1200)
+    reversal: str = Field(min_length=1, max_length=1000)
+    emotional_payoff: str = Field(min_length=1, max_length=1000)
+    ending_cliffhanger: str = Field(min_length=1, max_length=1000)
+    cast: list[str] = Field(default_factory=list, max_length=30)
+    locations: list[str] = Field(default_factory=list, max_length=30)
+    key_props: list[str] = Field(default_factory=list, max_length=30)
+    next_episode_promise: str = Field(default="", max_length=1000)
+
+
+class ComicSeasonDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    logline: str = Field(min_length=1, max_length=500)
+    theme: str = Field(min_length=1, max_length=500)
+    core_desire: str = Field(min_length=1, max_length=1000)
+    main_conflict: str = Field(min_length=1, max_length=1200)
+    adaptation_strategy: str = Field(min_length=1, max_length=2000)
+    character_recomposition: list[str] = Field(default_factory=list, max_length=30)
+    episode_outlines: list[ComicEpisodeOutlineDraft] = Field(min_length=1, max_length=100)
+
+
+class ComicEpisodeScriptDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    episode_number: int = Field(ge=1, le=100)
+    title: str = Field(min_length=1, max_length=120)
+    estimated_seconds: int = Field(ge=15, le=600)
+    scenes: list[ComicSceneDraft] = Field(min_length=1, max_length=100)
+
+
+class CreateComicProjectRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=120)
+    source_chapter_ids: list[str] = Field(min_length=1, max_length=200)
+    episode_target_count: int = Field(default=8, ge=1, le=100)
+    episode_duration_seconds: int = Field(default=90, ge=30, le=300)
+    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
+    art_style: str = Field(default="", max_length=500)
+    adaptation_mode: ComicAdaptationMode = ComicAdaptationMode.BALANCED
+    narration_preference: str = Field(default="", max_length=500)
+    author_requirements: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_sources(self) -> CreateComicProjectRequest:
+        for source_id in self.source_chapter_ids:
+            try:
+                UUID(source_id)
+            except ValueError as error:
+                raise ValueError("漫剧来源章节 ID 无效") from error
+        return self
+
+
+class ComicProject(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    source_chapter_ids: list[str]
+    source_snapshot_sha256: str
+    episode_target_count: int
+    episode_duration_seconds: int
+    aspect_ratio: Literal["9:16", "16:9", "1:1"]
+    art_style: str
+    adaptation_mode: ComicAdaptationMode
+    narration_preference: str
+    author_requirements: str
+    state: ComicProjectState
+    season_revision: int
+    created_at: str
+    updated_at: str
+
+
+class ComicEpisode(BaseModel):
+    id: str
+    comic_project_id: str
+    episode_number: int
+    title: str
+    source_chapter_ids: list[str]
+    outline_state: ComicApprovalState
+    script_state: ComicScriptState
+    outline_revision: int
+    script_revision: int
+    created_at: str
+    updated_at: str
+
+
+class ComicVersion(BaseModel):
+    id: str
+    comic_project_id: str
+    episode_id: str | None
+    target_kind: ComicTargetKind
+    target_id: str
+    version_number: int
+    state: ComicApprovalState
+    content: dict[str, object]
+    content_sha256: str
+    source_snapshot_sha256: str
+    job_id: str | None
+    created_at: str
+    reviewed_at: str | None
+
+
+class ComicScene(BaseModel):
+    id: str
+    comic_project_id: str
+    episode_id: str
+    script_version_id: str
+    scene_number: int
+    content: ComicSceneDraft
+    source_chapter_ids: list[str]
+    created_at: str
+
+
+class ComicWorkspace(BaseModel):
+    project: ComicProject
+    episodes: list[ComicEpisode] = Field(default_factory=list)
+    versions: list[ComicVersion] = Field(default_factory=list)
+    scenes: list[ComicScene] = Field(default_factory=list)
+
+
+class ReviewComicVersionRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    expected_revision: int = Field(ge=0)
