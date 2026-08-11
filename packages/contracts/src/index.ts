@@ -12,6 +12,7 @@ export type JobKind =
   | 'reference_fusion'
   | 'review'
   | 'sandbox_ai_round'
+  | 'research_extraction'
 
 export type JobState =
   | 'queued'
@@ -46,7 +47,7 @@ export type SourceKind = 'historical_record' | 'news' | 'industry' | 'personal_n
 
 export type SourceConfidence = 'high' | 'medium' | 'low'
 
-export type ReferenceFormat = 'txt' | 'markdown' | 'pdf'
+export type ReferenceFormat = 'txt' | 'markdown' | 'pdf' | 'docx' | 'epub'
 
 export type ReferenceRightsBasis = 'self_owned' | 'authorized' | 'public_domain'
 
@@ -839,7 +840,7 @@ export interface ManuscriptImportVolume {
 
 export interface ManuscriptImportPreview {
   source_filename: string
-  source_format: 'txt' | 'markdown'
+  source_format: 'txt' | 'markdown' | 'docx' | 'epub'
   source_sha256: string
   source_encoding: string
   encoding_confidence: number
@@ -947,7 +948,7 @@ export interface SerialDashboard {
 }
 
 export interface WorkspaceSearchResult {
-  kind: 'project' | 'chapter' | 'character' | 'resource' | 'thread'
+  kind: 'project' | 'chapter' | 'character' | 'resource' | 'thread' | 'idea' | 'annotation'
   id: string
   title: string
   snippet: string
@@ -1320,7 +1321,114 @@ export interface ConfigureAiInput {
 
 export type ProviderKind = 'openai' | 'openai_compatible'
 
-export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review' | 'sandbox'
+export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review' | 'sandbox' | 'research'
+
+export type ResearchCategory = 'historical_event' | 'local_system' | 'industry_rule' | 'price_technology' | 'controversy'
+export type ResearchMode = 'local' | 'ai'
+
+export interface ResearchInput {
+  title: string
+  question: string
+  era_start: number
+  era_end: number
+  region: string
+  material_type: string
+  mode: ResearchMode
+  source_document_ids: string[]
+  pasted_text: string
+  pasted_label: string
+}
+
+export interface ResearchPreview {
+  source_set_sha256: string
+  sources: Array<{ source_document_id: string | null; label: string; source_format: string; character_count: number; content_sha256: string }>
+  character_count: number
+  estimated_calls: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  requires_external_confirmation: boolean
+  data_types: string[]
+  content_scope: string
+}
+
+export interface ResearchSession {
+  id: string
+  project_id: string
+  title: string
+  question: string
+  era_start: number
+  era_end: number
+  region: string
+  material_type: string
+  mode: ResearchMode
+  state: 'queued' | 'running' | 'ready' | 'failed' | 'cancelled'
+  source_set_sha256: string
+  job_id: string | null
+  invalid_ai_findings: number
+  finding_count: number
+  candidate_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ResearchFinding {
+  id: string
+  session_id: string
+  research_source_id: string
+  source_document_id: string | null
+  source_label: string
+  category: ResearchCategory
+  title: string
+  summary: string
+  evidence_excerpt: string
+  evidence_sha256: string
+  start_char: number
+  end_char: number
+  page_number_start: number | null
+  page_number_end: number | null
+  applicable_year_start: number
+  applicable_year_end: number
+  region: string
+  confidence: SourceConfidence
+  conflict_key: string
+  conflict_count: number
+  origin: 'local' | 'ai'
+  state: 'candidate' | 'approved' | 'rejected'
+  source_card_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ResearchWorkspace {
+  session: ResearchSession
+  sources: ResearchPreview['sources']
+  findings: ResearchFinding[]
+}
+
+export interface ResearchSubmission { session: ResearchSession; job: Job }
+
+export interface WritingCalendarDay { date: string; net_characters: number; target_characters: number; met_goal: boolean }
+export interface WritingCalendar { project_id: string; timezone: string; days: WritingCalendarDay[]; total_net_characters: number; streak_days: number }
+export interface ChapterAnnotation {
+  id: string; project_id: string; chapter_id: string; chapter_revision: number; content_sha256: string
+  start_char: number; end_char: number; selected_text: string; context_before: string; context_after: string
+  comment: string; status: 'open' | 'resolved' | 'stale'; revision: number; created_at: string; updated_at: string
+}
+export interface AuthorIdea {
+  id: string; project_id: string | null; title: string; content: string; tags: string[]
+  status: 'inbox' | 'planned' | 'applied' | 'archived'; target_kind: 'chapter_brief' | 'source_card' | 'character' | null
+  target_id: string | null; revision: number; created_at: string; updated_at: string
+}
+export interface StoryGraphNode { id: string; label: string; kind: 'character' | 'resource' | 'thread' | 'chapter'; status: string }
+export interface StoryGraphEdge { id: string; source: string; target: string; label: string; status: string; chapter_id: string | null }
+export interface StoryGraphs { relationship_nodes: StoryGraphNode[]; relationship_edges: StoryGraphEdge[]; thread_nodes: StoryGraphNode[]; thread_edges: StoryGraphEdge[] }
+export interface StoryRelationship { id: string; project_id: string; source_entity_id: string; target_entity_id: string; relation_type: string; summary: string; status: 'active' | 'historical'; source_chapter_id: string | null; revision: number; created_at: string; updated_at: string }
 
 export interface ModelCapabilities {
   structured_output: boolean

@@ -9,6 +9,7 @@ import { useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
+import { AuthorToolsDialog } from './AuthorToolsDialog'
 import { DirectorPanel } from './DirectorPanel'
 import { ManuscriptDirectoryDialog } from './ManuscriptDirectoryDialog'
 import { SerialWorkspaceDialog } from './SerialWorkspaceDialog'
@@ -19,6 +20,7 @@ interface WorkspaceShellProps {
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
+  onOpenResearch?: () => void
   onOpenTaskCenter: () => void
   onClose: () => void
 }
@@ -60,6 +62,7 @@ export function WorkspaceShell({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenResearch = () => undefined,
   onOpenTaskCenter,
   onClose,
 }: WorkspaceShellProps) {
@@ -130,6 +133,7 @@ export function WorkspaceShell({
       onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={onWorkspaceChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
+      onOpenResearch={onOpenResearch}
       onOpenTaskCenter={onOpenTaskCenter}
       onSelectChapter={selectChapter}
       onCreateChapter={createNextChapter}
@@ -148,6 +152,7 @@ function ActiveChapterWorkspace({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenResearch = () => undefined,
   onOpenTaskCenter,
   onSelectChapter,
   onCreateChapter,
@@ -162,6 +167,8 @@ function ActiveChapterWorkspace({
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false)
   const [serialDialogMode, setSerialDialogMode] = useState<'dashboard' | 'search' | null>(null)
   const [isFocusMode, setIsFocusMode] = useState(false)
+  const [authorTools, setAuthorTools] = useState<{ tab: 'calendar' | 'annotations' | 'ideas' | 'graphs'; selection: { start: number; end: number } | null } | null>(null)
+  const manuscriptRef = useRef<HTMLTextAreaElement>(null)
   const directorTriggerRef = useRef<HTMLButtonElement>(null)
   const directorCloseRef = useRef<HTMLButtonElement>(null)
   const deferredDraft = useDeferredValue(draft)
@@ -256,6 +263,11 @@ function ActiveChapterWorkspace({
         setIsFocusMode((current) => !current)
         return
       }
+      if (command && event.shiftKey && event.key.toLowerCase() === 'i') {
+        event.preventDefault()
+        void navigateAfterSave(() => setAuthorTools({ tab: 'ideas', selection: null }))
+        return
+      }
       if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return
       if (isDirectorOpen || isDirectoryOpen || serialDialogMode) return
       const index = workspace.chapters.findIndex((item) => item.id === chapter.id)
@@ -295,6 +307,14 @@ function ActiveChapterWorkspace({
             disabled={isNavigating}
             onClick={() => { void navigateAfterSave(() => setSerialDialogMode('dashboard')) }}
           >连载台</button>
+          <button className="library-action" type="button" aria-label="打开作者工具台" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setAuthorTools({ tab: 'calendar', selection: null })) }}>作者工具</button>
+          <button
+            className="library-action"
+            type="button"
+            aria-label="打开资料研究台"
+            disabled={isNavigating}
+            onClick={() => { void navigateAfterSave(onOpenResearch) }}
+          >资料研究</button>
           <button
             className="library-action task-action"
             type="button"
@@ -400,6 +420,7 @@ function ActiveChapterWorkspace({
           </span>
         </header>
         <textarea
+          ref={manuscriptRef}
           className="manuscript"
           aria-label="章节正文"
           value={draft}
@@ -413,6 +434,11 @@ function ActiveChapterWorkspace({
             <span style={{ width: `${progress}%` }} />
           </div>
           <p>{wordCount.toLocaleString()} 字 · 目标完成 {progress}%</p>
+          <button type="button" disabled={isNavigating || isApproved} onClick={() => {
+            const target = manuscriptRef.current
+            const selection = target && target.selectionEnd > target.selectionStart ? { start: target.selectionStart, end: target.selectionEnd } : null
+            void navigateAfterSave(() => setAuthorTools({ tab: 'annotations', selection }))
+          }}>批注选中文字</button>
           {saveError ? (
             <p className="save-error" role="alert">
               {saveError} <button type="button" onClick={retry}>重试</button>
@@ -450,6 +476,7 @@ function ActiveChapterWorkspace({
           onOpenChapter={openSerialChapter}
         />
       ) : null}
+      {authorTools ? <AuthorToolsDialog project={workspace.project} chapter={chapter} initialTab={authorTools.tab} selection={authorTools.selection} onClose={() => setAuthorTools(null)} /> : null}
       <button
         className="director-drawer-backdrop"
         type="button"

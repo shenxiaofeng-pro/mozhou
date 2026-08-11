@@ -42,6 +42,7 @@ const taskRoutes: Array<{ type: AiTaskType; label: string; detail: string }> = [
   { type: 'reference_analysis', label: '拆书萃取', detail: '分段分析与多书融合' },
   { type: 'review', label: '一致性审校', detail: '事实、人物与伏笔检查' },
   { type: 'sandbox', label: '剧情沙盘', detail: '角色行动建议与候选后果' },
+  { type: 'research', label: '资料研究', detail: '带原文范围的证据候选归纳' },
 ]
 
 function profileForm(profile: ModelProfile): ProfileForm {

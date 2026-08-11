@@ -220,7 +220,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
         </button>
         {onImported ? (
           <>
-            <button className="project-form-manuscript-import" type="button" disabled={isImporting || isCreating} onClick={() => setIsManuscriptImportOpen(true)}>已有 TXT / Markdown 稿件？识别卷章后接续</button>
+            <button className="project-form-manuscript-import" type="button" disabled={isImporting || isCreating} onClick={() => setIsManuscriptImportOpen(true)}>已有 TXT / Markdown / DOCX / EPUB 稿件？识别卷章后接续</button>
             <label className="project-form-import">
               <input
                 type="file"

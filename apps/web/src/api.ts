@@ -65,6 +65,12 @@ import type {
   ReferencePatternApplication,
   ReferencePatternCard,
   ReferenceSynthesisInput,
+  ResearchFinding,
+  ResearchInput,
+  ResearchPreview,
+  ResearchSession,
+  ResearchSubmission,
+  ResearchWorkspace,
   RejectTextChangeSetInput,
   RenameDirectoryNodeInput,
   RecoveryPointSummary,
@@ -113,6 +119,11 @@ import type {
   Workspace,
   WorkspaceSummary,
   WorkspaceSearchResult,
+  WritingCalendar,
+  ChapterAnnotation,
+  AuthorIdea,
+  StoryGraphs,
+  StoryRelationship,
   SelectDirectorCandidateInput,
   ReviewChapterInput,
   ReviewFinding,
@@ -213,7 +224,8 @@ async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Bl
     throw new ApiError(detail, response.status)
   }
   const disposition = response.headers.get('content-disposition') ?? ''
-  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'mozhou-diagnostics.zip'
+  const encodedFilename = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+  const filename = encodedFilename ? decodeURIComponent(encodedFilename) : (/filename="([^"]+)"/.exec(disposition)?.[1] ?? 'mozhou-download.bin')
   return { blob: await response.blob(), filename }
 }
 
@@ -491,6 +503,9 @@ export const api = {
     return request<ManuscriptExport>(
       `/api/projects/${encodeURIComponent(projectId)}/manuscript-export`,
     )
+  },
+  exportManuscriptBinary(projectId: string, format: 'docx' | 'epub') {
+    return requestBlob(`/api/projects/${encodeURIComponent(projectId)}/manuscript-export/${format}`)
   },
   createDirectoryNode(projectId: string, input: CreateDirectoryNodeInput) {
     return request<WorkspaceSummary>(
@@ -869,6 +884,61 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirmed, expected_revision: expectedRevision }),
     })
+  },
+  previewResearch(projectId: string, input: ResearchInput) {
+    return request<ResearchPreview>(`/api/projects/${encodeURIComponent(projectId)}/research/preview`, {
+      method: 'POST', body: JSON.stringify(input),
+    })
+  },
+  submitResearch(projectId: string, input: ResearchInput & {
+    expected_source_set_sha256: string
+    confirm_external_processing: boolean
+    max_estimated_cost_microusd?: number
+  }) {
+    return request<ResearchSubmission>(`/api/projects/${encodeURIComponent(projectId)}/research/jobs`, {
+      method: 'POST', body: JSON.stringify(input),
+    })
+  },
+  listResearchSessions(projectId: string) {
+    return request<ResearchSession[]>(`/api/projects/${encodeURIComponent(projectId)}/research/sessions`)
+  },
+  getResearchSession(sessionId: string) {
+    return request<ResearchWorkspace>(`/api/research/sessions/${encodeURIComponent(sessionId)}`)
+  },
+  reviewResearchFinding(findingId: string, action: 'approve' | 'reject', expectedRevision: number) {
+    return request<ResearchFinding>(`/api/research/findings/${encodeURIComponent(findingId)}/review`, {
+      method: 'POST', body: JSON.stringify({ action, expected_revision: expectedRevision }),
+    })
+  },
+  getWritingCalendar(projectId: string, days = 42) {
+    return request<WritingCalendar>(`/api/projects/${encodeURIComponent(projectId)}/writing-calendar?days=${days}`)
+  },
+  listChapterAnnotations(chapterId: string) {
+    return request<ChapterAnnotation[]>(`/api/chapters/${encodeURIComponent(chapterId)}/annotations`)
+  },
+  createChapterAnnotation(chapterId: string, input: { comment: string; start_char: number; end_char: number; expected_chapter_revision: number }) {
+    return request<ChapterAnnotation>(`/api/chapters/${encodeURIComponent(chapterId)}/annotations`, { method: 'POST', body: JSON.stringify(input) })
+  },
+  resolveChapterAnnotation(annotationId: string, expectedRevision: number) {
+    return request<ChapterAnnotation>(`/api/chapter-annotations/${encodeURIComponent(annotationId)}/resolve`, { method: 'POST', body: JSON.stringify({ expected_revision: expectedRevision }) })
+  },
+  listAuthorIdeas(projectId: string) {
+    return request<AuthorIdea[]>(`/api/author-ideas?project_id=${encodeURIComponent(projectId)}`)
+  },
+  createAuthorIdea(input: { project_id?: string; title: string; content: string; tags: string[] }) {
+    return request<AuthorIdea>('/api/author-ideas', { method: 'POST', body: JSON.stringify(input) })
+  },
+  updateAuthorIdea(ideaId: string, input: { title: string; content: string; tags: string[]; status: AuthorIdea['status']; expected_revision: number }) {
+    return request<AuthorIdea>(`/api/author-ideas/${encodeURIComponent(ideaId)}`, { method: 'PATCH', body: JSON.stringify(input) })
+  },
+  prepareAuthorIdea(ideaId: string, targetKind: NonNullable<AuthorIdea['target_kind']>, expectedRevision: number) {
+    return request<AuthorIdea>(`/api/author-ideas/${encodeURIComponent(ideaId)}/prepare`, { method: 'POST', body: JSON.stringify({ target_kind: targetKind, expected_revision: expectedRevision }) })
+  },
+  getStoryGraphs(projectId: string) {
+    return request<StoryGraphs>(`/api/projects/${encodeURIComponent(projectId)}/story-graphs`)
+  },
+  createStoryRelationship(projectId: string, input: { source_entity_id: string; target_entity_id: string; relation_type: string; summary: string; source_chapter_id?: string }) {
+    return request<StoryRelationship>(`/api/projects/${encodeURIComponent(projectId)}/story-relationships`, { method: 'POST', body: JSON.stringify(input) })
   },
   importReferenceWork(projectId: string, input: ImportReferenceWorkInput) {
     return request<ReferenceWork>(`/api/projects/${encodeURIComponent(projectId)}/reference-works`, {

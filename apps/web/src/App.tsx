@@ -6,6 +6,7 @@ import { CreateProjectForm } from './components/CreateProjectForm'
 import { GlobalReferenceLibraryPage } from './components/GlobalReferenceLibraryPage'
 import { ProjectLibraryPage } from './components/ProjectLibraryPage'
 import { ReferenceLibraryPage } from './components/ReferenceLibraryPage'
+import { ResearchWorkbenchPage } from './components/ResearchWorkbenchPage'
 import { TaskCenter } from './components/TaskCenter'
 import { WorkspaceShell } from './components/WorkspaceShell'
 import { clearActiveProjectId, loadActiveProjectId, saveActiveProjectId } from './storage'
@@ -55,7 +56,7 @@ export function App() {
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null)
-  const [activeView, setActiveView] = useState<'writing' | 'reference-library'>('writing')
+  const [activeView, setActiveView] = useState<'writing' | 'reference-library' | 'research'>('writing')
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false)
   const [isGlobalLibraryOpen, setIsGlobalLibraryOpen] = useState(false)
 
@@ -237,6 +238,12 @@ export function App() {
         onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
         onOpenGlobalLibrary={() => setIsGlobalLibraryOpen(true)}
       />
+    ) : activeView === 'research' ? (
+      <ResearchWorkbenchPage
+        project={workspace.project}
+        onBack={() => setActiveView('writing')}
+        onSourceCardsChanged={() => handleProjectAssetsChanged(workspace.project.id)}
+      />
     ) : (
       <WorkspaceShell
         workspace={workspace}
@@ -244,6 +251,7 @@ export function App() {
         onChapterChanged={handleChapterChanged}
         onWorkspaceChanged={handleWorkspaceChanged}
         onOpenReferenceLibrary={() => setActiveView('reference-library')}
+        onOpenResearch={() => setActiveView('research')}
         onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
         onClose={handleClose}
       />

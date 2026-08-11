@@ -38,9 +38,9 @@ export function ManuscriptImportDialog({ onClose, onImported }: ManuscriptImport
       setFile(null)
       return
     }
-    if (!/\.(?:txt|md|markdown)$/i.test(next.name)) {
+    if (!/\.(?:txt|md|markdown|docx|epub)$/i.test(next.name)) {
       setFile(null)
-      setError('请选择 TXT 或 Markdown 稿件')
+      setError('请选择 TXT、Markdown、DOCX 或 EPUB 稿件')
       return
     }
     if (next.size > maxManuscriptBytes) {
@@ -134,8 +134,8 @@ export function ManuscriptImportDialog({ onClose, onImported }: ManuscriptImport
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,.md,.markdown,text/plain,text/markdown"
-            aria-label="选择 TXT 或 Markdown 稿件"
+            accept=".txt,.md,.markdown,.docx,.epub,text/plain,text/markdown,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            aria-label="选择 TXT、Markdown、DOCX 或 EPUB 稿件"
             disabled={isBusy}
             onChange={(event) => selectFile(event.target.files?.[0])}
           />

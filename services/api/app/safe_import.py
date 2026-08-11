@@ -1,13 +1,22 @@
 import hashlib
 import io
+import posixpath
+import re
+import zipfile
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any, Literal, cast
+from xml.etree import ElementTree
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 MAX_TEXT_FILE_BYTES = 20 * 1024 * 1024
 MAX_PDF_FILE_BYTES = 25 * 1024 * 1024
+MAX_ZIP_FILE_BYTES = 25 * 1024 * 1024
+MAX_ZIP_ENTRIES = 5_000
+MAX_ZIP_EXPANDED_BYTES = 100 * 1024 * 1024
+MAX_ZIP_EXPANSION_RATIO = 200
 MAX_EXTRACTED_CHARACTERS = 20_000_000
 MAX_PDF_PAGES = 2_000
 MAX_PDF_EXPANSION_RATIO = 200
@@ -27,7 +36,7 @@ class SourceSpan:
 
 @dataclass(frozen=True, slots=True)
 class ParsedReferenceFile:
-    source_format: Literal["txt", "markdown", "pdf"]
+    source_format: Literal["txt", "markdown", "pdf", "docx", "epub"]
     source_encoding: str
     encoding_confidence: float
     import_state: Literal["ready", "needs_review"]
@@ -55,7 +64,9 @@ def _validate_decoded_text(value: str) -> tuple[Literal["ready", "needs_review"]
     if controls > max(4, len(value) // 1_000):
         raise UnsafeImportError("unsafe_control_characters")
     mojibake_markers = ("\ufffd", "锟斤拷", "烫烫烫", "屯屯屯")
-    warnings = ("suspected_mojibake",) if any(marker in value for marker in mojibake_markers) else ()
+    warnings = (
+        ("suspected_mojibake",) if any(marker in value for marker in mojibake_markers) else ()
+    )
     return ("needs_review" if warnings else "ready"), warnings
 
 
@@ -160,6 +171,188 @@ def _parse_pdf(
     return content, len(reader.pages), tuple(spans), ()
 
 
+def _safe_zip(payload: bytes) -> zipfile.ZipFile:
+    if len(payload) > MAX_ZIP_FILE_BYTES:
+        raise UnsafeImportError("file_too_large")
+    if not payload.startswith(b"PK"):
+        raise UnsafeImportError("invalid_zip_magic")
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(payload))
+        entries = archive.infolist()
+    except (zipfile.BadZipFile, OSError) as error:
+        raise UnsafeImportError("invalid_zip") from error
+    if not entries or len(entries) > MAX_ZIP_ENTRIES:
+        archive.close()
+        raise UnsafeImportError("zip_entry_limit")
+    expanded = 0
+    seen_names: set[str] = set()
+    for entry in entries:
+        name = entry.filename
+        path = PurePosixPath(name)
+        if (
+            not name
+            or "\x00" in name
+            or "\\" in name
+            or path.is_absolute()
+            or any(part in {"", ".", ".."} for part in path.parts)
+            or posixpath.normpath(name) != name.rstrip("/")
+        ):
+            archive.close()
+            raise UnsafeImportError("zip_unsafe_path")
+        normalized_name = name.rstrip("/").casefold()
+        if normalized_name in seen_names:
+            archive.close()
+            raise UnsafeImportError("zip_duplicate_entry")
+        seen_names.add(normalized_name)
+        if entry.flag_bits & 0x1:
+            archive.close()
+            raise UnsafeImportError("encrypted_zip")
+        file_type = (entry.external_attr >> 16) & 0o170000
+        if file_type == 0o120000:
+            archive.close()
+            raise UnsafeImportError("zip_symlink")
+        expanded += entry.file_size
+        if expanded > MAX_ZIP_EXPANDED_BYTES:
+            archive.close()
+            raise UnsafeImportError("zip_expanded_limit")
+        if entry.file_size > max(1_000_000, entry.compress_size * MAX_ZIP_EXPANSION_RATIO):
+            archive.close()
+            raise UnsafeImportError("zip_expansion_ratio")
+    return archive
+
+
+def _safe_xml(payload: bytes) -> ElementTree.Element:
+    upper = payload[:4096].upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise UnsafeImportError("unsafe_xml")
+    try:
+        return ElementTree.fromstring(payload)
+    except ElementTree.ParseError as error:
+        raise UnsafeImportError("invalid_xml") from error
+
+
+def _zip_read(archive: zipfile.ZipFile, name: str, *, limit: int = 20 * 1024 * 1024) -> bytes:
+    try:
+        info = archive.getinfo(name)
+    except KeyError as error:
+        raise UnsafeImportError("missing_package_part") from error
+    if info.file_size > limit:
+        raise UnsafeImportError("package_part_too_large")
+    try:
+        return archive.read(info)
+    except (RuntimeError, OSError, zipfile.BadZipFile) as error:
+        raise UnsafeImportError("invalid_zip") from error
+
+
+def _parse_docx(payload: bytes) -> tuple[str, tuple[SourceSpan, ...]]:
+    with _safe_zip(payload) as archive:
+        names = {entry.filename.lower() for entry in archive.infolist()}
+        if any(
+            name.endswith(("vbaproject.bin", "vbadata.xml"))
+            or "/embeddings/" in name
+            or "/oleobject" in name
+            for name in names
+        ):
+            raise UnsafeImportError("active_docx_content")
+        content_types = _zip_read(archive, "[Content_Types].xml")
+        if b"macroEnabled" in content_types or b"vbaProject" in content_types:
+            raise UnsafeImportError("active_docx_content")
+        for relation_name in (entry.filename for entry in archive.infolist() if entry.filename.lower().endswith(".rels")):
+            relations = _safe_xml(_zip_read(archive, relation_name))
+            for relationship in relations.iter():
+                if relationship.attrib.get("TargetMode", "").lower() == "external":
+                    raise UnsafeImportError("external_docx_relationship")
+        root = _safe_xml(_zip_read(archive, "word/document.xml"))
+        namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        lines: list[str] = []
+        for paragraph in root.iter(f"{namespace}p"):
+            text = "".join(node.text or "" for node in paragraph.iter(f"{namespace}t"))
+            style_node = paragraph.find(f"{namespace}pPr/{namespace}pStyle")
+            style = "" if style_node is None else style_node.attrib.get(f"{namespace}val", "")
+            heading_match = re.match(r"(?:Heading|\u6807\u9898)\s*([1-6])", style, re.IGNORECASE)
+            lines.append(
+                f"{'#' * int(heading_match.group(1))} {text}" if text and heading_match else text
+            )
+        content = _normalize_text("\n".join(lines)).strip("\n")
+    _validate_decoded_text(content)
+    return content, ()
+
+
+def _local_package_path(base: str, target: str) -> str:
+    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(base), target))
+    if resolved.startswith(("../", "/")):
+        raise UnsafeImportError("zip_unsafe_path")
+    return resolved
+
+
+def _parse_epub(payload: bytes) -> tuple[str, tuple[SourceSpan, ...]]:
+    with _safe_zip(payload) as archive:
+        if _zip_read(archive, "mimetype", limit=100).strip() != b"application/epub+zip":
+            raise UnsafeImportError("invalid_epub_mimetype")
+        container = _safe_xml(_zip_read(archive, "META-INF/container.xml"))
+        rootfile = next(
+            (
+                node.attrib.get("full-path")
+                for node in container.iter()
+                if node.tag.endswith("rootfile")
+            ),
+            None,
+        )
+        if not rootfile or rootfile.startswith("/") or ".." in PurePosixPath(rootfile).parts:
+            raise UnsafeImportError("invalid_epub_container")
+        opf = _safe_xml(_zip_read(archive, rootfile))
+        manifest: dict[str, tuple[str, str]] = {}
+        spine: list[str] = []
+        for node in opf.iter():
+            if node.tag.endswith("item"):
+                item_id, href = node.attrib.get("id"), node.attrib.get("href")
+                media = node.attrib.get("media-type", "")
+                if item_id and href:
+                    if "://" in href or href.startswith(("//", "/")):
+                        raise UnsafeImportError("external_epub_resource")
+                    manifest[item_id] = (
+                        _local_package_path(rootfile, href.split("#", 1)[0]),
+                        media,
+                    )
+            elif node.tag.endswith("itemref") and node.attrib.get("idref"):
+                spine.append(node.attrib["idref"])
+        if not spine or len(spine) > 2_000:
+            raise UnsafeImportError("invalid_epub_spine")
+        pages: list[str] = []
+        spans: list[SourceSpan] = []
+        cursor = 0
+        for page_number, item_id in enumerate(spine, start=1):
+            item = manifest.get(item_id)
+            if item is None or item[1] not in {"application/xhtml+xml", "text/html"}:
+                raise UnsafeImportError("invalid_epub_spine")
+            raw = _zip_read(archive, item[0])
+            if re.search(rb"<(?:script|iframe|object|embed)\b", raw, re.IGNORECASE) or re.search(
+                rb"(?:src|href)\s*=\s*['\"](?:https?:)?//", raw, re.IGNORECASE
+            ):
+                raise UnsafeImportError("active_epub_content")
+            page_root = _safe_xml(raw)
+            lines: list[str] = []
+            for node in page_root.iter():
+                tag = node.tag.rsplit("}", 1)[-1].lower()
+                if tag not in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "pre"}:
+                    continue
+                text = "".join(node.itertext()).strip()
+                if text:
+                    lines.append(f"{'#' * int(tag[1])} {text}" if tag.startswith("h") else text)
+            page_text = "\n".join(lines).strip()
+            if not page_text:
+                continue
+            if pages:
+                cursor += 2
+            start = cursor
+            cursor += len(page_text)
+            spans.append(SourceSpan(page_number=page_number, start_char=start, end_char=cursor))
+            pages.append(page_text)
+        content = "\n\n".join(pages)
+    _validate_decoded_text(content)
+    return content, tuple(spans)
+
+
 def parse_reference_file(filename: str, payload: bytes) -> ParsedReferenceFile:
     cleaned_filename = filename.strip()
     if (
@@ -176,7 +369,7 @@ def parse_reference_file(filename: str, payload: bytes) -> ParsedReferenceFile:
     page_count = 0
     if extension in {"txt", "md", "markdown"}:
         encoding, confidence, state, content, warnings = _parse_text(extension, payload)
-        source_format: Literal["txt", "markdown", "pdf"] = (
+        source_format: Literal["txt", "markdown", "pdf", "docx", "epub"] = (
             "txt" if extension == "txt" else "markdown"
         )
     elif extension == "pdf":
@@ -185,6 +378,16 @@ def parse_reference_file(filename: str, payload: bytes) -> ParsedReferenceFile:
         confidence = 1.0
         state = "ready"
         source_format = "pdf"
+    elif extension == "docx":
+        content, spans = _parse_docx(payload)
+        page_count = 0
+        warnings = ()
+        encoding, confidence, state, source_format = "docx-xml", 1.0, "ready", "docx"
+    elif extension == "epub":
+        content, spans = _parse_epub(payload)
+        page_count = len(spans)
+        warnings = ()
+        encoding, confidence, state, source_format = "epub-xhtml", 1.0, "ready", "epub"
     else:
         raise UnsafeImportError("unsupported_format")
     return ParsedReferenceFile(

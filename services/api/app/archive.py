@@ -53,7 +53,7 @@ from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 7
+ARCHIVE_FORMAT_VERSION = 9
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -81,6 +81,25 @@ ARCHIVE_TABLES = (
             "updated_at",
         ),
         "id = ?",
+    ),
+    ArchiveTable(
+        "author_ideas",
+        (
+            "id",
+            "project_id",
+            "title",
+            "content",
+            "tags_json",
+            "status",
+            "target_kind",
+            "target_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", True),),
+        ("tags_json",),
     ),
     ArchiveTable(
         "book_blueprints",
@@ -269,6 +288,28 @@ ARCHIVE_TABLES = (
             ("project_id", "projects", False),
             ("chapter_id", "chapters", False),
         ),
+    ),
+    ArchiveTable(
+        "chapter_annotations",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "chapter_revision",
+            "content_sha256",
+            "start_char",
+            "end_char",
+            "selected_text",
+            "context_before",
+            "context_after",
+            "comment",
+            "status",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False), ("chapter_id", "chapters", False)),
     ),
     ArchiveTable(
         "generation_runs",
@@ -607,6 +648,29 @@ ARCHIVE_TABLES = (
         ),
     ),
     ArchiveTable(
+        "story_relationships",
+        (
+            "id",
+            "project_id",
+            "source_entity_id",
+            "target_entity_id",
+            "relation_type",
+            "summary",
+            "status",
+            "source_chapter_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("source_entity_id", "story_entities", False),
+            ("target_entity_id", "story_entities", False),
+            ("source_chapter_id", "chapters", True),
+        ),
+    ),
+    ArchiveTable(
         "source_documents",
         (
             "id",
@@ -624,7 +688,8 @@ ARCHIVE_TABLES = (
             "created_at",
             "updated_at",
         ),
-        "id IN (SELECT source_document_id FROM source_cards WHERE project_id = ? AND source_document_id IS NOT NULL)",
+        "id IN (SELECT source_document_id FROM source_cards WHERE project_id = ? AND source_document_id IS NOT NULL) "
+        "OR id IN (SELECT rs.source_document_id FROM research_sources rs JOIN research_sessions s ON s.id = rs.session_id WHERE s.project_id = ? AND rs.source_document_id IS NOT NULL)",
         (),
         ("source_spans_json",),
     ),
@@ -655,6 +720,85 @@ ARCHIVE_TABLES = (
         (
             ("project_id", "projects", False),
             ("source_document_id", "source_documents", True),
+        ),
+    ),
+    ArchiveTable(
+        "research_sessions",
+        (
+            "id",
+            "project_id",
+            "title",
+            "question",
+            "era_start",
+            "era_end",
+            "region",
+            "material_type",
+            "mode",
+            "state",
+            "source_set_sha256",
+            "job_id",
+            "invalid_ai_findings",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False), ("job_id", "jobs", True)),
+    ),
+    ArchiveTable(
+        "research_sources",
+        (
+            "id",
+            "session_id",
+            "source_document_id",
+            "label",
+            "source_format",
+            "content",
+            "content_sha256",
+            "source_spans_json",
+            "ordinal",
+            "created_at",
+        ),
+        "session_id IN (SELECT id FROM research_sessions WHERE project_id = ?)",
+        (
+            ("session_id", "research_sessions", False),
+            ("source_document_id", "source_documents", True),
+        ),
+        ("source_spans_json",),
+    ),
+    ArchiveTable(
+        "research_findings",
+        (
+            "id",
+            "session_id",
+            "research_source_id",
+            "source_document_id",
+            "category",
+            "title",
+            "summary",
+            "evidence_excerpt",
+            "evidence_sha256",
+            "start_char",
+            "end_char",
+            "page_number_start",
+            "page_number_end",
+            "applicable_year_start",
+            "applicable_year_end",
+            "region",
+            "confidence",
+            "conflict_key",
+            "origin",
+            "state",
+            "source_card_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "session_id IN (SELECT id FROM research_sessions WHERE project_id = ?)",
+        (
+            ("session_id", "research_sessions", False),
+            ("research_source_id", "research_sources", False),
+            ("source_document_id", "source_documents", True),
+            ("source_card_id", "source_cards", True),
         ),
     ),
     ArchiveTable(
@@ -900,41 +1044,45 @@ def _validate_business_rows(
         for row in tables["projects"]:
             Project.model_validate(row)
         for row in tables["book_blueprints"]:
-            BookBlueprint.model_validate({
-                **row,
-                "content": _parse_json(row["content_json"]),
-                "locks": _parse_json(row["locks_json"]),
-                "field_versions": _parse_json(row["field_versions_json"]),
-                "stale_fields": _parse_json(row["stale_fields_json"]),
-                "plan_stale": bool(row["plan_stale"]),
-            })
-        for row in tables["volume_plans"]:
-            volume_content = VolumePlanContent.model_validate(
-                _parse_json(row["content_json"])
+            BookBlueprint.model_validate(
+                {
+                    **row,
+                    "content": _parse_json(row["content_json"]),
+                    "locks": _parse_json(row["locks_json"]),
+                    "field_versions": _parse_json(row["field_versions_json"]),
+                    "stale_fields": _parse_json(row["stale_fields_json"]),
+                    "plan_stale": bool(row["plan_stale"]),
+                }
             )
-            VolumePlan.model_validate({
-                **volume_content.model_dump(mode="json"),
-                "id": row["id"],
-                "project_id": row["project_id"],
-                "revision": row["revision"],
-                "locked": bool(row["locked"]),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            })
+        for row in tables["volume_plans"]:
+            volume_content = VolumePlanContent.model_validate(_parse_json(row["content_json"]))
+            VolumePlan.model_validate(
+                {
+                    **volume_content.model_dump(mode="json"),
+                    "id": row["id"],
+                    "project_id": row["project_id"],
+                    "revision": row["revision"],
+                    "locked": bool(row["locked"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
         for row in tables["rolling_chapter_plans"]:
             rolling_content = RollingChapterPlanContent.model_validate(
                 _parse_json(row["content_json"])
             )
-            RollingChapterPlan.model_validate({
-                **rolling_content.model_dump(mode="json"),
-                "id": row["id"],
-                "project_id": row["project_id"],
-                "volume_plan_id": row["volume_plan_id"],
-                "revision": row["revision"],
-                "locked": bool(row["locked"]),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            })
+            RollingChapterPlan.model_validate(
+                {
+                    **rolling_content.model_dump(mode="json"),
+                    "id": row["id"],
+                    "project_id": row["project_id"],
+                    "volume_plan_id": row["volume_plan_id"],
+                    "revision": row["revision"],
+                    "locked": bool(row["locked"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
         for row in tables["manuscript_volumes"]:
             ManuscriptVolume.model_validate(row)
         for row in tables["chapters"]:
@@ -984,10 +1132,7 @@ def _validate_business_rows(
                 "source_card": "source_cards",
                 "blueprint": "reference_pattern_applications",
             }.get(directive.source_kind)
-            if (
-                target_table is None
-                or directive.source_id not in ids_by_table[target_table]
-            ):
+            if target_table is None or directive.source_id not in ids_by_table[target_table]:
                 raise InvalidProjectArchiveError("external_context_directive_source")
         for row in tables["generation_runs"]:
             GenerationRun.model_validate(row)
@@ -1008,11 +1153,13 @@ def _validate_business_rows(
             content = row["content"]
             if not isinstance(spans, list) or not isinstance(content, str) or not content:
                 raise InvalidProjectArchiveError("invalid_source_document")
-            SourceDocument.model_validate({
-                **row,
-                "source_spans": spans,
-                "total_characters": len(content),
-            })
+            SourceDocument.model_validate(
+                {
+                    **row,
+                    "source_spans": spans,
+                    "total_characters": len(content),
+                }
+            )
 
         changes_by_set: dict[str, list[dict[str, Any]]] = {}
         for row in tables["fact_changes"]:
@@ -1036,11 +1183,13 @@ def _validate_business_rows(
             spans = _parse_json(row["source_spans_json"])
             if not isinstance(spans, list):
                 raise InvalidProjectArchiveError("invalid_reference_spans")
-            ReferenceWork.model_validate({
-                **row,
-                "source_spans": spans,
-                "segments": segments_by_work.get(row["id"], []),
-            })
+            ReferenceWork.model_validate(
+                {
+                    **row,
+                    "source_spans": spans,
+                    "segments": segments_by_work.get(row["id"], []),
+                }
+            )
 
         segment_ids = ids_by_table["reference_segments"]
         for row in tables["reference_pattern_cards"]:
@@ -1081,9 +1230,8 @@ def _validate_business_rows(
             state = ReferenceBlueprintState.model_validate(blueprint)
             if (
                 not isinstance(changed_dimensions, list)
-                or not set(changed_dimensions) <= {
-                    dimension.value for dimension in state.dimensions
-                }
+                or not set(changed_dimensions)
+                <= {dimension.value for dimension in state.dimensions}
                 or row["relationship_changed"] not in {0, 1}
             ):
                 raise InvalidProjectArchiveError("invalid_blueprint_version")
@@ -1165,26 +1313,18 @@ def _validate_business_rows(
             JobEvent.model_validate({**row, "detail": detail})
 
         for row in tables["review_findings"]:
-            ReviewFinding.model_validate(
-                {**row, "evidence": _parse_json(row["evidence_json"])}
-            )
+            ReviewFinding.model_validate({**row, "evidence": _parse_json(row["evidence_json"])})
         text_changes_by_set: dict[str, list[dict[str, Any]]] = {}
         for row in tables["text_changes"]:
             TextChange.model_validate(
                 {
                     **row,
-                    "selected": (
-                        bool(row["selected"])
-                        if row["selected"] is not None
-                        else None
-                    ),
+                    "selected": (bool(row["selected"]) if row["selected"] is not None else None),
                 }
             )
             text_changes_by_set.setdefault(row["change_set_id"], []).append(row)
         for row in tables["text_change_sets"]:
-            TextChangeSet.model_validate(
-                {**row, "changes": text_changes_by_set.get(row["id"], [])}
-            )
+            TextChangeSet.model_validate({**row, "changes": text_changes_by_set.get(row["id"], [])})
 
         nullable_timestamps = {
             "lease_expires_at",
@@ -1232,15 +1372,26 @@ class ProjectArchiveService:
             tables: dict[str, list[dict[str, Any]]] = {}
             for table in ARCHIVE_TABLES:
                 if (
-                    table.name in {"reference_works", "reference_segments", "source_documents"}
+                    table.name
+                    in {
+                        "reference_works",
+                        "reference_segments",
+                        "source_documents",
+                        "research_sessions",
+                        "research_sources",
+                        "research_findings",
+                    }
                     and not include_reference_assets
                 ):
                     tables[table.name] = []
                     continue
                 columns = ", ".join(table.columns)
+                parameters = (
+                    (project_id, project_id) if table.name == "source_documents" else (project_id,)
+                )
                 rows = connection.execute(
                     f"SELECT {columns} FROM {table.name} WHERE {table.scope} ORDER BY rowid",
-                    (project_id,),
+                    parameters,
                 ).fetchall()
                 table_rows = [dict(row) for row in rows]
                 if table.name == "reference_works":
@@ -1343,9 +1494,7 @@ class ProjectArchiveService:
                         row["source_id"] = id_map[source_id]
                 if table.name == "job_artifacts" and row["content_type"] == "application/json":
                     embedded_payload = (
-                        _parse_json(row["payload"])
-                        if isinstance(row["payload"], str)
-                        else None
+                        _parse_json(row["payload"]) if isinstance(row["payload"], str) else None
                     )
                     if embedded_payload is None:
                         raise InvalidProjectArchiveError("invalid_job_artifact_json")
@@ -1375,7 +1524,10 @@ class ProjectArchiveService:
                     columns = ", ".join(table.columns)
                     connection.executemany(
                         f"INSERT INTO {table.name} ({columns}) VALUES ({placeholders})",
-                        [tuple(row[column] for column in table.columns) for row in remapped[table.name]],
+                        [
+                            tuple(row[column] for column in table.columns)
+                            for row in remapped[table.name]
+                        ],
                     )
                 connection.executemany(
                     """
@@ -1436,9 +1588,10 @@ class ProjectArchiveService:
 
     def list_recovery_points(self, project_id: str) -> list[RecoveryPointSummary]:
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             rows = connection.execute(
                 """
@@ -1498,7 +1651,17 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5, 6, 7}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+        }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1529,6 +1692,10 @@ class ProjectArchiveService:
             value = self._upgrade_v5_archive(value)
         if value["format_version"] == 6:
             value = self._upgrade_v6_archive(value)
+        if value["format_version"] == 7:
+            value = self._upgrade_v7_archive(value)
+        if value["format_version"] == 8:
+            value = self._upgrade_v8_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1565,8 +1732,15 @@ class ProjectArchiveService:
             contents_by_work[work_id] = contents_by_work.get(work_id, "") + content
         upgraded_works: list[dict[str, Any]] = []
         legacy_columns = {
-            "id", "project_id", "title", "source_filename", "source_format",
-            "rights_basis", "total_characters", "segment_target_characters", "created_at",
+            "id",
+            "project_id",
+            "title",
+            "source_filename",
+            "source_format",
+            "rights_basis",
+            "total_characters",
+            "segment_target_characters",
+            "created_at",
         }
         for work in work_rows:
             if not isinstance(work, dict) or set(work) != legacy_columns:
@@ -1575,22 +1749,23 @@ class ProjectArchiveService:
             created_at = work["created_at"]
             if not isinstance(work_id, str) or not isinstance(created_at, str):
                 raise InvalidProjectArchiveError("invalid_business_values")
-            upgraded_works.append({
-                key: item for key, item in work.items() if key != "project_id"
-            } | {
-                "content_sha256": hashlib.sha256(
-                    contents_by_work.get(work_id, "").encode("utf-8")
-                ).hexdigest(),
-                "source_sha256": hashlib.sha256(
-                    contents_by_work.get(work_id, "").encode("utf-8")
-                ).hexdigest(),
-                "source_encoding": "utf-8",
-                "encoding_confidence": 1.0,
-                "import_state": "ready",
-                "source_spans_json": "[]",
-                "duplicate_of_id": None,
-                "updated_at": created_at,
-            })
+            upgraded_works.append(
+                {key: item for key, item in work.items() if key != "project_id"}
+                | {
+                    "content_sha256": hashlib.sha256(
+                        contents_by_work.get(work_id, "").encode("utf-8")
+                    ).hexdigest(),
+                    "source_sha256": hashlib.sha256(
+                        contents_by_work.get(work_id, "").encode("utf-8")
+                    ).hexdigest(),
+                    "source_encoding": "utf-8",
+                    "encoding_confidence": 1.0,
+                    "import_state": "ready",
+                    "source_spans_json": "[]",
+                    "duplicate_of_id": None,
+                    "updated_at": created_at,
+                }
+            )
         upgraded = dict(value)
         upgraded_tables = dict(tables)
         upgraded_tables["source_documents"] = []
@@ -1643,8 +1818,13 @@ class ProjectArchiveService:
         upgraded_applications: list[dict[str, Any]] = []
         versions: list[dict[str, Any]] = []
         expected_columns = {
-            "id", "project_id", "pattern_card_id", "selected_dimensions_json",
-            "dimensions_json", "relationship_recomposition", "application_note",
+            "id",
+            "project_id",
+            "pattern_card_id",
+            "selected_dimensions_json",
+            "dimensions_json",
+            "relationship_recomposition",
+            "application_note",
             "created_at",
         }
         for row in application_rows:
@@ -1658,9 +1838,7 @@ class ProjectArchiveService:
                 or not isinstance(dimensions, dict)
                 or not isinstance(proposal, dict)
                 or not all(
-                    isinstance(name, str)
-                    and name in proposal
-                    and name in dimensions
+                    isinstance(name, str) and name in proposal and name in dimensions
                     for name in selected
                 )
             ):
@@ -1691,28 +1869,30 @@ class ProjectArchiveService:
                 },
             }
             ReferenceBlueprintState.model_validate(blueprint)
-            blueprint_json = json.dumps(
-                blueprint, ensure_ascii=False, separators=(",", ":")
+            blueprint_json = json.dumps(blueprint, ensure_ascii=False, separators=(",", ":"))
+            upgraded_applications.append(
+                {
+                    **row,
+                    "blueprint_json": blueprint_json,
+                    "originality_status": "needs_check",
+                    "risk_level": None,
+                    "latest_report_id": None,
+                    "threshold_version": None,
+                    "revision": 0,
+                    "updated_at": row["created_at"],
+                }
             )
-            upgraded_applications.append({
-                **row,
-                "blueprint_json": blueprint_json,
-                "originality_status": "needs_check",
-                "risk_level": None,
-                "latest_report_id": None,
-                "threshold_version": None,
-                "revision": 0,
-                "updated_at": row["created_at"],
-            })
-            versions.append({
-                "id": str(uuid4()),
-                "application_id": row["id"],
-                "blueprint_revision": 0,
-                "blueprint_json": blueprint_json,
-                "changed_dimensions_json": row["selected_dimensions_json"],
-                "relationship_changed": 1,
-                "created_at": row["created_at"],
-            })
+            versions.append(
+                {
+                    "id": str(uuid4()),
+                    "application_id": row["id"],
+                    "blueprint_revision": 0,
+                    "blueprint_json": blueprint_json,
+                    "changed_dimensions_json": row["selected_dimensions_json"],
+                    "relationship_changed": 1,
+                    "created_at": row["created_at"],
+                }
+            )
 
         upgraded = dict(value)
         upgraded_tables = dict(tables)
@@ -1829,17 +2009,19 @@ class ProjectArchiveService:
         ):
             volume_id = str(uuid4())
             volume_ids[volume_number] = volume_id
-            volume_rows.append({
-                "id": volume_id,
-                "project_id": project_id,
-                "volume_number": volume_number,
-                "title": f"第{volume_number}卷",
-                "sort_key": ordinal * 1024,
-                "revision": 0,
-                "deleted_at": None,
-                "created_at": created_at,
-                "updated_at": updated_at,
-            })
+            volume_rows.append(
+                {
+                    "id": volume_id,
+                    "project_id": project_id,
+                    "volume_number": volume_number,
+                    "title": f"第{volume_number}卷",
+                    "sort_key": ordinal * 1024,
+                    "revision": 0,
+                    "deleted_at": None,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+            )
         upgraded_chapters = [
             {
                 **row,
@@ -1878,6 +2060,40 @@ class ProjectArchiveService:
         ]
         upgraded_tables["scene_originality_checks"] = []
         upgraded_tables["scene_originality_findings"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 7
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v7_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["research_sessions"] = []
+        upgraded_tables["research_sources"] = []
+        upgraded_tables["research_findings"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 8
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v8_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["author_ideas"] = []
+        upgraded_tables["chapter_annotations"] = []
+        upgraded_tables["story_relationships"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

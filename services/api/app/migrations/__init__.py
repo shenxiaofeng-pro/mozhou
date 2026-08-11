@@ -22,6 +22,8 @@ from app.migrations import (
     v17,
     v18,
     v19,
+    v20,
+    v21,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -62,6 +64,12 @@ MIGRATIONS = (
         upgrade=v18.upgrade,
     ),
     Migration(version=19, name="ai_narrative_sandbox", upgrade=v19.upgrade),
+    Migration(version=20, name="research_agent", upgrade=v20.upgrade),
+    Migration(
+        version=21,
+        name="document_formats_and_author_productivity",
+        upgrade=v21.upgrade,
+    ),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

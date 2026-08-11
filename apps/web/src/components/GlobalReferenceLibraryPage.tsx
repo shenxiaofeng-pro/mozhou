@@ -97,9 +97,9 @@ export function GlobalReferenceLibraryPage({
       return
     }
     const extension = nextFile.name.toLowerCase().split('.').pop()
-    if (!extension || !['txt', 'md', 'markdown', 'pdf'].includes(extension)) {
+    if (!extension || !['txt', 'md', 'markdown', 'pdf', 'docx', 'epub'].includes(extension)) {
       setFile(null)
-      setError('请选择 TXT、Markdown 或文本型 PDF。')
+      setError('请选择 TXT、Markdown、文本型 PDF、DOCX 或 EPUB。')
       return
     }
     if (nextFile.size > 25 * 1024 * 1024) {
@@ -108,7 +108,7 @@ export function GlobalReferenceLibraryPage({
       return
     }
     setFile(nextFile)
-    setTitle(nextFile.name.replace(/\.(?:txt|md|markdown|pdf)$/i, ''))
+    setTitle(nextFile.name.replace(/\.(?:txt|md|markdown|pdf|docx|epub)$/i, ''))
   }
 
   async function inspectFile() {
@@ -262,8 +262,8 @@ export function GlobalReferenceLibraryPage({
         <div className="global-intake-grid">
           <label className="reference-file-field">
             选择文件
-            <input ref={fileInputRef} type="file" aria-label="全局资料文件" accept=".txt,.md,.markdown,.pdf" onChange={(event) => chooseFile(event.target.files?.[0])} />
-            <span>{file?.name ?? 'TXT / Markdown / PDF · 最大 25 MB'}</span>
+            <input ref={fileInputRef} type="file" aria-label="全局资料文件" accept=".txt,.md,.markdown,.pdf,.docx,.epub" onChange={(event) => chooseFile(event.target.files?.[0])} />
+            <span>{file?.name ?? 'TXT / Markdown / PDF / DOCX / EPUB · 最大 25 MB'}</span>
           </label>
           <label>资料标题<input value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} /></label>
           {assetKind === 'reference' ? (

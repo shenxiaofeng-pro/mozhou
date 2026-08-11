@@ -5,6 +5,7 @@ from pathlib import Path
 from re import fullmatch
 from secrets import compare_digest
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -27,6 +28,20 @@ from app.archive import (
     InvalidProjectArchiveError,
     ProjectArchiveService,
     ProjectArchiveTooLargeError,
+)
+from app.author_productivity import (
+    AuthorIdea,
+    AuthorProductivityService,
+    ChapterAnnotation,
+    CreateAnnotationRequest,
+    CreateIdeaRequest,
+    CreateRelationshipRequest,
+    PrepareIdeaRequest,
+    ResolveAnnotationRequest,
+    StoryGraphs,
+    StoryRelationship,
+    UpdateIdeaRequest,
+    WritingCalendar,
 )
 from app.beta import (
     BetaEvaluationReport,
@@ -213,6 +228,17 @@ from app.repository import (
     StaleChapterSequenceError,
     StaleRevisionError,
 )
+from app.research import (
+    ResearchFinding,
+    ResearchPreview,
+    ResearchRequest,
+    ResearchService,
+    ResearchSession,
+    ResearchSubmission,
+    ResearchWorkspace,
+    ReviewResearchFindingRequest,
+    SubmitResearchRequest,
+)
 from app.review.repository import (
     InvalidTextChangeError,
     ReviewNotFoundError,
@@ -290,6 +316,13 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
         )
+        application.state.research_service = ResearchService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
+        application.state.author_productivity = AuthorProductivityService(database)
         application.state.director_repository = DirectorRepository(database)
         application.state.review_repository = ReviewRepository(database)
         application.state.reference_job_service = ReferenceJobService(
@@ -336,6 +369,7 @@ def create_app(
                 JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
                 JobKind.REVIEW: handle_review_job,
                 JobKind.SANDBOX_AI_ROUND: application.state.sandbox_ai_service.handle,
+                JobKind.RESEARCH_EXTRACTION: application.state.research_service.handle,
             },
         )
         if not defer_job_runtime:
@@ -530,9 +564,7 @@ def create_app(
         body: CreateSandboxSnapshotRequest,
     ) -> SandboxSnapshot:
         try:
-            return application.state.narrative_sandbox.create_snapshot(
-                str(project_id), body
-            )
+            return application.state.narrative_sandbox.create_snapshot(str(project_id), body)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         except SandboxValidationError as error:
@@ -548,9 +580,7 @@ def create_app(
         body: CreateSandboxBranchRequest,
     ) -> SandboxBranch:
         try:
-            return application.state.narrative_sandbox.create_branch(
-                str(snapshot_id), body
-            )
+            return application.state.narrative_sandbox.create_branch(str(snapshot_id), body)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="沙盘快照不存在") from error
         except SandboxValidationError as error:
@@ -661,6 +691,183 @@ def create_app(
         except SandboxConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @application.post("/api/projects/{project_id}/research/preview", response_model=ResearchPreview)
+    def preview_research(project_id: UUID, body: ResearchRequest) -> ResearchPreview:
+        try:
+            return application.state.research_service.preview(str(project_id), body)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置资料研究模型线路") from error
+        except ValueError as error:
+            messages = {
+                "research_source_not_found": "所选全局资料不存在",
+                "research_material_too_large": "本次研究资料超过 200 万字符上限",
+            }
+            raise HTTPException(
+                status_code=409, detail=messages.get(str(error), "研究预览失败")
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/research/jobs",
+        response_model=ResearchSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_research(
+        project_id: UUID,
+        body: SubmitResearchRequest,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> ResearchSubmission:
+        try:
+            session, job = application.state.research_service.submit(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return ResearchSubmission(session=session, job=job)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置资料研究模型线路") from error
+        except ValueError as error:
+            messages = {
+                "research_source_not_found": "所选全局资料不存在",
+                "research_material_too_large": "本次研究资料超过 200 万字符上限",
+                "research_source_changed": "资料范围已变化，请重新预览",
+                "external_processing_not_confirmed": "请先确认研究资料外发范围",
+                "estimated_cost_exceeds_limit": "研究预计费用超过本次上限",
+            }
+            raise HTTPException(
+                status_code=409, detail=messages.get(str(error), "研究任务无法提交")
+            ) from error
+
+    @application.get(
+        "/api/projects/{project_id}/research/sessions", response_model=list[ResearchSession]
+    )
+    def list_research_sessions(project_id: UUID) -> list[ResearchSession]:
+        return application.state.research_service.list_sessions(str(project_id))
+
+    @application.get("/api/research/sessions/{session_id}", response_model=ResearchWorkspace)
+    def get_research_session(session_id: UUID) -> ResearchWorkspace:
+        try:
+            return application.state.research_service.get_session(str(session_id))
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="研究会话不存在") from error
+
+    @application.post("/api/research/findings/{finding_id}/review", response_model=ResearchFinding)
+    def review_research_finding(
+        finding_id: UUID, body: ReviewResearchFindingRequest
+    ) -> ResearchFinding:
+        try:
+            return application.state.research_service.review_finding(str(finding_id), body)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="研究候选不存在") from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "research_revision_conflict": "研究候选已在其他窗口更改",
+                    "research_finding_already_reviewed": "该研究候选已完成审核",
+                }.get(str(error), "研究候选无法审核"),
+            ) from error
+
+    @application.get("/api/projects/{project_id}/writing-calendar", response_model=WritingCalendar)
+    def get_writing_calendar(
+        project_id: UUID, days: Annotated[int, Query(ge=7, le=366)] = 42
+    ) -> WritingCalendar:
+        try:
+            return application.state.author_productivity.calendar(str(project_id), days)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/chapters/{chapter_id}/annotations", response_model=list[ChapterAnnotation]
+    )
+    def list_chapter_annotations(chapter_id: UUID) -> list[ChapterAnnotation]:
+        try:
+            return application.state.author_productivity.list_annotations(str(chapter_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/annotations",
+        response_model=ChapterAnnotation,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_chapter_annotation(
+        chapter_id: UUID, body: CreateAnnotationRequest
+    ) -> ChapterAnnotation:
+        try:
+            return application.state.author_productivity.create_annotation(str(chapter_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="正文已变化，请重新选中批注范围") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="请先选中一段正文") from error
+
+    @application.post(
+        "/api/chapter-annotations/{annotation_id}/resolve", response_model=ChapterAnnotation
+    )
+    def resolve_chapter_annotation(
+        annotation_id: UUID, body: ResolveAnnotationRequest
+    ) -> ChapterAnnotation:
+        try:
+            return application.state.author_productivity.resolve_annotation(
+                str(annotation_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="批注不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="批注已在其他窗口更改") from error
+
+    @application.get("/api/author-ideas", response_model=list[AuthorIdea])
+    def list_author_ideas(project_id: UUID | None = None) -> list[AuthorIdea]:
+        return application.state.author_productivity.list_ideas(
+            str(project_id) if project_id else None
+        )
+
+    @application.post(
+        "/api/author-ideas", response_model=AuthorIdea, status_code=status.HTTP_201_CREATED
+    )
+    def create_author_idea(body: CreateIdeaRequest) -> AuthorIdea:
+        try:
+            return application.state.author_productivity.create_idea(body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="灵感所属作品不存在") from error
+
+    @application.patch("/api/author-ideas/{idea_id}", response_model=AuthorIdea)
+    def update_author_idea(idea_id: UUID, body: UpdateIdeaRequest) -> AuthorIdea:
+        try:
+            return application.state.author_productivity.update_idea(str(idea_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="灵感不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="灵感已在其他窗口更改") from error
+
+    @application.post("/api/author-ideas/{idea_id}/prepare", response_model=AuthorIdea)
+    def prepare_author_idea(idea_id: UUID, body: PrepareIdeaRequest) -> AuthorIdea:
+        try:
+            return application.state.author_productivity.prepare_idea(str(idea_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="灵感不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="灵感已在其他窗口更改") from error
+
+    @application.post(
+        "/api/projects/{project_id}/story-relationships",
+        response_model=StoryRelationship,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_story_relationship(
+        project_id: UUID, body: CreateRelationshipRequest
+    ) -> StoryRelationship:
+        try:
+            return application.state.author_productivity.create_relationship(str(project_id), body)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="人物关系的角色或来源章节无效") from error
+
+    @application.get("/api/projects/{project_id}/story-graphs", response_model=StoryGraphs)
+    def get_story_graphs(project_id: UUID) -> StoryGraphs:
+        return application.state.author_productivity.graphs(str(project_id))
+
     @application.post(
         "/api/sandbox/runs/{run_id}/replay",
         response_model=SandboxRun,
@@ -723,9 +930,7 @@ def create_app(
         decision: Literal["approve", "reject"],
     ) -> SandboxCandidate:
         try:
-            return application.state.narrative_sandbox.decide_candidate(
-                str(candidate_id), decision
-            )
+            return application.state.narrative_sandbox.decide_candidate(str(candidate_id), decision)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="沙盘候选不存在") from error
         except SandboxConflictError as error:
@@ -740,9 +945,7 @@ def create_app(
         body: CompareSandboxRunsRequest,
     ) -> SandboxComparison:
         try:
-            return application.state.narrative_sandbox.compare_runs(
-                str(project_id), body.run_ids
-            )
+            return application.state.narrative_sandbox.compare_runs(str(project_id), body.run_ids)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
         except (SandboxValidationError, SandboxConflictError) as error:
@@ -1703,6 +1906,29 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=409, detail="作品没有可导出的正文") from error
 
+    @application.get("/api/projects/{project_id}/manuscript-export/{export_format}")
+    def export_manuscript_binary(
+        project_id: UUID,
+        export_format: Literal["docx", "epub"],
+        service: Annotated[ManuscriptService, Depends(get_manuscript_service)],
+    ) -> Response:
+        try:
+            exported = service.export_binary(str(project_id), export_format)
+            return Response(
+                content=exported.payload,
+                media_type=exported.media_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{quote(exported.filename)}",
+                    "X-Content-SHA256": exported.content_sha256,
+                    "X-Manuscript-Volumes": str(exported.volume_count),
+                    "X-Manuscript-Chapters": str(exported.chapter_count),
+                },
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="项目不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="作品没有可导出的正文") from error
+
     @application.post(
         "/api/project-imports",
         response_model=Workspace,
@@ -1837,6 +2063,8 @@ def create_app(
         if content_type not in {
             "application/octet-stream",
             "application/pdf",
+            "application/epub+zip",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/plain",
             "text/markdown",
         }:
@@ -1926,12 +2154,21 @@ def create_app(
             if code == "file_too_large":
                 raise HTTPException(status_code=413, detail="稿件文件不能超过 20 MiB") from error
             if code in {"unsupported_format", "unsupported_manuscript_format"}:
-                raise HTTPException(status_code=415, detail="请选择 TXT 或 Markdown 稿件") from error
+                raise HTTPException(
+                    status_code=415, detail="请选择 TXT、Markdown、DOCX 或 EPUB 稿件"
+                ) from error
             messages = {
                 "empty_content": "稿件没有可导入的正文",
                 "unsupported_or_mixed_encoding": "稿件编码混杂或不受支持",
                 "null_byte": "稿件包含不安全的空字节",
                 "unsafe_control_characters": "稿件包含过多控制字符",
+                "active_docx_content": "DOCX 包含宏、OLE 或嵌入对象，已拒绝",
+                "external_docx_relationship": "DOCX 包含外部链接或模板，已拒绝",
+                "active_epub_content": "EPUB 包含脚本或远程资源，已拒绝",
+                "encrypted_zip": "加密的 DOCX/EPUB 不允许导入",
+                "zip_unsafe_path": "文件包含越界路径，已拒绝",
+                "zip_expanded_limit": "文件包解压后超过安全上限",
+                "zip_expansion_ratio": "文件包压缩比异常，已拒绝",
             }
             raise HTTPException(
                 status_code=422,
@@ -2659,9 +2896,7 @@ def create_app(
         reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
     ) -> Chapter:
         try:
-            return reviews.rollback_chapter_version(
-                str(chapter_id), str(version_id), body
-            )
+            return reviews.rollback_chapter_version(str(chapter_id), str(version_id), body)
         except ReviewNotFoundError as error:
             raise HTTPException(status_code=404, detail="章节版本不存在") from error
         except StaleReviewRevisionError as error:
@@ -2742,9 +2977,7 @@ def create_app(
         chapter_revision: int | None = Query(default=None, ge=0),
     ) -> list[ReviewFinding]:
         try:
-            return reviews.list_findings(
-                str(chapter_id), chapter_revision=chapter_revision
-            )
+            return reviews.list_findings(str(chapter_id), chapter_revision=chapter_revision)
         except ReviewNotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
 

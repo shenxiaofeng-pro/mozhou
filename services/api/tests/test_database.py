@@ -34,9 +34,11 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
     assert [row["name"] for row in rows] == [
         "ai_provider_profiles",
         "ai_task_defaults",
+        "author_ideas",
         "beta_events",
         "beta_feedback",
         "book_blueprints",
+        "chapter_annotations",
         "chapter_events",
         "chapter_versions",
         "chapters",
@@ -65,6 +67,9 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "reference_pattern_cards",
         "reference_segments",
         "reference_works",
+        "research_findings",
+        "research_sessions",
+        "research_sources",
         "review_findings",
         "rolling_chapter_plans",
         "run_events",
@@ -81,6 +86,7 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "source_documents",
         "story_entities",
         "story_facts",
+        "story_relationships",
         "story_threads",
         "text_change_sets",
         "text_changes",
@@ -95,7 +101,9 @@ def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -
         connection.execute(
             "CREATE TABLE chapters (id TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '')"
         )
-        connection.execute("INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿"))
+        connection.execute(
+            "INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿")
+        )
         connection.commit()
 
     database = Database(database_path)
@@ -148,21 +156,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v19-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v21-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (19,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (21,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v19-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v21-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v19_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v21_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -198,7 +206,9 @@ def test_database_runs_v1_and_v2_fixtures_to_v19_without_losing_data(
                 )
                 """
             )
-        connection.execute("INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿"))
+        connection.execute(
+            "INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿")
+        )
         connection.execute("INSERT INTO generation_runs (id) VALUES (?)", ("run-1",))
         connection.execute(f"PRAGMA user_version={source_version}")
         connection.commit()
@@ -209,16 +219,14 @@ def test_database_runs_v1_and_v2_fixtures_to_v19_without_losing_data(
         chapter = connection.execute(
             "SELECT content, opening_hook, state_change, ending_cliffhanger FROM chapters"
         ).fetchone()
-        generation = connection.execute(
-            "SELECT provider, model FROM generation_runs"
-        ).fetchone()
+        generation = connection.execute("SELECT provider, model FROM generation_runs").fetchone()
         history = connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
         ).fetchall()
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (19,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (21,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -242,8 +250,10 @@ def test_database_runs_v1_and_v2_fixtures_to_v19_without_losing_data(
         (17, "narrative_sandbox"),
         (18, "scene_plot_graph_originality"),
         (19, "ai_narrative_sandbox"),
+        (20, "research_agent"),
+        (21, "document_formats_and_author_productivity"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v19-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v21-*.db"))) == 1
 
 
 def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
@@ -290,7 +300,7 @@ def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
     assert was_created is True
     assert created.kind == JobKind.SANDBOX_AI_ROUND
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (19,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (21,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -440,10 +450,15 @@ def test_v12_turns_legacy_application_into_unchecked_versioned_blueprint() -> No
                 "project-1",
                 "card-1",
                 '["era"]',
-                json.dumps({"era": {
-                    "summary": dimension["summary"],
-                    "transferable_logic": dimension["transferable_logic"],
-                }}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "era": {
+                            "summary": dimension["summary"],
+                            "transferable_logic": dimension["transferable_logic"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
                 "重组为师徒竞争",
                 "迁移旧蓝图",
                 "2026-08-10T00:00:00Z",
@@ -468,9 +483,7 @@ def test_v12_turns_legacy_application_into_unchecked_versioned_blueprint() -> No
     assert migrated is not None
     blueprint = json.loads(migrated["blueprint_json"])
     assert blueprint["dimensions"]["era"]["mode"] == "preserve"
-    assert blueprint["dimensions"]["era"]["source"]["source_segment_ids"] == [
-        "segment-1"
-    ]
+    assert blueprint["dimensions"]["era"]["source"]["source_segment_ids"] == ["segment-1"]
     assert migrated["originality_status"] == "needs_check"
     assert migrated["revision"] == 0
     assert migrated["updated_at"] == "2026-08-10T00:00:00Z"
@@ -512,20 +525,19 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
     assert sha256(database_path.read_bytes()).hexdigest() == original_sha256
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (1,)
-        assert connection.execute("SELECT value FROM markers").fetchone() == (
-            "不可丢失的原稿",
+        assert connection.execute("SELECT value FROM markers").fetchone() == ("不可丢失的原稿",)
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
+            ).fetchone()
+            is None
         )
-        assert connection.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
-        ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v19-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v21-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
-        assert connection.execute("SELECT value FROM markers").fetchone() == (
-            "不可丢失的原稿",
-        )
+        assert connection.execute("SELECT value FROM markers").fetchone() == ("不可丢失的原稿",)
     assert not list(tmp_path.glob(".mozhou-migrate-*.db*"))
 
 

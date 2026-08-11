@@ -11,6 +11,7 @@ class JobKind(StrEnum):
     REFERENCE_FUSION = "reference_fusion"
     REVIEW = "review"
     SANDBOX_AI_ROUND = "sandbox_ai_round"
+    RESEARCH_EXTRACTION = "research_extraction"
 
 
 class JobState(StrEnum):

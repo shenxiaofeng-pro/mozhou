@@ -18,6 +18,7 @@ from app.review.rules import make_finding
 
 ARCHIVE_TABLES = {
     "projects",
+    "author_ideas",
     "book_blueprints",
     "volume_plans",
     "rolling_chapter_plans",
@@ -27,6 +28,7 @@ ARCHIVE_TABLES = {
     "directory_events",
     "serial_daily_goals",
     "chapter_versions",
+    "chapter_annotations",
     "context_directives",
     "generation_runs",
     "chapter_events",
@@ -43,8 +45,12 @@ ARCHIVE_TABLES = {
     "future_knowledge",
     "story_entities",
     "story_threads",
+    "story_relationships",
     "source_documents",
     "source_cards",
+    "research_sessions",
+    "research_sources",
+    "research_findings",
     "reference_works",
     "reference_segments",
     "reference_pattern_cards",
@@ -97,9 +103,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
         ).json()
 
         default_response = client.get(f"/api/projects/{project_id}/export")
-        response = client.get(
-            f"/api/projects/{project_id}/export?include_reference_assets=true"
-        )
+        response = client.get(f"/api/projects/{project_id}/export?include_reference_assets=true")
 
     assert response.status_code == 200
     archive = response.json()
@@ -107,7 +111,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 7
+    assert archive["format_version"] == 9
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -122,9 +126,19 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
     database_path = tmp_path / "mozhou.db"
     timestamp = "2026-08-11T00:00:00+00:00"
     fields = (
-        "title", "genre", "rebirth_year", "rebirth_location", "target_audience",
-        "core_selling_points", "core_desire", "divergence_point", "long_term_promise",
-        "ending_direction", "protagonist_arc", "resource_growth", "relationship_design",
+        "title",
+        "genre",
+        "rebirth_year",
+        "rebirth_location",
+        "target_audience",
+        "core_selling_points",
+        "core_desire",
+        "divergence_point",
+        "long_term_promise",
+        "ending_direction",
+        "protagonist_arc",
+        "resource_growth",
+        "relationship_design",
     )
     blueprint_content = {
         "title": "闽北春潮",
@@ -162,14 +176,16 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
         "emotional_payoff": "父子关系松动",
         "ending_cliffhanger": "厂长叫出主角小名",
         "verification": "核对厂办张榜流程",
-        "scene_beats": [{
-            "ordinal": 1,
-            "summary": "主角发现名单",
-            "state_change": "确认时间线变化",
-            "resource_change": "得到行动窗口",
-            "emotional_turn": "恐慌转为决断",
-            "verification": "核对公告地点",
-        }],
+        "scene_beats": [
+            {
+                "ordinal": 1,
+                "summary": "主角发现名单",
+                "state_change": "确认时间线变化",
+                "resource_change": "得到行动窗口",
+                "emotional_turn": "恐慌转为决断",
+                "verification": "核对公告地点",
+            }
+        ],
     }
     with TestClient(create_app(database_path)) as client:
         workspace = client.post(
@@ -211,7 +227,13 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
                     id, project_id, volume_number, content_json, locked, revision, created_at, updated_at
                 ) VALUES (?, ?, 1, ?, 1, 1, ?, ?)
                 """,
-                (volume_id, project_id, json.dumps(volume_content, ensure_ascii=False), timestamp, timestamp),
+                (
+                    volume_id,
+                    project_id,
+                    json.dumps(volume_content, ensure_ascii=False),
+                    timestamp,
+                    timestamp,
+                ),
             )
             connection.execute(
                 """
@@ -236,13 +258,14 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 7
+    assert archive["format_version"] == 9
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()
-    assert restored["book_blueprint"]["content"]["ending_direction"] == blueprint_content[
-        "ending_direction"
-    ]
+    assert (
+        restored["book_blueprint"]["content"]["ending_direction"]
+        == blueprint_content["ending_direction"]
+    )
     assert restored["book_blueprint"]["locks"]["ending_direction"] is True
     assert restored["volume_plans"][0]["title"] == "停产名单"
     assert restored["volume_plans"][0]["locked"] is True
@@ -328,15 +351,11 @@ def test_archive_round_trip_preserves_review_versions_and_partial_changes(
         )
         restored = restored_response.json()
         restored_chapter_id = restored["chapters"][0]["id"]
-        restored_versions = client.get(
-            f"/api/chapters/{restored_chapter_id}/versions"
-        ).json()
+        restored_versions = client.get(f"/api/chapters/{restored_chapter_id}/versions").json()
         restored_findings = client.get(
             f"/api/chapters/{restored_chapter_id}/review-findings"
         ).json()
-        restored_sets = client.get(
-            f"/api/chapters/{restored_chapter_id}/text-change-sets"
-        ).json()
+        restored_sets = client.get(f"/api/chapters/{restored_chapter_id}/text-change-sets").json()
 
     assert restored_response.status_code == 201
     assert restored["chapters"][0]["content"] == applied["content"]
@@ -400,21 +419,18 @@ def test_reality_source_archive_defaults_to_card_snapshot_and_can_include_raw_as
     assert default_archive["tables"]["source_cards"][0]["source_document_id"] is None
     assert default_archive["tables"]["source_cards"][0]["excerpt"] == raw_source.decode()
     assert full_archive["tables"]["source_documents"][0]["content"] == raw_source.decode()
-    assert full_archive["tables"]["source_cards"][0]["source_document_id"] == imported_card[
-        "source_document_id"
-    ]
-    assert restored["source_cards"][0]["source_document_id"] != imported_card[
-        "source_document_id"
-    ]
+    assert (
+        full_archive["tables"]["source_cards"][0]["source_document_id"]
+        == imported_card["source_document_id"]
+    )
+    assert restored["source_cards"][0]["source_document_id"] != imported_card["source_document_id"]
     assert restored["source_cards"][0]["source_date"] == "1998-03"
     assert len(global_documents) == 2
 
 
 def test_export_returns_not_found_without_leaking_details(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
-        response = client.get(
-            "/api/projects/05f14cb8-d0ed-4489-bc20-31c44c1efbba/export"
-        )
+        response = client.get("/api/projects/05f14cb8-d0ed-4489-bc20-31c44c1efbba/export")
 
     assert response.status_code == 404
     assert response.json() == {"detail": "项目不存在"}
@@ -450,12 +466,19 @@ def test_import_upgrades_v1_project_owned_reference_archive(tmp_path: Path) -> N
             {
                 key: value
                 for key, value in work.items()
-                if key not in {
-                    "content_sha256", "source_sha256", "source_encoding",
-                    "encoding_confidence", "import_state", "source_spans_json",
-                    "duplicate_of_id", "updated_at",
+                if key
+                not in {
+                    "content_sha256",
+                    "source_sha256",
+                    "source_encoding",
+                    "encoding_confidence",
+                    "import_state",
+                    "source_spans_json",
+                    "duplicate_of_id",
+                    "updated_at",
                 }
-            } | {"project_id": project_id}
+            }
+            | {"project_id": project_id}
             for work in archive["tables"]["reference_works"]
         ]
         unsigned = dict(archive)
@@ -540,28 +563,33 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             "transferable_logic": "先给主角一个可验证的小窗口",
             "adaptation_risk": "必须重组人物和场景",
         }
-        archive["tables"]["reference_pattern_cards"].append({
-            "id": pattern_card_id,
-            "project_id": project_id,
-            "selected_segment_ids_json": json.dumps([source_segment_id]),
-            "author_focus": "验证模式卡引用重映射",
-            "proposal_json": json.dumps({
-                "era": dimension,
-                "core_desire": dimension,
-                "conflict_causality": dimension,
-                "resource_system": dimension,
-                "key_scene_sequence": dimension,
-                "ending": dimension,
-                "shared_patterns": ["先验证信息差"],
-                "differences": ["人物关系不同"],
-                "relationship_recomposition": "将原关系重组为师徒竞争",
-                "originality_risks": [],
-            }, ensure_ascii=False),
-            "provider": "openai",
-            "model": "gpt-5.6",
-            "source_job_id": source_job.id,
-            "created_at": archive["exported_at"],
-        })
+        archive["tables"]["reference_pattern_cards"].append(
+            {
+                "id": pattern_card_id,
+                "project_id": project_id,
+                "selected_segment_ids_json": json.dumps([source_segment_id]),
+                "author_focus": "验证模式卡引用重映射",
+                "proposal_json": json.dumps(
+                    {
+                        "era": dimension,
+                        "core_desire": dimension,
+                        "conflict_causality": dimension,
+                        "resource_system": dimension,
+                        "key_scene_sequence": dimension,
+                        "ending": dimension,
+                        "shared_patterns": ["先验证信息差"],
+                        "differences": ["人物关系不同"],
+                        "relationship_recomposition": "将原关系重组为师徒竞争",
+                        "originality_risks": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                "provider": "openai",
+                "model": "gpt-5.6",
+                "source_job_id": source_job.id,
+                "created_at": archive["exported_at"],
+            }
+        )
         application_id = str(uuid4())
         blueprint = {
             "dimensions": {
@@ -591,37 +619,44 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
             },
         }
         blueprint_json = json.dumps(blueprint, ensure_ascii=False)
-        archive["tables"]["reference_pattern_applications"].append({
-            "id": application_id,
-            "project_id": project_id,
-            "pattern_card_id": pattern_card_id,
-            "selected_dimensions_json": json.dumps(["era"]),
-            "dimensions_json": json.dumps({
-                "era": {
-                    "summary": "现实秩序发生松动",
-                    "transferable_logic": "先给主角一个可验证的小窗口",
-                }
-            }, ensure_ascii=False),
-            "relationship_recomposition": "将原关系重组为师徒竞争",
-            "application_note": "只保留抽象因果",
-            "blueprint_json": blueprint_json,
-            "originality_status": "needs_check",
-            "risk_level": None,
-            "latest_report_id": None,
-            "threshold_version": None,
-            "revision": 0,
-            "created_at": archive["exported_at"],
-            "updated_at": archive["exported_at"],
-        })
-        archive["tables"]["reference_blueprint_versions"].append({
-            "id": str(uuid4()),
-            "application_id": application_id,
-            "blueprint_revision": 0,
-            "blueprint_json": blueprint_json,
-            "changed_dimensions_json": json.dumps(["era"]),
-            "relationship_changed": 1,
-            "created_at": archive["exported_at"],
-        })
+        archive["tables"]["reference_pattern_applications"].append(
+            {
+                "id": application_id,
+                "project_id": project_id,
+                "pattern_card_id": pattern_card_id,
+                "selected_dimensions_json": json.dumps(["era"]),
+                "dimensions_json": json.dumps(
+                    {
+                        "era": {
+                            "summary": "现实秩序发生松动",
+                            "transferable_logic": "先给主角一个可验证的小窗口",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "relationship_recomposition": "将原关系重组为师徒竞争",
+                "application_note": "只保留抽象因果",
+                "blueprint_json": blueprint_json,
+                "originality_status": "needs_check",
+                "risk_level": None,
+                "latest_report_id": None,
+                "threshold_version": None,
+                "revision": 0,
+                "created_at": archive["exported_at"],
+                "updated_at": archive["exported_at"],
+            }
+        )
+        archive["tables"]["reference_blueprint_versions"].append(
+            {
+                "id": str(uuid4()),
+                "application_id": application_id,
+                "blueprint_revision": 0,
+                "blueprint_json": blueprint_json,
+                "changed_dimensions_json": json.dumps(["era"]),
+                "relationship_changed": 1,
+                "created_at": archive["exported_at"],
+            }
+        )
         unsigned = dict(archive)
         unsigned.pop("checksum_sha256")
         archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
@@ -649,7 +684,10 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
     assert restored["chapters"][0]["project_id"] == restored["project"]["id"]
     assert restored["chapters"][0]["content"] == "原稿不可被覆盖。"
     assert restored["reference_works"][0]["id"] != imported_reference["id"]
-    assert restored["reference_works"][0]["segments"][0]["id"] != imported_reference["segments"][0]["id"]
+    assert (
+        restored["reference_works"][0]["segments"][0]["id"]
+        != imported_reference["segments"][0]["id"]
+    )
     restored_segment_id = restored["reference_works"][0]["segments"][0]["id"]
     restored_card = restored["reference_pattern_cards"][0]
     assert restored_card["id"] != pattern_card_id
@@ -707,9 +745,7 @@ def test_archive_round_trip_preserves_job_history_and_immutable_artifacts(
             legacy_job.pop("workflow")
         legacy_unsigned = dict(legacy_v3)
         legacy_unsigned.pop("checksum_sha256")
-        legacy_v3["checksum_sha256"] = hashlib.sha256(
-            canonical_json(legacy_unsigned)
-        ).hexdigest()
+        legacy_v3["checksum_sha256"] = hashlib.sha256(canonical_json(legacy_unsigned)).hexdigest()
         legacy_restored = client.post(
             "/api/project-imports",
             content=canonical_json(legacy_v3),
@@ -722,9 +758,7 @@ def test_archive_round_trip_preserves_job_history_and_immutable_artifacts(
             headers={"Content-Type": "application/json"},
         ).json()
         restored_project_id = restored["project"]["id"]
-        restored_jobs = client.get(
-            f"/api/projects/{restored_project_id}/jobs"
-        ).json()
+        restored_jobs = client.get(f"/api/projects/{restored_project_id}/jobs").json()
         restored_detail = client.get(f"/api/jobs/{restored_jobs[0]['id']}").json()
         restored_artifact = client.get(
             f"/api/job-artifacts/{restored_detail['artifacts'][0]['id']}"
@@ -749,9 +783,7 @@ def test_import_rejects_tampered_or_unknown_archive_without_writing(tmp_path: Pa
                 "rebirth_location": "南平",
             },
         ).json()
-        archive = client.get(
-            f"/api/projects/{original['project']['id']}/export"
-        ).json()
+        archive = client.get(f"/api/projects/{original['project']['id']}/export").json()
         archive["tables"]["projects"][0]["title"] = "被篡改的标题"
 
         tampered = client.post(
@@ -760,9 +792,7 @@ def test_import_rejects_tampered_or_unknown_archive_without_writing(tmp_path: Pa
             headers={"Content-Type": "application/json"},
         )
 
-        archive = client.get(
-            f"/api/projects/{original['project']['id']}/export"
-        ).json()
+        archive = client.get(f"/api/projects/{original['project']['id']}/export").json()
         archive["tables"]["unknown_table"] = []
         archive_without_checksum = dict(archive)
         archive_without_checksum.pop("checksum_sha256")
@@ -797,9 +827,7 @@ def test_import_rejects_semantically_invalid_archive_without_orphan_copy(
                 "rebirth_location": "南平",
             },
         ).json()
-        archive = client.get(
-            f"/api/projects/{original['project']['id']}/export"
-        ).json()
+        archive = client.get(f"/api/projects/{original['project']['id']}/export").json()
         archive["tables"]["projects"][0]["genre"] = "unknown_genre"
         unsigned = dict(archive)
         unsigned.pop("checksum_sha256")

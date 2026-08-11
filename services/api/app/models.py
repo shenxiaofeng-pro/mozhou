@@ -82,10 +82,55 @@ class SourceConfidence(StrEnum):
     LOW = "low"
 
 
+class ResearchCategory(StrEnum):
+    HISTORICAL_EVENT = "historical_event"
+    LOCAL_SYSTEM = "local_system"
+    INDUSTRY_RULE = "industry_rule"
+    PRICE_TECHNOLOGY = "price_technology"
+    CONTROVERSY = "controversy"
+
+
+class ResearchFindingState(StrEnum):
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ResearchFindingDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    source_id: str = Field(min_length=36, max_length=36)
+    category: ResearchCategory
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=1200)
+    evidence_excerpt: str = Field(min_length=1, max_length=4000)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+    applicable_year_start: int = Field(ge=-3000, le=2100)
+    applicable_year_end: int = Field(ge=-3000, le=2100)
+    region: str = Field(min_length=1, max_length=120)
+    confidence: SourceConfidence = SourceConfidence.MEDIUM
+    conflict_key: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> ResearchFindingDraft:
+        if self.end_char <= self.start_char:
+            raise ValueError("研究证据字符范围无效")
+        if self.applicable_year_end < self.applicable_year_start:
+            raise ValueError("研究结论年代范围无效")
+        return self
+
+
+class ResearchFindingDraftSet(BaseModel):
+    findings: list[ResearchFindingDraft] = Field(default_factory=list, max_length=80)
+
+
 class ReferenceFormat(StrEnum):
     TXT = "txt"
     MARKDOWN = "markdown"
     PDF = "pdf"
+    DOCX = "docx"
+    EPUB = "epub"
 
 
 class ReferenceRightsBasis(StrEnum):
@@ -761,28 +806,20 @@ class ConfirmManuscriptImportRequest(BaseModel):
     @model_validator(mode="after")
     def validate_import_tree(self) -> ConfirmManuscriptImportRequest:
         volume_ids = [volume.client_id for volume in self.volumes]
-        chapter_ids = [
-            chapter.client_id
-            for volume in self.volumes
-            for chapter in volume.chapters
-        ]
+        chapter_ids = [chapter.client_id for volume in self.volumes for chapter in volume.chapters]
         if len(set(volume_ids)) != len(volume_ids) or len(set(chapter_ids)) != len(chapter_ids):
             raise ValueError("稿件预览节点标识不能重复")
         if len(chapter_ids) > 10_000:
             raise ValueError("稿件章节数量超过上限")
         total = len(self.unrecognized_text) + sum(
-            len(chapter.content)
-            for volume in self.volumes
-            for chapter in volume.chapters
+            len(chapter.content) for volume in self.volumes for chapter in volume.chapters
         )
         if total > 20_000_000:
             raise ValueError("稿件总字符数超过上限")
         if self.unrecognized_text and self.unrecognized_action is None:
             raise ValueError("必须决定如何处理未识别段落")
         has_warnings = bool(self.warnings) or any(
-            chapter.warnings
-            for volume in self.volumes
-            for chapter in volume.chapters
+            chapter.warnings for volume in self.volumes for chapter in volume.chapters
         )
         if has_warnings and not self.confirm_warnings:
             raise ValueError("必须确认空章、超长章或低置信度结构")
@@ -875,7 +912,7 @@ class SerialDashboard(BaseModel):
 
 
 class WorkspaceSearchResult(BaseModel):
-    kind: Literal["project", "chapter", "character", "resource", "thread"]
+    kind: Literal["project", "chapter", "character", "resource", "thread", "idea", "annotation"]
     id: str
     title: str
     snippet: str

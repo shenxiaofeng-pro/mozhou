@@ -24,7 +24,9 @@ class SerialService:
             chapter_id = str(row["chapter_id"])
             current = len(str(row["content"]))
             previous = previous_by_chapter.get(chapter_id, 0)
-            created_date = datetime.fromisoformat(str(row["created_at"])).astimezone().date().isoformat()
+            created_date = (
+                datetime.fromisoformat(str(row["created_at"])).astimezone().date().isoformat()
+            )
             if created_date == goal_date and not bool(row["is_candidate"]):
                 actual += max(0, current - previous)
             previous_by_chapter[chapter_id] = current
@@ -58,18 +60,22 @@ class SerialService:
                 "SELECT * FROM serial_daily_goals WHERE project_id = ? AND goal_date = ?",
                 (project_id, selected_date),
             ).fetchone()
-        target = int(goal_row["target_characters"]) if goal_row is not None else int(
-            project["chapter_target_words"]
+        target = (
+            int(goal_row["target_characters"])
+            if goal_row is not None
+            else int(project["chapter_target_words"])
         )
         revision = int(goal_row["revision"]) if goal_row is not None else 0
-        updated_at = str(goal_row["updated_at"]) if goal_row is not None else str(
-            project["updated_at"]
+        updated_at = (
+            str(goal_row["updated_at"]) if goal_row is not None else str(project["updated_at"])
         )
-        counts = {state: sum(1 for row in chapters if row["status"] == state) for state in (
-            "planned", "drafted", "reviewing", "approved"
-        )}
+        counts = {
+            state: sum(1 for row in chapters if row["status"] == state)
+            for state in ("planned", "drafted", "reviewing", "approved")
+        }
         stockpile = sum(
-            1 for row in chapters
+            1
+            for row in chapters
             if row["status"] in {"drafted", "reviewing", "approved"} and str(row["content"]).strip()
         )
         return SerialDashboard(
@@ -101,9 +107,10 @@ class SerialService:
     ) -> SerialDashboard:
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             current = connection.execute(
                 "SELECT revision FROM serial_daily_goals WHERE project_id = ? AND goal_date = ?",
@@ -118,13 +125,19 @@ class SerialService:
                     (str(uuid4()), project_id, goal_date, request.target_characters, timestamp),
                 )
             else:
-                if request.expected_revision is None or int(current["revision"]) != request.expected_revision:
+                if (
+                    request.expected_revision is None
+                    or int(current["revision"]) != request.expected_revision
+                ):
                     raise StaleRevisionError(str(current["revision"]))
                 connection.execute(
                     "UPDATE serial_daily_goals SET target_characters = ?, revision = revision + 1, "
                     "updated_at = ? WHERE project_id = ? AND goal_date = ? AND revision = ?",
                     (
-                        request.target_characters, timestamp, project_id, goal_date,
+                        request.target_characters,
+                        timestamp,
+                        project_id,
+                        goal_date,
                         request.expected_revision,
                     ),
                 )
@@ -174,29 +187,82 @@ class SerialService:
                 "ORDER BY created_at DESC LIMIT ?",
                 (project_id, like, like, limit),
             ).fetchall()
+            ideas = connection.execute(
+                "SELECT id, title, content FROM author_ideas WHERE (project_id IS NULL OR project_id = ?) "
+                "AND (title LIKE ? ESCAPE '\\' COLLATE NOCASE OR content LIKE ? ESCAPE '\\' COLLATE NOCASE) "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (project_id, like, like, limit),
+            ).fetchall()
+            annotations = connection.execute(
+                "SELECT a.id, a.chapter_id, a.comment, a.selected_text, c.title chapter_title "
+                "FROM chapter_annotations a JOIN chapters c ON c.id=a.chapter_id WHERE a.project_id=? "
+                "AND (a.comment LIKE ? ESCAPE '\\' COLLATE NOCASE OR a.selected_text LIKE ? ESCAPE '\\' COLLATE NOCASE) "
+                "ORDER BY a.updated_at DESC LIMIT ?",
+                (project_id, like, like, limit),
+            ).fetchall()
         results: list[WorkspaceSearchResult] = []
         project_text = f"{project['title']} {project['rebirth_location']}"
         if needle.casefold() in project_text.casefold():
-            results.append(WorkspaceSearchResult(
-                kind="project", id=str(project["id"]), title=str(project["title"]),
-                snippet=self._snippet(project_text, needle),
-            ))
-        results.extend(WorkspaceSearchResult(
-            kind="chapter", id=str(row["id"]), title=str(row["title"]),
-            snippet=self._snippet(f"{row['title']} {row['content']}", needle),
-            chapter_id=str(row["id"]),
-        ) for row in chapters)
-        results.extend(WorkspaceSearchResult(
-            kind="character" if row["kind"] == "character" else "resource",
-            id=str(row["id"]), title=str(row["name"]),
-            snippet=self._snippet(
-                " ".join(str(row[field]) for field in ("name", "role", "goal", "current_state", "relationship_notes")),
-                needle,
-            ),
-        ) for row in entities)
-        results.extend(WorkspaceSearchResult(
-            kind="thread", id=str(row["id"]), title=str(row["title"]),
-            snippet=self._snippet(f"{row['title']} {row['summary']}", needle),
-            chapter_id=str(row["source_chapter_id"]) if row["source_chapter_id"] else None,
-        ) for row in threads)
+            results.append(
+                WorkspaceSearchResult(
+                    kind="project",
+                    id=str(project["id"]),
+                    title=str(project["title"]),
+                    snippet=self._snippet(project_text, needle),
+                )
+            )
+        results.extend(
+            WorkspaceSearchResult(
+                kind="chapter",
+                id=str(row["id"]),
+                title=str(row["title"]),
+                snippet=self._snippet(f"{row['title']} {row['content']}", needle),
+                chapter_id=str(row["id"]),
+            )
+            for row in chapters
+        )
+        results.extend(
+            WorkspaceSearchResult(
+                kind="character" if row["kind"] == "character" else "resource",
+                id=str(row["id"]),
+                title=str(row["name"]),
+                snippet=self._snippet(
+                    " ".join(
+                        str(row[field])
+                        for field in ("name", "role", "goal", "current_state", "relationship_notes")
+                    ),
+                    needle,
+                ),
+            )
+            for row in entities
+        )
+        results.extend(
+            WorkspaceSearchResult(
+                kind="thread",
+                id=str(row["id"]),
+                title=str(row["title"]),
+                snippet=self._snippet(f"{row['title']} {row['summary']}", needle),
+                chapter_id=str(row["source_chapter_id"]) if row["source_chapter_id"] else None,
+            )
+            for row in threads
+        )
+        results.extend(
+            WorkspaceSearchResult(
+                kind="idea",
+                id=str(row["id"]),
+                title=str(row["title"]),
+                snippet=self._snippet(f"{row['title']} {row['content']}", needle),
+            )
+            for row in ideas
+        )
+        results.extend(
+            WorkspaceSearchResult(
+                kind="annotation",
+                id=str(row["id"]),
+                title=f"批注·{row['chapter_title']}",
+                snippet=self._snippet(f"{row['selected_text']} {row['comment']}", needle),
+                chapter_id=str(row["chapter_id"]),
+            )
+            for row in annotations
+        )
         return results[:limit]

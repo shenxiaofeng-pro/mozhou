@@ -40,7 +40,7 @@ describe('ManuscriptImportDialog', () => {
 
     render(<ManuscriptImportDialog onClose={vi.fn()} onImported={imported} />)
     const file = new File(['旧稿'], '旧稿.txt', { type: 'text/plain' })
-    fireEvent.change(screen.getByLabelText('选择 TXT 或 Markdown 稿件'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('选择 TXT、Markdown、DOCX 或 EPUB 稿件'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: '识别卷章结构' }))
 
     expect(await screen.findByDisplayValue('旧城再起')).toBeInTheDocument()
