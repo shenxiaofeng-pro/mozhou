@@ -8,7 +8,7 @@ import type {
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
-import { genreLabels } from '../genre'
+import { genreLabels, getStoryAnchorLabels, isRebirthGenre } from '../genre'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
 import { AuthorToolsDialog } from './AuthorToolsDialog'
 import { DirectorPanel } from './DirectorPanel'
@@ -175,6 +175,8 @@ function ActiveChapterWorkspace({
   const deferredDraft = useDeferredValue(draft)
   const wordCount = deferredDraft.replace(/\s/g, '').length
   const progress = Math.min(100, Math.round((wordCount / workspace.project.chapter_target_words) * 100))
+  const anchorLabels = getStoryAnchorLabels(workspace.project.genre)
+  const rebirthStory = isRebirthGenre(workspace.project.genre)
   const isApproved = chapter.status === 'approved'
   const treeVolumes = (workspace.manuscript_volumes?.length ?? 0) > 0
     ? workspace.manuscript_volumes!.map((volume) => ({
@@ -355,12 +357,12 @@ function ActiveChapterWorkspace({
 
       <aside className="story-tree" aria-label="作品目录">
         <section className="project-card">
-          <p className="section-kicker">重生锚点</p>
+          <p className="section-kicker">{anchorLabels.anchor}</p>
           <strong>{workspace.project.rebirth_year} · {workspace.project.rebirth_location}</strong>
           <span>
             {workspace.timeline_events.filter((event) => event.layer === 'original').length > 0
-              ? `已有 ${workspace.timeline_events.filter((event) => event.layer === 'original').length} 条原始事件`
-              : '原始时间线尚未建立'}
+              ? `已有 ${workspace.timeline_events.filter((event) => event.layer === 'original').length} 条${rebirthStory ? '原始' : '世界底稿'}事件`
+              : `${rebirthStory ? '原始时间线' : '世界底稿'}尚未建立`}
           </span>
         </section>
         <nav aria-label="章节目录">

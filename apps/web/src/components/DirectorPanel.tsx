@@ -10,6 +10,7 @@ import type {
 import { useState } from 'react'
 
 import { api } from '../api'
+import { getStoryAnchorLabels } from '../genre'
 import { AiCoauthorPanel } from './AiCoauthorPanel'
 import { BookDirectorPanel } from './BookDirectorPanel'
 import { FactTimelinePanel } from './FactTimelinePanel'
@@ -69,6 +70,7 @@ export function DirectorPanel({
   const [isSavingBrief, setIsSavingBrief] = useState(false)
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const anchorLabels = getStoryAnchorLabels(project.genre)
   const briefComplete = brief.opening_hook.trim().length > 0
     && brief.state_change.trim().length > 0
     && brief.ending_cliffhanger.trim().length > 0
@@ -302,7 +304,7 @@ export function DirectorPanel({
             <span>本地预览</span>
           </div>
           <ul>
-            <li><span>重生锚点</span><strong>{project.rebirth_year} · {project.rebirth_location}</strong></li>
+            <li><span>{anchorLabels.anchor}</span><strong>{project.rebirth_year} · {project.rebirth_location}</strong></li>
             <li><span>当前正文</span><strong>{wordCount} 字 · revision {chapter.revision}</strong></li>
             <li><span>章节目标</span><strong>{chapter.state_change || '尚未设置'}</strong></li>
             <li><span>运行模型</span><strong>内置假模型 · ¥0</strong></li>

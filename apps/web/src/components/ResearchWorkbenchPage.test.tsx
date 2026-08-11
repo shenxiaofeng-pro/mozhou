@@ -1,5 +1,5 @@
 import type { Job, Project, ResearchPreview, ResearchSession } from '@mozhou/contracts'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '../api'
@@ -27,7 +27,7 @@ const session: ResearchSession = {
 }
 
 describe('ResearchWorkbenchPage', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
   it('previews a frozen local source set before creating an isolated research task', async () => {
     vi.spyOn(api, 'listSourceDocuments').mockResolvedValue([])
@@ -53,5 +53,26 @@ describe('ResearchWorkbenchPage', () => {
     })))
     expect((await screen.findAllByText('纸价研究')).length).toBe(2)
     expect(screen.getByText(/只有逐条批准的证据卡才进入 AI 上下文/)).toBeInTheDocument()
+  })
+
+  it('uses worldbuilding research defaults for a fantasy project', async () => {
+    vi.spyOn(api, 'listSourceDocuments').mockResolvedValue([])
+    vi.spyOn(api, 'listResearchSessions').mockResolvedValue([])
+    const fantasyProject: Project = {
+      ...project,
+      genre: 'eastern_fantasy',
+      rebirth_year: 728,
+      rebirth_location: '九州·云泽',
+    }
+
+    render(<ResearchWorkbenchPage project={fantasyProject} onBack={vi.fn()} onSourceCardsChanged={vi.fn()} />)
+
+    await screen.findByText('尚无研究任务')
+    expect(screen.getByLabelText('资料类型')).toHaveValue('世界设定 / 神话资料')
+    expect(screen.getByLabelText('研究问题')).toHaveAttribute(
+      'placeholder',
+      '例：云泽灵脉枯竭会怎样改变宗门资源与修炼代价？',
+    )
+    expect(screen.getByText('全局参考资料')).toBeInTheDocument()
   })
 })

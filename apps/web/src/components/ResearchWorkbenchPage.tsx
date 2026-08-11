@@ -2,6 +2,7 @@ import type { Project, ResearchFinding, ResearchInput, ResearchPreview, Research
 import { useEffect, useMemo, useState } from 'react'
 
 import { api } from '../api'
+import { isRebirthGenre } from '../genre'
 
 interface Props { project: Project; onBack: () => void; onSourceCardsChanged: () => void }
 
@@ -11,6 +12,7 @@ const categories = {
 } as const
 
 export function ResearchWorkbenchPage({ project, onBack, onSourceCardsChanged }: Props) {
+  const rebirthStory = isRebirthGenre(project.genre)
   const [documents, setDocuments] = useState<SourceDocument[]>([])
   const [sessions, setSessions] = useState<ResearchSession[]>([])
   const [active, setActive] = useState<ResearchWorkspace | null>(null)
@@ -20,7 +22,7 @@ export function ResearchWorkbenchPage({ project, onBack, onSourceCardsChanged }:
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<ResearchInput>({
     title: '新资料研究', question: '', era_start: project.rebirth_year, era_end: project.rebirth_year,
-    region: project.rebirth_location, material_type: '地方志 / 行业资料', mode: 'local',
+    region: project.rebirth_location, material_type: rebirthStory ? '地方志 / 行业资料' : '世界设定 / 神话资料', mode: 'local',
     source_document_ids: [], pasted_text: '', pasted_label: '临时粘贴资料',
   })
   const selectedChars = useMemo(() => documents.filter((item) => form.source_document_ids.includes(item.id)).reduce((sum, item) => sum + item.total_characters, 0) + form.pasted_text.length, [documents, form.pasted_text, form.source_document_ids])
@@ -94,14 +96,14 @@ export function ResearchWorkbenchPage({ project, onBack, onSourceCardsChanged }:
         <div className="research-form"><header><small>新研究</small><h2>先冻结来源，再提取结论</h2></header>
           <div className="research-fields">
             <label>任务名<input value={form.title} onChange={(event) => { setPreview(null); setForm({ ...form, title: event.target.value }) }} /></label>
-            <label>研究问题<input value={form.question} placeholder="例：1992年南平纸厂的价格和进货规则？" onChange={(event) => { setPreview(null); setForm({ ...form, question: event.target.value }) }} /></label>
+            <label>研究问题<input value={form.question} placeholder={rebirthStory ? '例：1992年南平纸厂的价格和进货规则？' : '例：云泽灵脉枯竭会怎样改变宗门资源与修炼代价？'} onChange={(event) => { setPreview(null); setForm({ ...form, question: event.target.value }) }} /></label>
             <label>地区<input value={form.region} onChange={(event) => { setPreview(null); setForm({ ...form, region: event.target.value }) }} /></label>
             <label>资料类型<input value={form.material_type} onChange={(event) => { setPreview(null); setForm({ ...form, material_type: event.target.value }) }} /></label>
             <label>起始年<input type="number" value={form.era_start} onChange={(event) => { setPreview(null); setForm({ ...form, era_start: Number(event.target.value) }) }} /></label>
             <label>结束年<input type="number" value={form.era_end} onChange={(event) => { setPreview(null); setForm({ ...form, era_end: Number(event.target.value) }) }} /></label>
             <label>提取模式<select value={form.mode} onChange={(event) => { setPreview(null); setForm({ ...form, mode: event.target.value as ResearchInput['mode'] }) }}><option value="local">本地证据规则（零费用）</option><option value="ai">AI 深度归纳</option></select></label>
           </div>
-          <fieldset className="research-source-picker"><legend>全局现实资料</legend>{documents.map((document) => <label key={document.id}><input type="checkbox" checked={form.source_document_ids.includes(document.id)} onChange={() => toggleDocument(document.id)} /><span><strong>{document.title}</strong><small>{document.source_format.toUpperCase()} · {document.total_characters.toLocaleString()} 字</small></span></label>)}</fieldset>
+          <fieldset className="research-source-picker"><legend>{rebirthStory ? '全局现实资料' : '全局参考资料'}</legend>{documents.map((document) => <label key={document.id}><input type="checkbox" checked={form.source_document_ids.includes(document.id)} onChange={() => toggleDocument(document.id)} /><span><strong>{document.title}</strong><small>{document.source_format.toUpperCase()} · {document.total_characters.toLocaleString()} 字</small></span></label>)}</fieldset>
           <label className="research-paste">或粘贴本地资料（最多 20 万字）<textarea maxLength={200000} value={form.pasted_text} onChange={(event) => { setPreview(null); setForm({ ...form, pasted_text: event.target.value }) }} /></label>
           <p>已选 {selectedChars.toLocaleString()} 字符。资料中的命令会被当作不可信文本，无法回链原文的 AI 结论会被丢弃。</p>
           {!preview ? <button type="button" className="research-primary" disabled={busy || !form.question.trim() || selectedChars === 0} onClick={() => { void inspect() }}>预览范围与费用</button> : <div className="research-preview"><strong>{preview.content_scope}</strong><span>指纹 {preview.source_set_sha256.slice(0, 12)} · {preview.profile_name}</span>{form.mode === 'ai' ? <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />确认向当前模型线路发送上述原文，预估上限 {preview.estimated_cost_microusd === null ? '未知' : `US$ ${(preview.estimated_cost_microusd / 1_000_000).toFixed(4)}`}</label> : null}<button type="button" className="research-primary" disabled={busy || (form.mode === 'ai' && !confirmed)} onClick={() => { void submit() }}>创建可恢复研究任务</button></div>}

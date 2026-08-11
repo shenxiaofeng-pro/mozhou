@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.database import Database
+from app.models import Genre
 from app.repository import NotFoundError
 
 SANDBOX_ENGINE_VERSION = "mozhou-sandbox-v1"
@@ -100,6 +101,7 @@ class SandboxTemplate(BaseModel):
     id: str
     label: str
     description: str
+    genres: list[Genre] = Field(min_length=1)
     suggested_variables: dict[str, SandboxVariableValue]
     actors: list[SandboxActor]
 
@@ -530,11 +532,142 @@ def _urban_actors() -> list[SandboxActor]:
     ]
 
 
+def _eastern_fantasy_actors() -> list[SandboxActor]:
+    return [
+        SandboxActor(
+            id="young_cultivator",
+            name="主角小队",
+            kind="faction",
+            goal="在灵脉枯竭前取得突破资源并保住同行者",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 3, "logistics": 3, "intelligence": 4, "goods": 2},
+            knowledge=["自身功法边界", "灵脉异动"],
+            capabilities=["diplomacy", "intelligence", "mobility"],
+            allowed_actions=["negotiate", "investigate", "relocate"],
+            relationships={"home_sect": 20, "rival_sect": -25},
+        ),
+        SandboxActor(
+            id="home_sect",
+            name="守山宗门",
+            kind="faction",
+            goal="维持传承、护山阵和弟子供给",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 7, "logistics": 4, "intelligence": 3},
+            knowledge=["宗门戒律", "护山阵眼"],
+            capabilities=["organization", "diplomacy", "intelligence"],
+            allowed_actions=["mobilize", "negotiate", "investigate"],
+            relationships={"young_cultivator": 20, "spirit_market": 10},
+        ),
+        SandboxActor(
+            id="rival_sect",
+            name="敌对宗门",
+            kind="faction",
+            goal="夺取灵脉并迫使周边势力改换盟约",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 6, "logistics": 6, "intelligence": 3},
+            knowledge=["灵脉入口", "旧盟约漏洞"],
+            capabilities=["organization", "mobility", "intelligence"],
+            allowed_actions=["mobilize", "relocate", "investigate"],
+            relationships={"young_cultivator": -25, "home_sect": -30},
+        ),
+        SandboxActor(
+            id="spirit_market",
+            name="灵材商盟",
+            kind="faction",
+            goal="控制稀缺灵材周转并避免交易网络断裂",
+            location="$PROJECT_LOCATION",
+            resources={"capital": 7, "goods": 9, "influence": 4},
+            knowledge=["灵材库存", "黑市价格"],
+            capabilities=["commerce", "capital", "diplomacy"],
+            allowed_actions=["trade", "invest", "negotiate"],
+            relationships={"home_sect": 10, "rival_sect": 5},
+        ),
+        SandboxActor(
+            id="ancient_guardian",
+            name="秘境守护者",
+            kind="character",
+            goal="阻止不符合代价规则的人开启核心传承",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 5, "intelligence": 8, "logistics": 3},
+            knowledge=["传承代价", "秘境禁制"],
+            capabilities=["intelligence", "organization", "media"],
+            allowed_actions=["investigate", "mobilize", "publicize"],
+            relationships={"young_cultivator": 0, "rival_sect": -10},
+        ),
+    ]
+
+
+def _western_fantasy_actors() -> list[SandboxActor]:
+    return [
+        SandboxActor(
+            id="adventuring_company",
+            name="主角冒险团",
+            kind="faction",
+            goal="查明魔潮源头并换取进入禁区的合法资格",
+            location="$PROJECT_LOCATION",
+            resources={"capital": 3, "goods": 3, "influence": 2, "intelligence": 4},
+            knowledge=["已知法术代价", "北境遗迹线索"],
+            capabilities=["intelligence", "mobility", "diplomacy"],
+            allowed_actions=["investigate", "relocate", "negotiate"],
+            relationships={"mage_tower": 10, "border_crown": 5},
+        ),
+        SandboxActor(
+            id="mage_tower",
+            name="灰塔议会",
+            kind="faction",
+            goal="守住魔法垄断并控制禁术扩散",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 7, "intelligence": 8, "capital": 5},
+            knowledge=["法术谱系", "禁术封印"],
+            capabilities=["intelligence", "capital", "diplomacy"],
+            allowed_actions=["investigate", "invest", "negotiate"],
+            relationships={"adventuring_company": 10, "old_church": -15},
+        ),
+        SandboxActor(
+            id="border_crown",
+            name="北境王廷",
+            kind="faction",
+            goal="稳住边境、税路和多族盟约",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 9, "logistics": 6, "intelligence": 4},
+            knowledge=["边军部署", "王国盟约"],
+            capabilities=["organization", "mobility", "diplomacy"],
+            allowed_actions=["mobilize", "relocate", "negotiate"],
+            relationships={"adventuring_company": 5, "free_guild": 15},
+        ),
+        SandboxActor(
+            id="free_guild",
+            name="自由城邦商会",
+            kind="faction",
+            goal="维持晶石贸易并阻止王廷单方面封锁道路",
+            location="$PROJECT_LOCATION",
+            resources={"capital": 8, "goods": 8, "influence": 5},
+            knowledge=["晶石价格", "跨族商路"],
+            capabilities=["commerce", "capital", "media"],
+            allowed_actions=["trade", "invest", "publicize"],
+            relationships={"border_crown": 15, "old_church": 0},
+        ),
+        SandboxActor(
+            id="old_church",
+            name="旧神教团",
+            kind="faction",
+            goal="利用魔潮重建被取缔的信仰秩序",
+            location="$PROJECT_LOCATION",
+            resources={"influence": 6, "intelligence": 6, "logistics": 3},
+            knowledge=["旧神仪式", "地下信众"],
+            capabilities=["organization", "intelligence", "media"],
+            allowed_actions=["mobilize", "investigate", "publicize"],
+            relationships={"mage_tower": -15, "adventuring_company": -10},
+        ),
+    ]
+
+
 SANDBOX_TEMPLATES = [
     SandboxTemplate(
         id="historical-factions",
         label="历史势力 · 交通与救济",
         description="五方围绕交通、军需、商路和疏散展开受约束推演。",
+        genres=[Genre.HISTORICAL_REBIRTH],
         suggested_variables={"交通提前中断": False, "外部增援轮次": 3},
         actors=_historical_actors(),
     ),
@@ -542,8 +675,25 @@ SANDBOX_TEMPLATES = [
         id="urban-business",
         label="都市商战 · 首单与渠道",
         description="主角团队、龙头、银行、供应商和监管方围绕首单与现金流博弈。",
+        genres=[Genre.URBAN_REBIRTH],
         suggested_variables={"竞争者降价": True, "银行授信收紧": False},
         actors=_urban_actors(),
+    ),
+    SandboxTemplate(
+        id="eastern-sect-conflict",
+        label="东方玄幻 · 灵脉与宗门",
+        description="五方围绕灵脉、境界代价、传承资格和宗门盟约展开推演。",
+        genres=[Genre.EASTERN_FANTASY],
+        suggested_variables={"灵脉提前枯竭": True, "秘境开放轮次": 3},
+        actors=_eastern_fantasy_actors(),
+    ),
+    SandboxTemplate(
+        id="western-kingdom-crisis",
+        label="西方奇幻 · 魔潮与王国",
+        description="五方围绕魔潮、法术代价、多族盟约和晶石商路展开推演。",
+        genres=[Genre.WESTERN_FANTASY],
+        suggested_variables={"魔潮提前爆发": False, "王廷封锁商路": True},
+        actors=_western_fantasy_actors(),
     ),
 ]
 

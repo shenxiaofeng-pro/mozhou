@@ -399,6 +399,8 @@ def test_director_candidates_locks_expansion_and_pipeline_never_overwrite_manusc
         ("historical_rebirth", "回到北宋边城，用账本和粮道改变一次败局"),
         ("urban_rebirth", "回到 2008 年，从一家社区店重建家庭信用"),
         ("urban_rebirth", "以真实县域竹木产业资料为锚，写一个重生创业故事"),
+        ("eastern_fantasy", "边城少年以记忆为代价踏入宗门，追查测灵碑异变"),
+        ("western_fantasy", "边境学徒继承禁忌誓印，在三方追捕中进入灰塔"),
     ],
 )
 def test_startup_cases_return_three_distinct_editable_candidates(

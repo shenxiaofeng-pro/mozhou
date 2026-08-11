@@ -1,5 +1,6 @@
 import type { Workspace, WorkspaceSummary } from '@mozhou/contracts'
 
+import { genreLabels } from '../genre'
 import { ReferenceLabPanel } from './ReferenceLabPanel'
 
 interface ReferenceLibraryPageProps {
@@ -38,7 +39,7 @@ export function ReferenceLibraryPage({
 
       <section className="reference-library-hero" aria-labelledby="reference-library-title">
         <div>
-          <p>REFERENCE DOSSIER / {workspace.project.genre === 'urban_rebirth' ? '都市重生' : '历史重生'}</p>
+          <p>REFERENCE DOSSIER / {genreLabels[workspace.project.genre]}</p>
           <h1 id="reference-library-title">先拆成规律，再带回你的书</h1>
           <span>参考原文留在隔离库；只有作者选中的抽象结构，才能成为当前作品的创作蓝图。</span>
         </div>

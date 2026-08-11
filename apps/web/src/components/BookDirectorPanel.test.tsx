@@ -154,6 +154,44 @@ afterEach(() => {
 })
 
 describe('BookDirectorPanel', () => {
+  it('uses fantasy blueprint labels and exposes all four genres', () => {
+    const fantasyProject: Project = {
+      ...project,
+      title: '灰塔之誓',
+      genre: 'western_fantasy',
+      rebirth_year: 1243,
+      rebirth_location: '阿尔登大陆·北境',
+    }
+    const fantasyBlueprint = blueprint({
+      content: {
+        ...content,
+        title: fantasyProject.title,
+        genre: fantasyProject.genre,
+        rebirth_year: fantasyProject.rebirth_year,
+        rebirth_location: fantasyProject.rebirth_location,
+        divergence_point: '灰塔重新点火，王室誓印显现',
+      },
+    })
+
+    render(
+      <BookDirectorPanel
+        project={fantasyProject}
+        workspace={workspace(fantasyBlueprint)}
+        chapter={chapter}
+        canUseChapter
+        onWorkspaceChanged={vi.fn()}
+        onAdoptBrief={vi.fn()}
+        onDraftGenerated={vi.fn()}
+      />,
+    )
+
+    expect(screen.getAllByText('故事纪年')).not.toHaveLength(0)
+    expect(screen.getAllByText('起始地域')).not.toHaveLength(0)
+    expect(screen.getAllByText('故事引爆点')).not.toHaveLength(0)
+    expect(screen.getByRole('option', { name: '东方玄幻' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '西方奇幻' })).toBeInTheDocument()
+  })
+
   it('turns one idea into three editable choices and persists only the selected direction', async () => {
     const selected = blueprint()
     const startupJob = job('director_startup')

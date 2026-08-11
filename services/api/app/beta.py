@@ -147,6 +147,28 @@ BETA_TEMPLATES = [
         reality_anchor="先导入公开统计、地方志、交通和产业资料，确认后才进入创作上下文。",
         first_ten_chapter_goal="完成调研、建立利益关系、验证最小商业闭环，并暴露扩张代价。",
     ),
+    BetaTemplate(
+        id="eastern-fantasy",
+        label="东方玄幻 · 万山问道",
+        genre=Genre.EASTERN_FANTASY,
+        suggested_title="万山问道",
+        rebirth_year=728,
+        rebirth_location="九州·云泽",
+        idea_prompt="边城少年在宗门测灵时发现自身力量会吞噬记忆，只能在变强、守护家人与保住自我之间选择。",
+        reality_anchor="先锁定境界上限、突破条件、力量代价、修炼资源、宗门秩序和跨境战力差，任何越境胜利都必须有可追踪条件。",
+        first_ten_chapter_goal="完成第一次测灵异变、建立代价规则、获得有限修炼入口，并让主角为第一次越境行动付出不可逆成本。",
+    ),
+    BetaTemplate(
+        id="western-fantasy",
+        label="西方奇幻 · 灰塔之誓",
+        genre=Genre.WESTERN_FANTASY,
+        suggested_title="灰塔之誓",
+        rebirth_year=1243,
+        rebirth_location="阿尔登大陆·北境",
+        idea_prompt="没有施法资格的边境学徒意外继承王室誓印，被迫在法师行会、教会与异族盟约之间寻找活路。",
+        reality_anchor="先锁定魔法来源、施法代价、种族与阵营关系、交通距离、社会阶层和物资供给，奇迹不能绕过既定成本。",
+        first_ten_chapter_goal="显露誓印、完成第一次受限施法、建立三方追捕关系，并以一笔有代价的盟约换取进入灰塔的资格。",
+    ),
 ]
 
 

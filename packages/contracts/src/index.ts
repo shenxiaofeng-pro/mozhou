@@ -311,6 +311,7 @@ export interface SandboxTemplate {
   id: string
   label: string
   description: string
+  genres: Genre[]
   suggested_variables: Record<string, SandboxVariableValue>
   actors: SandboxActor[]
 }

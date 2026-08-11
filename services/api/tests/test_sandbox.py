@@ -456,7 +456,10 @@ def test_sandbox_api_runs_fixed_urban_scenario_and_keeps_project_archive_clean(
     assert {item["id"] for item in templates.json()} == {
         "historical-factions",
         "urban-business",
+        "eastern-sect-conflict",
+        "western-kingdom-crisis",
     }
+    assert all(item["genres"] for item in templates.json())
     assert snapshot.status_code == 201
     assert branch.status_code == 201
     assert run.status_code == 201

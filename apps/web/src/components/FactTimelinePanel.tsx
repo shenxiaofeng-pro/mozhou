@@ -9,6 +9,7 @@ import type {
 import { useMemo, useState } from 'react'
 
 import { api } from '../api'
+import { isRebirthGenre } from '../genre'
 
 interface FactTimelinePanelProps {
   workspace: WorkspaceSummary
@@ -67,6 +68,7 @@ export function FactTimelinePanel({
   const [isAddingEvent, setIsAddingEvent] = useState(false)
   const [isProcessingFacts, setIsProcessingFacts] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const rebirthStory = isRebirthGenre(workspace.project.genre)
   const originalEvents = workspace.timeline_events.filter((event) => event.layer === 'original')
   const novelEvents = workspace.timeline_events.filter((event) => event.layer === 'novel')
   const changeSet = useMemo(() => {
@@ -104,7 +106,7 @@ export function FactTimelinePanel({
       setEventTitle('')
       setEventSummary('')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '原始时间线事件添加失败')
+      setError(caught instanceof Error ? caught.message : `${rebirthStory ? '原始时间线' : '世界底稿'}事件添加失败`)
     } finally {
       setIsAddingEvent(false)
     }
@@ -230,18 +232,18 @@ export function FactTimelinePanel({
       <section className="dual-timeline-card" aria-labelledby="dual-timeline-title">
         <div className="pulse-heading">
           <h3 id="dual-timeline-title">双时间线</h3>
-          <span>现实底稿 / 小说改写</span>
+          <span>{rebirthStory ? '现实底稿 / 小说改写' : '世界底稿 / 小说演变'}</span>
         </div>
         <div className="timeline-rails">
-          <TimelineTrack title="原始" events={originalEvents} emptyText="录入现实或历史锚点。" />
+          <TimelineTrack title={rebirthStory ? '原始' : '世界原设'} events={originalEvents} emptyText={rebirthStory ? '录入现实或历史锚点。' : '录入世界历史、规则或纪年锚点。'} />
           <TimelineTrack title="小说" events={novelEvents} emptyText="确认事实后自动落轨。" />
         </div>
         <details className="timeline-add">
-          <summary>添加原始时间线事件</summary>
+          <summary>添加{rebirthStory ? '原始时间线' : '世界底稿'}事件</summary>
           <label>
             年份
             <input
-              aria-label="原始事件年份"
+              aria-label={`${rebirthStory ? '原始' : '世界底稿'}事件年份`}
               type="number"
               min={-3000}
               max={2100}
@@ -252,29 +254,29 @@ export function FactTimelinePanel({
           <label>
             事件
             <input
-              aria-label="原始事件标题"
+              aria-label={`${rebirthStory ? '原始' : '世界底稿'}事件标题`}
               maxLength={120}
               value={eventTitle}
               onChange={(event) => setEventTitle(event.target.value)}
-              placeholder="例如：南平铝厂推进改制"
+              placeholder={rebirthStory ? '例如：南平铝厂推进改制' : '例如：赤月纪元首次结界崩塌'}
             />
           </label>
           <label>
             资料摘要
             <textarea
-              aria-label="原始事件摘要"
+              aria-label={`${rebirthStory ? '原始' : '世界底稿'}事件摘要`}
               maxLength={1000}
               rows={2}
               value={eventSummary}
               onChange={(event) => setEventSummary(event.target.value)}
-              placeholder="记录可核验的现实背景"
+              placeholder={rebirthStory ? '记录可核验的现实背景' : '记录已确认的世界历史或规则背景'}
             />
           </label>
           <button
             type="button"
             onClick={addOriginalEvent}
             disabled={isAddingEvent || !eventTitle.trim() || !Number.isInteger(Number(eventYear))}
-          >{isAddingEvent ? '正在添加…' : '写入原始时间线'}</button>
+          >{isAddingEvent ? '正在添加…' : `写入${rebirthStory ? '原始时间线' : '世界底稿'}`}</button>
         </details>
         {error ? <p className="timeline-error" role="alert">{error}</p> : null}
       </section>

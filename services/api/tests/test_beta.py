@@ -22,7 +22,7 @@ def _create_project(client: TestClient) -> dict[str, Any]:
     return response.json()
 
 
-def test_closed_beta_templates_cover_three_guided_scenarios(tmp_path: Path) -> None:
+def test_closed_beta_templates_cover_five_guided_scenarios(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
         response = client.get("/api/beta/templates")
 
@@ -32,10 +32,14 @@ def test_closed_beta_templates_cover_three_guided_scenarios(tmp_path: Path) -> N
         "historical-rebirth",
         "urban-rebirth",
         "reality-anchor",
+        "eastern-fantasy",
+        "western-fantasy",
     ]
     assert {template["genre"] for template in templates} == {
         "historical_rebirth",
         "urban_rebirth",
+        "eastern_fantasy",
+        "western_fantasy",
     }
     assert all(template["idea_prompt"] for template in templates)
     assert all(template["reality_anchor"] for template in templates)

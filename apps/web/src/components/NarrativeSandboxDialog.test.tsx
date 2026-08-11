@@ -46,6 +46,7 @@ const template: SandboxTemplate = {
   id: 'urban-business',
   label: '都市商战 · 首单与渠道',
   description: '五方围绕首单与现金流博弈。',
+  genres: ['urban_rebirth'],
   suggested_variables: { 竞争者降价: true },
   actors,
 }
@@ -162,6 +163,22 @@ afterEach(() => {
 })
 
 describe('NarrativeSandboxDialog', () => {
+  it('shows only templates compatible with the current fantasy genre', async () => {
+    const fantasyTemplate: SandboxTemplate = {
+      ...template,
+      id: 'eastern-sect-conflict',
+      label: '东方玄幻 · 灵脉与宗门',
+      genres: ['eastern_fantasy'],
+    }
+    vi.spyOn(api, 'listSandboxTemplates').mockResolvedValue([template, fantasyTemplate])
+    vi.spyOn(api, 'getSandboxWorkspace').mockResolvedValue(empty)
+
+    render(<NarrativeSandboxDialog project={{ ...project, genre: 'eastern_fantasy' }} onClose={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: /东方玄幻 · 灵脉与宗门/ })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /都市商战 · 首单与渠道/ })).not.toBeInTheDocument()
+  })
+
   it('runs the local branch workflow and keeps results behind a candidate approval gate', async () => {
     vi.spyOn(api, 'listSandboxTemplates').mockResolvedValue([template])
     vi.spyOn(api, 'getSandboxWorkspace')

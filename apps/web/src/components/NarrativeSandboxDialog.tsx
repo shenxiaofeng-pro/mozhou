@@ -129,6 +129,10 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
     const branch = workspace.branches.find((item) => item.id === activeRun?.branch_id)
     return workspace.snapshots.find((item) => item.id === branch?.snapshot_id) ?? null
   }, [activeRun?.branch_id, workspace.branches, workspace.snapshots])
+  const compatibleTemplates = useMemo(
+    () => templates.filter((template) => template.genres.includes(project.genre)),
+    [project.genre, templates],
+  )
 
   const refresh = async () => {
     const nextWorkspace = await api.getSandboxWorkspace(project.id)
@@ -447,7 +451,7 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
                 <p>01 / FREEZE</p>
                 <h3 id="sandbox-snapshot-title">冻结正式世界</h3>
                 <div className="sandbox-template-list">
-                  {templates.map((template) => (
+                  {compatibleTemplates.map((template) => (
                     <button
                       type="button"
                       key={template.id}

@@ -2,7 +2,7 @@ import type { BetaTemplate, CreateProjectInput, Genre, Workspace } from '@mozhou
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { api } from '../api'
-import { genreLabels } from '../genre'
+import { genreDefaults, genreOptions, getStoryAnchorLabels } from '../genre'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
 
 interface CreateProjectFormProps {
@@ -24,6 +24,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
   const [error, setError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
   const [isManuscriptImportOpen, setIsManuscriptImportOpen] = useState(false)
+  const anchorLabels = getStoryAnchorLabels(genre)
 
   useEffect(() => {
     let active = true
@@ -43,6 +44,14 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
     setRebirthYear(template.rebirth_year)
     setRebirthLocation(template.rebirth_location)
     setSelectedTemplate(template)
+  }
+
+  const selectGenre = (nextGenre: Genre) => {
+    const defaults = genreDefaults[nextGenre]
+    setGenre(nextGenre)
+    setRebirthYear(defaults.storyYear)
+    setRebirthLocation(defaults.storyLocation)
+    setSelectedTemplate(null)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -97,7 +106,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
         <p className="eyebrow">本地长篇创作工作台</p>
         <h1 id="welcome-title">把一部长篇，稳稳写下去。</h1>
         <p className="welcome-copy">
-          从重生分歧点到下一章悬念，墨舟会保存故事状态，也把最终决定留给作者。
+          从故事引爆点到下一章悬念，墨舟会保存故事状态，也把最终决定留给作者。
         </p>
         <ol className="onboarding-promise" aria-label="创作流程">
           <li>定位故事</li>
@@ -112,7 +121,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
             <p className="section-kicker">新建作品</p>
             {onCancel ? <button type="button" className="project-form-back" onClick={onCancel}>返回作品书架</button> : null}
           </div>
-          <h2>先钉住重生的那一刻</h2>
+          <h2>先钉住故事的起点</h2>
         </header>
 
         {templates.length > 0 ? (
@@ -150,25 +159,25 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
             name="title"
             maxLength={120}
             required
-            placeholder="例如：回到九八年的南平"
+            placeholder={genreDefaults[genre].titlePlaceholder}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
         </label>
 
         <fieldset>
-          <legend>首发题材</legend>
+          <legend>作品题材</legend>
           <div className="genre-grid">
-            {(Object.keys(genreLabels) as Genre[]).map((value) => (
+            {genreOptions.map(({ value, label }) => (
               <label className="genre-option" key={value} data-selected={genre === value}>
                 <input
                   type="radio"
                   name="genre"
                   value={value}
                   checked={genre === value}
-                  onChange={() => setGenre(value)}
+                  onChange={() => selectGenre(value)}
                 />
-                <span>{genreLabels[value]}</span>
+                <span>{label}</span>
               </label>
             ))}
           </div>
@@ -176,7 +185,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
 
         <div className="form-row">
           <label>
-            重生年份
+            {anchorLabels.year}
             <input
               name="rebirthYear"
               type="number"
@@ -188,7 +197,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
             />
           </label>
           <label>
-            重生地点
+            {anchorLabels.location}
             <input
               name="rebirthLocation"
               maxLength={100}

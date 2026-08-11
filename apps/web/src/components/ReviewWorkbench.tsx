@@ -24,7 +24,7 @@ const dimensions: Array<{ id: ReviewDimension; label: string; local: boolean }> 
   { id: 'serial_rhythm', label: '连载节奏', local: true },
   { id: 'character', label: '人物', local: false },
   { id: 'realism', label: '现实性', local: false },
-  { id: 'rebirth_logic', label: '重生逻辑', local: false },
+  { id: 'rebirth_logic', label: '世界机制 / 重生逻辑', local: false },
   { id: 'style', label: '文风', local: false },
   { id: 'format', label: '格式', local: false },
 ]

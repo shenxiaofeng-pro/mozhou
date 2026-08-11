@@ -215,7 +215,7 @@ export function ProjectLibraryPage({
         <div>
           <p>MANUSCRIPT DOCK / 作品书架</p>
           <h1 id="project-library-title">你的作品，都在这里</h1>
-          <span>继续上次停下的章节，或者钉住一个新的重生时刻。</span>
+          <span>继续上次停下的章节，或者钉住一个新的故事起点。</span>
         </div>
         <div className="project-library-hero-actions">
           <button type="button" onClick={onCreate}>新建一部作品</button>

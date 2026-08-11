@@ -12,6 +12,7 @@ import type {
   DirectorRegenerationImpact,
   DirectorStartupProposalSet,
   GenerationRun,
+  Genre,
   Job,
   Project,
   RollingChapterPlan,
@@ -24,6 +25,7 @@ import type {
 import { useEffect, useState } from 'react'
 
 import { api } from '../api'
+import { genreOptions, getStoryAnchorLabels } from '../genre'
 
 interface BookDirectorPanelProps {
   project: Project
@@ -82,9 +84,18 @@ function updateBlueprintValue(
     }
   }
   if (field === 'genre') {
-    return { ...content, genre: rawValue === 'historical_rebirth' ? 'historical_rebirth' : 'urban_rebirth' }
+    return { ...content, genre: rawValue as Genre }
   }
   return { ...content, [field]: rawValue }
+}
+
+function blueprintFieldLabel(field: BookBlueprintField, genre: Genre): string {
+  const configured = blueprintFields.find((item) => item.field === field)?.label ?? field
+  const anchorLabels = getStoryAnchorLabels(genre)
+  if (field === 'rebirth_year') return anchorLabels.year
+  if (field === 'rebirth_location') return anchorLabels.location
+  if (field === 'divergence_point') return anchorLabels.divergence
+  return configured
 }
 
 function previewCost(preview: DirectorOutboundPreview): string {
@@ -420,17 +431,21 @@ export function BookDirectorPanel({
               onChange={(event) => { setIdea(event.target.value); setPreview(null) }}
               maxLength={3000}
               rows={4}
-              placeholder="例：1998 年回到南平，从一家濒临倒闭的木竹厂开始，改变家族和城市的命运。"
+              placeholder={project.genre === 'eastern_fantasy'
+                ? '例：边城少年发现每次突破都会遗失一段记忆，只能在变强与保住自我之间选择。'
+                : project.genre === 'western_fantasy'
+                  ? '例：边境学徒继承禁忌誓印，被法师行会、教会与旧王室同时追捕。'
+                  : '例：1998 年回到南平，从一家濒临倒闭的木竹厂开始，改变家族和城市的命运。'}
             />
           </label>
           <label>
-            现实锚点（可选）
+            资料与规则锚点（可选）
             <textarea
               value={realityAnchor}
               onChange={(event) => { setRealityAnchor(event.target.value); setPreview(null) }}
               maxLength={1500}
               rows={2}
-              placeholder="地点、年代、行业或你已确认的现实材料。"
+              placeholder="地点、纪年、行业、修炼/魔法规则，或你已确认的资料。"
             />
           </label>
           <button type="button" onClick={() => { void showPreview('startup') }} disabled={busy || idea.trim().length === 0}>
@@ -445,10 +460,12 @@ export function BookDirectorPanel({
               <small>{hasLockedField ? '含锁定字段' : '可继续编辑'} · {blueprint.plan_stale ? '计划待更新' : '计划已同步'}</small>
             </summary>
             {blueprint.stale_fields.length > 0 ? (
-              <p className="director-warning">待联动复核：{blueprint.stale_fields.map((field) => blueprintFields.find((item) => item.field === field)?.label ?? field).join('、')}</p>
+              <p className="director-warning">待联动复核：{blueprint.stale_fields.map((field) => blueprintFieldLabel(field, blueprintDraft?.genre ?? project.genre)).join('、')}</p>
             ) : null}
             <div className="blueprint-grid">
-              {blueprintDraft ? blueprintFields.map(({ field, label, multiline }) => (
+              {blueprintDraft ? blueprintFields.map(({ field, multiline }) => {
+                const label = blueprintFieldLabel(field, blueprintDraft.genre)
+                return (
                 <label key={field} data-locked={blueprint.locks[field]}>
                   <span>{label}</span>
                   {field === 'genre' ? (
@@ -457,8 +474,7 @@ export function BookDirectorPanel({
                       disabled={blueprint.locks[field]}
                       onChange={(event) => setBlueprintDraft(updateBlueprintValue(blueprintDraft, field, event.target.value))}
                     >
-                      <option value="historical_rebirth">历史重生</option>
-                      <option value="urban_rebirth">都市重生</option>
+                      {genreOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   ) : multiline ? (
                     <textarea
@@ -483,7 +499,8 @@ export function BookDirectorPanel({
                     aria-label={`${blueprint.locks[field] ? '解锁' : '锁定'}${label}`}
                   >{blueprint.locks[field] ? '已锁定' : '锁定'}</button>
                 </label>
-              )) : null}
+                )
+              }) : null}
             </div>
             <button type="button" onClick={() => { void saveBlueprint() }} disabled={busy}>保存蓝图修改</button>
           </details>
@@ -512,7 +529,7 @@ export function BookDirectorPanel({
                 setPreview(null)
                 setPreviewTask(null)
               }}>
-                {blueprintFields.map(({ field, label }) => <option key={field} value={field}>{label}</option>)}
+                {blueprintFields.map(({ field }) => <option key={field} value={field}>{blueprintFieldLabel(field, blueprint.content.genre)}</option>)}
               </select>
               <button type="button" onClick={() => { void showPreview('field') }} disabled={busy || blueprint.locks[fieldTarget]}>
                 只重生成这一项

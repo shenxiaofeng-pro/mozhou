@@ -11,6 +11,33 @@ export const genreOptions = (Object.entries(genreLabels) as Array<[Genre, string
   ([value, label]) => ({ value, label }),
 )
 
+export const genreDefaults: Record<Genre, {
+  storyYear: number
+  storyLocation: string
+  titlePlaceholder: string
+}> = {
+  historical_rebirth: {
+    storyYear: 1937,
+    storyLocation: '福建南平',
+    titlePlaceholder: '例如：烽火归途',
+  },
+  urban_rebirth: {
+    storyYear: 1998,
+    storyLocation: '福建南平',
+    titlePlaceholder: '例如：回到九八年的南平',
+  },
+  eastern_fantasy: {
+    storyYear: 728,
+    storyLocation: '九州·云泽',
+    titlePlaceholder: '例如：万山问道',
+  },
+  western_fantasy: {
+    storyYear: 1243,
+    storyLocation: '阿尔登大陆·北境',
+    titlePlaceholder: '例如：灰塔之誓',
+  },
+}
+
 export function isRebirthGenre(genre: Genre): boolean {
   return genre === 'historical_rebirth' || genre === 'urban_rebirth'
 }
