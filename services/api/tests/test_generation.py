@@ -50,6 +50,44 @@ def test_fake_generation_persists_recoverable_state_events(
     assert [event["state"] for event in events] == ["context_ready", "generating", "drafted"]
 
 
+@pytest.mark.parametrize(
+    ("genre", "title", "story_year", "story_location", "expected_scene"),
+    [
+        (Genre.EASTERN_FANTASY, "万山问道", 728, "九州云泽", "测灵碑"),
+        (Genre.WESTERN_FANTASY, "灰塔之誓", 1243, "阿尔登北境", "法师塔"),
+    ],
+)
+def test_fake_generation_uses_fantasy_worlds_without_forcing_rebirth(
+    tmp_path: Path,
+    genre: Genre,
+    title: str,
+    story_year: int,
+    story_location: str,
+    expected_scene: str,
+) -> None:
+    database = Database(tmp_path / f"{genre.value}.db")
+    database.initialize()
+    repository = ProjectRepository(database)
+    workspace = repository.create_project(
+        CreateProjectRequest(
+            title=title,
+            genre=genre,
+            rebirth_year=story_year,
+            rebirth_location=story_location,
+        )
+    )
+
+    run = GenerationService(repository).start(
+        workspace.chapters[0].id,
+        expected_revision=0,
+    )
+
+    assert run.candidate_content is not None
+    assert expected_scene in run.candidate_content
+    assert "上一世" not in run.candidate_content
+    assert "这一世" not in run.candidate_content
+
+
 def test_context_ready_run_can_resume_after_restart(
     generation_setup: tuple[Database, ProjectRepository, str],
 ) -> None:

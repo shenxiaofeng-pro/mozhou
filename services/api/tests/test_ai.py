@@ -3,13 +3,23 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.ai import AiGatewayManager, AiProviderError, build_chapter_context
+from app.ai import (
+    BRIEF_INSTRUCTIONS,
+    DIRECTOR_FIELD_INSTRUCTIONS,
+    DIRECTOR_STARTUP_INSTRUCTIONS,
+    DRAFT_INSTRUCTIONS,
+    REVIEW_INSTRUCTIONS,
+    AiGatewayManager,
+    AiProviderError,
+    build_chapter_context,
+)
 from app.main import create_app
 from app.models import (
     AiChapterBriefProposal,
     AiProvider,
     AiStatus,
     Chapter,
+    ReviewDimension,
     StoryEntity,
     StoryFact,
     Workspace,
@@ -105,6 +115,22 @@ def create_project(client: TestClient) -> dict[str, object]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+def test_ai_instruction_contract_covers_four_genres_and_world_rule_review() -> None:
+    combined = (
+        f"{BRIEF_INSTRUCTIONS}\n{DIRECTOR_STARTUP_INSTRUCTIONS}\n"
+        f"{DIRECTOR_FIELD_INSTRUCTIONS}\n{DRAFT_INSTRUCTIONS}"
+    )
+
+    assert "historical_rebirth" in combined
+    assert "urban_rebirth" in combined
+    assert "eastern_fantasy" in combined
+    assert "western_fantasy" in combined
+    assert "非重生" in combined
+    world_review = REVIEW_INSTRUCTIONS[ReviewDimension.REBIRTH_LOGIC]
+    assert "修炼体系" in world_review
+    assert "魔法规则" in world_review
 
 
 def test_chapter_context_keeps_latest_facts_after_the_first_fifty(tmp_path: Path) -> None:

@@ -22,6 +22,7 @@ from app.models import (
     StoryThreadStatus,
     TimelineLayer,
     Workspace,
+    is_rebirth_genre,
 )
 
 CONTEXT_COMPILER_VERSION = "rule-compiler-v2"
@@ -313,11 +314,15 @@ class ContextCompiler:
                     item_id=f"hard:project:{project.id}",
                     kind=ContextItemKind.PROJECT_ANCHOR,
                     tier=ContextTier.HARD_CONSTRAINT,
-                    label="作品与重生锚点",
+                    label=(
+                        "作品与重生锚点"
+                        if is_rebirth_genre(project.genre)
+                        else "作品与世界锚点"
+                    ),
                     content=_canonical_json(project.model_dump(mode="json")),
                     priority=9_990,
                     required=True,
-                    reason="题材、年代、地点和篇幅目标是本章硬约束",
+                    reason="题材、故事纪年、起始地域和篇幅目标是本章硬约束",
                     source_kind="project",
                     source_id=project.id,
                     source_label=project.title,
@@ -681,7 +686,7 @@ class ContextCompiler:
                     priority=6_000 + (1_500 if relevant else 0),
                     required=is_valid and relevant,
                     reason=(
-                        "有效未来知识命中当前参与实体，作为重生认知硬约束"
+                        "有效未来/先验知识命中当前参与实体，作为认知硬约束"
                         if is_valid and relevant
                         else "只召回仍标记为有效的未来知识"
                     ),
@@ -720,7 +725,7 @@ class ContextCompiler:
                     priority=7_200
                     + {"high": 300, "medium": 200, "low": 100}[card.confidence.value],
                     required=False,
-                    reason="仅使用作者已确认且覆盖重生年代的现实资料",
+                    reason="仅使用作者已确认且覆盖作品故事纪年的资料",
                     source_kind="source_card",
                     source_id=card.id,
                     source_label=card.title,
@@ -730,7 +735,7 @@ class ContextCompiler:
                     force_exclusion=(
                         "资料尚未由作者确认"
                         if not card.confirmed
-                        else (None if applicable else "资料年代范围不覆盖作品重生锚点")
+                        else (None if applicable else "资料年代范围不覆盖作品纪年锚点")
                     ),
                 )
             )

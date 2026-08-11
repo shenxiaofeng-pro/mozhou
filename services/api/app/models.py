@@ -12,6 +12,10 @@ class Genre(StrEnum):
     WESTERN_FANTASY = "western_fantasy"
 
 
+def is_rebirth_genre(genre: Genre) -> bool:
+    return genre in {Genre.HISTORICAL_REBIRTH, Genre.URBAN_REBIRTH}
+
+
 class ChapterStatus(StrEnum):
     PLANNED = "planned"
     DRAFTED = "drafted"

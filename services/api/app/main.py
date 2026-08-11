@@ -3037,7 +3037,7 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
         except ValueError as error:
-            raise HTTPException(status_code=400, detail="未来知识的年份不能早于重生年份") from error
+            raise HTTPException(status_code=400, detail="未来或先验知识的年份不能早于作品起始纪年") from error
 
     @application.post(
         "/api/projects/{project_id}/story-entities",

@@ -136,6 +136,33 @@ def test_context_budget_never_silently_drops_hard_constraints() -> None:
     assert packet.used_tokens == packet.token_budget + packet.overflow_tokens
 
 
+def test_fantasy_context_uses_world_anchor_without_implying_rebirth() -> None:
+    workspace = _workspace(previous_chapters=2)
+    workspace = workspace.model_copy(
+        update={
+            "project": workspace.project.model_copy(
+                update={
+                    "genre": Genre.EASTERN_FANTASY,
+                    "rebirth_year": 728,
+                    "rebirth_location": "九州云泽",
+                }
+            )
+        }
+    )
+
+    packet = ContextCompiler().compile(
+        workspace,
+        _current(workspace),
+        author_intent="让主角承担越境借力的代价",
+        task_type=ContextTaskType.CHAPTER_BRIEF,
+        token_budget=4000,
+    )
+
+    anchor = next(item for item in packet.items if item.kind == ContextItemKind.PROJECT_ANCHOR)
+    assert anchor.label == "作品与世界锚点"
+    assert "重生" not in anchor.selection_reason
+
+
 def test_latest_facts_win_budget_and_same_name_entities_keep_distinct_sources() -> None:
     workspace = _workspace(previous_chapters=60, content_characters=20)
     facts = [
