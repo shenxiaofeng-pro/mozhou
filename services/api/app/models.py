@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 class Genre(StrEnum):
     HISTORICAL_REBIRTH = "historical_rebirth"
     URBAN_REBIRTH = "urban_rebirth"
+    EASTERN_FANTASY = "eastern_fantasy"
+    WESTERN_FANTASY = "western_fantasy"
 
 
 class ChapterStatus(StrEnum):

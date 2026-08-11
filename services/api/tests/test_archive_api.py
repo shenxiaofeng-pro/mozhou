@@ -126,6 +126,35 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert checksum == hashlib.sha256(canonical_json(archive)).hexdigest()
 
 
+def test_archive_round_trip_preserves_fantasy_genre_story_anchors(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "mozhou.db")) as client:
+        created = client.post(
+            "/api/projects",
+            json={
+                "title": "群星下的灰塔",
+                "genre": "western_fantasy",
+                "rebirth_year": 1243,
+                "rebirth_location": "阿尔登大陆·北境",
+            },
+        ).json()
+        archive = client.get(
+            f"/api/projects/{created['project']['id']}/export"
+        ).json()
+        restored_response = client.post(
+            "/api/project-imports",
+            content=json.dumps(archive, ensure_ascii=False),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored_response.status_code == 201
+    restored = restored_response.json()["project"]
+    assert restored["genre"] == "western_fantasy"
+    assert restored["rebirth_year"] == 1243
+    assert restored["rebirth_location"] == "阿尔登大陆·北境"
+
+
 def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> None:
     database_path = tmp_path / "mozhou.db"
     timestamp = "2026-08-11T00:00:00+00:00"

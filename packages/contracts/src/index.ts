@@ -1,4 +1,8 @@
-export type Genre = 'historical_rebirth' | 'urban_rebirth'
+export type Genre =
+  | 'historical_rebirth'
+  | 'urban_rebirth'
+  | 'eastern_fantasy'
+  | 'western_fantasy'
 
 export type ChapterStatus = 'planned' | 'drafted' | 'reviewing' | 'approved'
 

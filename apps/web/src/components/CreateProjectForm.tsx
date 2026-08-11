@@ -2,6 +2,7 @@ import type { BetaTemplate, CreateProjectInput, Genre, Workspace } from '@mozhou
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { api } from '../api'
+import { genreLabels } from '../genre'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
 
 interface CreateProjectFormProps {
@@ -11,11 +12,6 @@ interface CreateProjectFormProps {
 }
 
 const maxArchiveBytes = 256 * 1024 * 1024
-
-const genreLabels: Record<Genre, string> = {
-  historical_rebirth: '历史重生',
-  urban_rebirth: '都市重生',
-}
 
 export function CreateProjectForm({ onCreated, onImported, onCancel }: CreateProjectFormProps) {
   const [genre, setGenre] = useState<Genre>('urban_rebirth')

@@ -101,6 +101,40 @@ def test_create_load_and_update_project(tmp_path: Path) -> None:
     assert stale.json() == {"detail": "章节已在其他位置更新，请重新载入"}
 
 
+@pytest.mark.parametrize(
+    ("genre", "title", "story_year", "story_location"),
+    [
+        ("eastern_fantasy", "万山问道", 728, "九州·云泽"),
+        ("western_fantasy", "灰塔之誓", 1243, "阿尔登大陆·北境"),
+    ],
+)
+def test_creates_and_reopens_fantasy_genre_projects(
+    tmp_path: Path,
+    genre: str,
+    title: str,
+    story_year: int,
+    story_location: str,
+) -> None:
+    with TestClient(create_app(tmp_path / f"{genre}.db")) as client:
+        created = client.post(
+            "/api/projects",
+            json={
+                "title": title,
+                "genre": genre,
+                "rebirth_year": story_year,
+                "rebirth_location": story_location,
+            },
+        )
+        assert created.status_code == 201
+        project_id = created.json()["project"]["id"]
+        reopened = client.get(f"/api/projects/{project_id}/summary")
+
+    assert reopened.status_code == 200
+    assert reopened.json()["project"]["genre"] == genre
+    assert reopened.json()["project"]["rebirth_year"] == story_year
+    assert reopened.json()["project"]["rebirth_location"] == story_location
+
+
 def test_loads_workspace_summary_without_manuscript_and_fetches_chapter_on_demand(
     tmp_path: Path,
 ) -> None:

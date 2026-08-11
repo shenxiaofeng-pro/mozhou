@@ -2,6 +2,7 @@ import type { Project, RecoveryPointSummary, Workspace } from '@mozhou/contracts
 import { type ChangeEvent, useState } from 'react'
 
 import { api } from '../api'
+import { genreLabels } from '../genre'
 import { BetaEvaluationDialog } from './BetaEvaluationDialog'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
 import { NarrativeSandboxDialog } from './NarrativeSandboxDialog'
@@ -32,11 +33,6 @@ const updatedAtFormatter = new Intl.DateTimeFormat('zh-CN', {
   month: 'short',
   day: 'numeric',
 })
-
-const genreLabels = {
-  historical_rebirth: '历史重生',
-  urban_rebirth: '都市重生',
-} as const
 
 export function ProjectLibraryPage({
   projects,

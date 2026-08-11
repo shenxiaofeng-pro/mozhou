@@ -8,6 +8,7 @@ import type {
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
+import { genreLabels } from '../genre'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
 import { AuthorToolsDialog } from './AuthorToolsDialog'
 import { DirectorPanel } from './DirectorPanel'
@@ -49,11 +50,6 @@ const chapterStatusLabels: Record<ChapterStatus, string> = {
   reviewing: '审校中',
   approved: '已定稿',
 }
-
-const genreLabels = {
-  historical_rebirth: '历史重生',
-  urban_rebirth: '都市重生',
-} as const
 
 const CHAPTER_PREFIX = /^第[零〇一二三四五六七八九十百千万两\d]+章\s*/
 
