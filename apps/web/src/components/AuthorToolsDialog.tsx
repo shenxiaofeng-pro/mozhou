@@ -88,8 +88,65 @@ export function AuthorToolsDialog({ project, chapter, initialTab, selection, onC
 }
 
 function CalendarView({ calendar }: { calendar: WritingCalendar }) {
-  const max = Math.max(1, ...calendar.days.map((day) => Math.max(day.target_characters, day.net_characters)))
-  return <section className="writing-calendar"><header><div><strong>{calendar.total_net_characters.toLocaleString()} 字</strong><span>42 天净新增</span></div><div><strong>{calendar.streak_days} 天</strong><span>当前连续写作</span></div><small>{calendar.timezone}</small></header><div className="calendar-grid">{calendar.days.map((day) => <div key={day.date} title={`${day.date}：${day.net_characters} / ${day.target_characters}`} data-met={day.met_goal} data-negative={day.net_characters < 0}><span style={{ height: `${Math.max(3, Math.abs(day.net_characters) / max * 100)}%` }} /><small>{day.date.slice(5)}</small></div>)}</div></section>
+  const weeks = Array.from({ length: Math.ceil(calendar.days.length / 7) }, (_, index) => calendar.days.slice(index * 7, index * 7 + 7))
+  const today = calendar.days.at(-1)
+  const goalDays = calendar.days.filter((day) => day.met_goal).length
+  const activeDays = calendar.days.filter((day) => day.net_characters !== 0).length
+  const formatCharacters = (value: number) => `${value > 0 ? '+' : ''}${value.toLocaleString('zh-CN')}`
+  const formatDate = (date: string) => {
+    const [, month, day] = date.split('-')
+    return `${Number(month)}月${Number(day)}日`
+  }
+  const weekday = (date: string) => ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(`${date}T00:00:00Z`).getUTCDay()]
+  const range = calendar.days.length ? `${formatDate(calendar.days[0].date)}—${formatDate(calendar.days.at(-1)!.date)}` : '尚无记录'
+  const todayMessage = !today || today.net_characters === 0 ? '今天还没有落笔，先写下第一段。'
+    : today.net_characters < 0 ? `今天以删改为主，正文净变化 ${formatCharacters(today.net_characters)} 字。`
+    : `今天已完成 ${formatCharacters(today.net_characters)} 字，${today.met_goal ? '目标达成。' : '继续保持手感。'}`
+
+  return <section className="writing-calendar">
+    <header className="calendar-hero">
+      <div className="calendar-heading">
+        <small>WRITING RHYTHM · {range}</small>
+        <h3>六周码字轨迹</h3>
+        <p>{todayMessage}</p>
+      </div>
+      <div className="calendar-today" data-state={today?.met_goal ? 'met' : today && today.net_characters < 0 ? 'negative' : 'open'}>
+        <span>今日净增</span>
+        <strong>{today ? formatCharacters(today.net_characters) : '—'}<small>字</small></strong>
+        <small>{today?.met_goal ? `已完成 ${Math.round(today.net_characters / Math.max(1, today.target_characters) * 100)}% 日目标` : `日目标 ${today?.target_characters.toLocaleString('zh-CN') ?? '—'} 字`}</small>
+      </div>
+    </header>
+
+    <dl className="calendar-metrics">
+      <div><dt>六周净增</dt><dd>{calendar.total_net_characters.toLocaleString('zh-CN')}<small>字</small></dd></div>
+      <div><dt>连续写作</dt><dd>{calendar.streak_days}<small>天</small></dd></div>
+      <div><dt>达标天数</dt><dd>{goalDays}<small>天</small></dd></div>
+      <div><dt>有记录</dt><dd>{activeDays}<small>天</small></dd></div>
+    </dl>
+
+    <div className="calendar-board">
+      <header className="calendar-board-head">
+        <div><strong>每日手稿</strong><small>{calendar.timezone}</small></div>
+        <div className="calendar-legend" aria-label="状态图例"><span data-tone="met">达标</span><span data-tone="writing">写作中</span><span data-tone="negative">净删改</span></div>
+      </header>
+      <div className="calendar-grid" role="list" aria-label="过去六周码字记录">
+        {weeks.map((week, weekIndex) => <div className="calendar-week-row" key={week[0]?.date ?? weekIndex} aria-label={`第 ${weekIndex + 1} 周`}>
+          <div className="calendar-week-label" aria-hidden="true"><strong>W{String(weekIndex + 1).padStart(2, '0')}</strong><small>{week.length ? `${week[0].date.slice(5).replace('-', '.')}—${week.at(-1)!.date.slice(5).replace('-', '.')}` : ''}</small></div>
+          {week.map((day, dayIndex) => {
+            const progress = Math.min(100, Math.max(0, day.net_characters) / Math.max(1, day.target_characters) * 100)
+            const isToday = weekIndex === weeks.length - 1 && dayIndex === week.length - 1
+            const status = day.met_goal ? '已达标' : day.net_characters < 0 ? '净删改' : day.net_characters > 0 ? '写作中' : '未开始'
+            return <article className="calendar-day" key={day.date} role="listitem" aria-label={`${formatDate(day.date)} ${status}，净增 ${day.net_characters} 字，目标 ${day.target_characters} 字`} data-met={day.met_goal} data-negative={day.net_characters < 0} data-today={isToday}>
+              <header><time dateTime={day.date}>{formatDate(day.date)}</time><span>{weekday(day.date)}</span></header>
+              <strong>{day.net_characters === 0 ? '—' : formatCharacters(day.net_characters)}</strong>
+              <small>{status}</small>
+              <div className="calendar-day-track" aria-hidden="true"><span style={{ width: `${progress}%` }} /></div>
+            </article>
+          })}
+        </div>)}
+      </div>
+    </div>
+  </section>
 }
 
 function GraphView({ nodes, edges }: { nodes: StoryGraphNode[]; edges: StoryGraphEdge[] }) {

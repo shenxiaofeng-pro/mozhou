@@ -94,7 +94,7 @@
 
 | 层 | 数量 | 状态 |
 |---|---:|---|
-| Web Vitest | 55 | 全部通过 |
+| Web Vitest | 56 | 全部通过 |
 | FastAPI pytest | 244 | 全部通过 |
 | Tauri Rust | 8 + 1 个按需 Keychain 测试 | 全部通过 |
 | Node 工程脚本 | 16 | 全部通过 |

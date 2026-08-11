@@ -1,5 +1,5 @@
-import type { AuthorIdea, Chapter, Project } from '@mozhou/contracts'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { AuthorIdea, Chapter, Project, WritingCalendar } from '@mozhou/contracts'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '../api'
@@ -45,5 +45,30 @@ describe('AuthorToolsDialog', () => {
     fireEvent.click(await screen.findByRole('button', { name: '准备为章纲候选' }))
     await waitFor(() => expect(prepare).toHaveBeenCalledWith('idea-1', 'chapter_brief', 0))
     expect(await screen.findByText('已准备：chapter_brief')).toBeInTheDocument()
+  })
+
+  it('presents 42 days as six readable writing weeks with goal and editing states', async () => {
+    const days: WritingCalendar['days'] = Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(Date.UTC(2026, 6, index + 1)).toISOString().slice(0, 10)
+      const netCharacters = index === 10 ? -280 : index === 41 ? 1200 : index % 5 === 0 ? 800 : 0
+      return { date, net_characters: netCharacters, target_characters: 1000, met_goal: netCharacters >= 1000 }
+    })
+    vi.spyOn(api, 'getWritingCalendar').mockResolvedValue({
+      project_id: project.id,
+      timezone: 'Asia/Shanghai',
+      days,
+      total_net_characters: 5_720,
+      streak_days: 3,
+    })
+
+    render(<AuthorToolsDialog project={project} chapter={chapter} initialTab="calendar" selection={null} onClose={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: '六周码字轨迹' })).toBeInTheDocument()
+    const today = screen.getByText('今日净增').parentElement!
+    expect(within(today).getByText('+1,200')).toBeInTheDocument()
+    expect(screen.getByText('达标天数')).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(42)
+    expect(screen.getByRole('listitem', { name: /7月11日 净删改/ })).toHaveAttribute('data-negative', 'true')
+    expect(screen.getByRole('listitem', { name: /8月11日 已达标/ })).toHaveAttribute('data-today', 'true')
   })
 })
