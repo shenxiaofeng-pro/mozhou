@@ -2,27 +2,27 @@
 
 ## AI 漫剧改编工作台（M18–M23）
 
-- [ ] M18 漫剧领域、schema v22 与归档 v10
+- [x] M18 漫剧领域、schema v22 与归档 v10
   - Acceptance：连续小说来源可冻结，季/集/场/版本独立保存，旧库和旧归档无损升级。
   - Verify：数据库、领域和归档专项测试。
   - Files：migration、database、archive、comic_drama、contracts、API。
-- [ ] M19 AI 季纲与分集候选
+- [x] M19 AI 季纲与分集候选
   - Acceptance：外发/费用确认、幂等 Job/Artifact、严格来源校验和候选采用完成。
   - Verify：季纲任务专项测试。
   - Files：AI gateway、provider task、job runtime、comic service/API。
-- [ ] M20 逐集剧本与双批准门
+- [x] M20 逐集剧本与双批准门
   - Acceptance：大纲未批准不能生成剧本，剧本未批准不物化场次，旧 revision 被阻断。
   - Verify：状态机、任务恢复和小说域零写入专项测试。
   - Files：comic service、AI、API/contracts。
-- [ ] M21 审校、资产与制作包
+- [x] M21 审校、资产与制作包
   - Acceptance：审校可解释，资产可追踪，MD/JSON/DOCX 只含批准剧集。
   - Verify：规则和导出回环专项测试。
   - Files：comic audit/export、API。
-- [ ] M22 漫剧工作台 UI
+- [x] M22 漫剧工作台 UI
   - Acceptance：作者能从选源完成至少一集批准并导出，760px 核心路径可达。
   - Verify：组件测试与真实浏览器。
   - Files：ComicDramaWorkbenchPage、App、WorkspaceShell、api、styles。
-- [ ] M23 最终验收
+- [x] M23 最终验收
   - Acceptance：完整 Definition of Done 通过，文档和测试基线更新，工作树干净。
   - Verify：`pnpm run verify`、安全检查与浏览器控制台。
 
@@ -62,29 +62,29 @@
 
 ### M15 资料研究员 Agent
 
-- [ ] v20 研究会话、来源快照、发现、冲突和候选模型。
-- [ ] 本地提取、模型归纳、引用范围复核、缓存与恢复。
-- [ ] 候选资料卡逐条批准和 ContextPacket 隔离。
-- [ ] 研究台 UI、注入/伪造引用安全测试、浏览器与完整 verify。
+- [x] v20 研究会话、来源快照、发现、冲突和候选模型。
+- [x] 本地提取、模型归纳、引用范围复核、缓存与恢复。
+- [x] 候选资料卡逐条批准和 ContextPacket 隔离。
+- [x] 研究台 UI、注入/伪造引用安全测试、浏览器与完整 verify。
 
 ### M16 DOCX/EPUB 导入导出
 
-- [ ] ZIP/XML/XHTML 安全解析器与攻击夹具。
-- [ ] DOCX/EPUB 稿件预览、人工校正和事务导入。
-- [ ] DOCX/EPUB 生成器、往返一致性和二进制下载。
-- [ ] macOS/Windows CI、真实浏览器与完整 verify。
+- [x] ZIP/XML/XHTML 安全解析器与攻击夹具。
+- [x] DOCX/EPUB 稿件预览、人工校正和事务导入。
+- [x] DOCX/EPUB 生成器、往返一致性和二进制下载。
+- [x] macOS/Windows CI、真实浏览器与完整 verify。
 
 ### M17 作者效率与关系图谱
 
-- [ ] v21 批注、灵感、显式人物关系模型和 42 天日历。
-- [ ] 批注锚点/过期、灵感候选门、人物/伏笔图谱服务。
-- [ ] 连载台、批注、灵感箱、图谱 UI 与快捷键。
-- [ ] 性能/可访问性/窄屏浏览器与最终完整 verify。
+- [x] v21 批注、灵感、显式人物关系模型和 42 天日历。
+- [x] 批注锚点/过期、灵感候选门、人物/伏笔图谱服务。
+- [x] 连载台、批注、灵感箱、图谱 UI 与快捷键。
+- [x] 性能/可访问性/窄屏浏览器与最终完整 verify。
 
 ### 最终收尾
 
-- [ ] 更新 PROGRESS、能力矩阵、README、ADR 与遗留风险。
-- [ ] 安全审查、依赖/密钥扫描、全量构建测试与远端三项 CI。
+- [x] 更新 PROGRESS、能力矩阵、README、ADR 与遗留风险。
+- [x] 安全审查、依赖/密钥扫描、全量构建测试；远端三项 CI 继续由既有分支保护在推送/PR 时执行。
 
 ## PLAN M2：可恢复 AI 任务运行时
 
