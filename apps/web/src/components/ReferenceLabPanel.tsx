@@ -10,6 +10,7 @@ import type {
   ReferencePatternDimension,
   ReferenceBlueprintState,
   ReferenceRightsBasis,
+  SceneOriginalityCheck,
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
@@ -643,6 +644,14 @@ const riskLabels = {
   high: '高风险',
 } as const
 
+const sceneSignalLabels: Record<SceneOriginalityCheck['findings'][number]['signal'], string> = {
+  semantic_scene: '场景功能',
+  ordered_sequence: '场景顺序',
+  causal_graph: '因果链',
+  character_function_graph: '人物功能关系',
+  multi_source_convergence: '多书汇聚',
+}
+
 const entityKindLabels: Record<BlueprintEntityKind, string> = {
   character: '人物',
   location: '地点',
@@ -695,6 +704,7 @@ function ReferenceBlueprintEditor({
   )
   const [relationshipChanged, setRelationshipChanged] = useState(false)
   const [report, setReport] = useState<OriginalityReport | null>(null)
+  const [sceneReport, setSceneReport] = useState<SceneOriginalityCheck | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoadingReport, setIsLoadingReport] = useState(false)
   const [editorError, setEditorError] = useState<string | null>(null)
@@ -782,6 +792,42 @@ function ReferenceBlueprintEditor({
     }
   }
 
+  async function openSceneReport() {
+    setIsLoadingReport(true)
+    setEditorError(null)
+    try {
+      const latest = await api.getOrRunSceneOriginalityCheck(
+        workspace.project.id,
+        application.id,
+      )
+      setSceneReport(await api.getSceneOriginalityCheck(latest.id))
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '场景情节图报告加载失败')
+    } finally {
+      setIsLoadingReport(false)
+    }
+  }
+
+  async function acknowledgeSceneReport() {
+    setIsSaving(true)
+    setEditorError(null)
+    try {
+      const updated = await api.acknowledgeSceneOriginalityCheck(
+        workspace.project.id,
+        application.id,
+        { expected_revision: application.revision },
+      )
+      onWorkspaceChanged(replaceApplication(workspace, updated))
+      if (sceneReport) {
+        setSceneReport(await api.getSceneOriginalityCheck(sceneReport.id))
+      }
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '场景风险确认失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   if (!draft) {
     return <p>这是旧版蓝图，已暂停传给 AI；请重新应用或恢复后完成原创性检查。</p>
   }
@@ -801,9 +847,14 @@ function ReferenceBlueprintEditor({
                 : '当前不传给章纲或正文 AI，请先重构标记项。'}
           </span>
         </div>
-        <button type="button" onClick={openReport} disabled={!application.latest_report_id || isLoadingReport}>
-          {isLoadingReport ? '加载报告…' : '查看原创性报告'}
-        </button>
+        <div className="originality-gate-actions">
+          <button type="button" onClick={openReport} disabled={!application.latest_report_id || isLoadingReport}>
+            {isLoadingReport ? '加载报告…' : '查看文本与结构报告'}
+          </button>
+          <button type="button" onClick={openSceneReport} disabled={isLoadingReport}>
+            查看场景情节图报告
+          </button>
+        </div>
       </div>
 
       {report ? (
@@ -831,13 +882,53 @@ function ReferenceBlueprintEditor({
             </ul>
           ) : <p>没有检出需提示的结构组合或文本重合。</p>}
           <p className="originality-legal-notice">{report.legal_notice}</p>
-          {application.originality_status === 'review_required' ? (
+          {application.originality_status === 'review_required' && report.risk_level === 'medium' ? (
             <button type="button" onClick={acknowledgeReport} disabled={isSaving}>
               我已查看报告，确认继续使用这份蓝图
             </button>
           ) : null}
           {application.originality_status === 'blocked' ? (
             <p className="originality-blocked-note">高风险不能手动跳过；请根据证据重构下方维度后重新检查。</p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {sceneReport ? (
+        <section className="originality-report scene-originality-report" aria-label="场景情节图报告" data-risk={sceneReport.risk_level}>
+          <header>
+            <div><small>场景风险分</small><strong>{sceneReport.score}/100</strong></div>
+            <div><small>参考范围</small><strong>{sceneReport.source_work_count} 本书</strong></div>
+            <div><small>场景节点</small><strong>{sceneReport.candidate_graph.nodes.length} 个</strong></div>
+          </header>
+          {sceneReport.candidate_graph.nodes.length ? (
+            <ol className="scene-plot-strip" aria-label="候选场景顺序">
+              {sceneReport.candidate_graph.nodes.map((node, index) => (
+                <li key={node.id}>
+                  <small>场景 {index + 1}</small>
+                  <strong>{node.label}</strong>
+                  {node.semantic_terms.length ? <span>{node.semantic_terms.join(' · ')}</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : <p>当前蓝图没有可比较的明确场景节拍。</p>}
+          {sceneReport.findings.length ? (
+            <ul>
+              {sceneReport.findings.map((finding) => (
+                <li key={finding.evidence_sha256}>
+                  <strong>{sceneSignalLabels[finding.signal]} · {finding.score}/100</strong>
+                  <span>{finding.summary}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p>未检出需提示的场景语义、顺序或因果图相似信号。</p>}
+          <p className="originality-legal-notice">{sceneReport.legal_notice}</p>
+          {application.originality_status === 'review_required' && sceneReport.risk_level === 'medium' ? (
+            <button type="button" onClick={acknowledgeSceneReport} disabled={isSaving}>
+              我已查看情节图，确认继续使用这份蓝图
+            </button>
+          ) : null}
+          {sceneReport.risk_level === 'high' ? (
+            <p className="originality-blocked-note">高风险不能确认跳过；请改变场景顺序、关键决策或后果链后重新检查。</p>
           ) : null}
         </section>
       ) : null}

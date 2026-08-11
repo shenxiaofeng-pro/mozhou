@@ -1,9 +1,11 @@
 import json
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.ai import AiGatewayManager, build_chapter_context
+from app.database import Database
 from app.main import create_app
 from app.models import (
     AiProvider,
@@ -617,6 +619,7 @@ def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
             f"/api/projects/{project_id}/export?include_reference_assets=true"
         ).json()
         restored = client.post("/api/project-imports", json=archive)
+        assert restored.status_code == 201, restored.text
         restored_application = restored.json()["reference_pattern_applications"][0]
         restored_report = client.get(
             f"/api/originality-reports/{restored_application['latest_report_id']}"
@@ -717,3 +720,185 @@ def test_medium_risk_requires_report_acknowledgement_before_writing(
         "",
     ))
     assert len(context["applied_reference_patterns"]) == 1
+
+
+def test_scene_plot_graph_blocks_reworded_same_sequence(tmp_path: Path) -> None:
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "scene-high.db", ai_manager=manager)) as client:
+        workspace, card, project_id = _create_pattern_fixture(
+            client,
+            title="场景图高风险",
+            source_phrase="普通行业背景，不包含候选场景原句",
+        )
+        blueprint = _blueprint(card, ["key_scene_sequence"])
+        state = blueprint["dimensions"]["key_scene_sequence"]
+        state["mode"] = "reconstruct"
+        state["source_beats"] = [
+            "主角调查仓库并查明名单去向",
+            "主角从父亲手中获得关键账本",
+            "主角在大会上当众揭露厂长",
+            "厂长下属倒戈并公开证据完成反击",
+        ]
+        state["key_beats"] = [
+            "主人公追查库房，摸清名册流向",
+            "主人公从家人处拿到关键文件",
+            "主人公在会上公开主管的问题",
+            "领导的下属反水并公布凭证完成抗衡",
+        ]
+        applied = client.post(
+            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
+            json={
+                "selected_dimensions": ["key_scene_sequence"],
+                "application_note": "检测场景语义",
+                "confirm_original_adaptation": True,
+                "blueprint": blueprint,
+            },
+        )
+        application = applied.json()
+        scene_check = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-checks"
+        )
+        chapter_id = workspace["chapters"][0]["id"]
+        blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-preview",
+            json={"expected_revision": 0, "author_intent": "继续创作"},
+        )
+        acknowledgement = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+
+    assert applied.status_code == 201
+    assert application["originality_status"] == "blocked"
+    assert application["risk_level"] == "high"
+    assert application["threshold_version"] == "scene-plot-graph-v1"
+    assert scene_check.status_code == 200
+    assert scene_check.json()["risk_level"] == "high"
+    assert scene_check.json()["source_work_count"] == 2
+    assert "普通行业背景" not in scene_check.text
+    assert blocked.status_code == 409
+    assert acknowledgement.status_code == 409
+
+
+def test_scene_plot_graph_medium_requires_view_then_ack(tmp_path: Path) -> None:
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "scene-medium.db", ai_manager=manager)) as client:
+        _, card, project_id = _create_pattern_fixture(
+            client,
+            title="场景图中风险",
+            source_phrase="普通行业背景",
+        )
+        blueprint = _blueprint(card, ["key_scene_sequence"])
+        state = blueprint["dimensions"]["key_scene_sequence"]
+        state["mode"] = "reconstruct"
+        state["source_beats"] = [
+            "调查市场价格",
+            "获得一份合同",
+            "与竞争者谈判",
+            "公开交易结果",
+        ]
+        state["key_beats"] = [
+            "核查市场行情",
+            "拜访一位新客户",
+            "解决仓储故障",
+            "公布交易成果",
+        ]
+        application = client.post(
+            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
+            json={
+                "selected_dimensions": ["key_scene_sequence"],
+                "application_note": "检测中风险",
+                "confirm_original_adaptation": True,
+                "blueprint": blueprint,
+            },
+        ).json()
+        latest = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-checks"
+        ).json()
+        premature = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+        viewed = client.get(f"/api/scene-originality-checks/{latest['id']}")
+        acknowledged = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+
+    assert latest["risk_level"] == "medium"
+    assert latest["viewed_at"] is None
+    assert premature.status_code == 409
+    assert viewed.json()["viewed_at"] is not None
+    assert acknowledged.status_code == 200
+    assert acknowledged.json()["originality_status"] == "passed"
+
+
+def test_v18_migration_blocks_legacy_application_until_scene_check_runs(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-v17.db"
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(database_path, ai_manager=manager)) as client:
+        _, card, project_id = _create_pattern_fixture(
+            client,
+            title="旧版蓝图补检",
+            source_phrase="普通的时代机会参考内容",
+        )
+        dimensions = [item for item in (
+            "era",
+            "core_desire",
+            "conflict_causality",
+            "resource_system",
+            "key_scene_sequence",
+            "ending",
+        )]
+        application = client.post(
+            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
+            json={
+                "selected_dimensions": dimensions,
+                "application_note": "模拟已确认的 v17 蓝图",
+                "confirm_original_adaptation": True,
+                "blueprint": _blueprint(card, dimensions),
+            },
+        ).json()
+        client.get(f"/api/originality-reports/{application['latest_report_id']}")
+        passed = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+        assert passed.json()["originality_status"] == "passed"
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DELETE FROM scene_originality_checks")
+        connection.execute(
+            "UPDATE originality_reports SET acknowledged_at = NULL WHERE id = ?",
+            (application["latest_report_id"],),
+        )
+        connection.execute("DELETE FROM schema_migrations WHERE version = 18")
+        connection.execute("PRAGMA user_version=17")
+        connection.commit()
+
+    Database(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        migrated_status = connection.execute(
+            "SELECT originality_status FROM reference_pattern_applications WHERE id = ?",
+            (application["id"],),
+        ).fetchone()
+        inferred_ack = connection.execute(
+            "SELECT acknowledged_at FROM originality_reports WHERE id = ?",
+            (application["latest_report_id"],),
+        ).fetchone()
+    with TestClient(create_app(database_path, ai_manager=manager)) as client:
+        before = client.get(f"/api/projects/{project_id}").json()
+        check = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-checks"
+        )
+        after = client.get(f"/api/projects/{project_id}").json()
+
+    assert migrated_status == ("needs_check",)
+    assert inferred_ack is not None and inferred_ack[0] is not None
+    assert before["reference_pattern_applications"][0]["originality_status"] == "needs_check"
+    assert check.status_code == 200
+    assert check.json()["risk_level"] == "low"
+    assert after["reference_pattern_applications"][0]["originality_status"] == "passed"

@@ -51,6 +51,8 @@ ARCHIVE_TABLES = {
     "reference_pattern_applications",
     "reference_blueprint_versions",
     "originality_reports",
+    "scene_originality_checks",
+    "scene_originality_findings",
     "review_findings",
     "text_change_sets",
     "text_changes",
@@ -105,7 +107,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 6
+    assert archive["format_version"] == 7
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -234,7 +236,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 6
+    assert archive["format_version"] == 7
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()

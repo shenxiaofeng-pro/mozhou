@@ -69,6 +69,7 @@ import type {
   RenameDirectoryNodeInput,
   RecoveryPointSummary,
   SerialDashboard,
+  SceneOriginalityCheck,
   SandboxBranch,
   SandboxCandidate,
   SandboxComparison,
@@ -983,6 +984,27 @@ export const api = {
   ) {
     return request<ReferencePatternApplication>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/originality-acknowledgements`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getOrRunSceneOriginalityCheck(projectId: string, applicationId: string) {
+    return request<SceneOriginalityCheck>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/scene-originality-checks`,
+      { method: 'POST' },
+    )
+  },
+  getSceneOriginalityCheck(checkId: string) {
+    return request<SceneOriginalityCheck>(
+      `/api/scene-originality-checks/${encodeURIComponent(checkId)}`,
+    )
+  },
+  acknowledgeSceneOriginalityCheck(
+    projectId: string,
+    applicationId: string,
+    input: AcknowledgeOriginalityReportInput,
+  ) {
+    return request<ReferencePatternApplication>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/scene-originality-acknowledgements`,
       { method: 'POST', body: JSON.stringify(input) },
     )
   },

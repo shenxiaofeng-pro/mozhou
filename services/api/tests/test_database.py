@@ -70,6 +70,8 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "sandbox_rounds",
         "sandbox_runs",
         "sandbox_snapshots",
+        "scene_originality_checks",
+        "scene_originality_findings",
         "schema_migrations",
         "serial_daily_goals",
         "source_cards",
@@ -143,21 +145,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v17-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v18-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (17,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (18,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v17-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v18-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v18_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -213,7 +215,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (17,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (18,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -235,8 +237,9 @@ def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
         (15, "manuscript_hierarchy_and_serial_goals"),
         (16, "closed_beta_evaluation"),
         (17, "narrative_sandbox"),
+        (18, "scene_plot_graph_originality"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v17-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v18-*.db"))) == 1
 
 
 def test_v9_migrates_project_reference_text_to_global_asset_without_loss() -> None:
@@ -464,7 +467,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
         ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v17-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v18-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

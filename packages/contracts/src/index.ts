@@ -1683,6 +1683,56 @@ export interface OriginalityReport {
   input_sha256: string
   legal_notice: string
   viewed_at: string | null
+  acknowledged_at?: string | null
+  created_at: string
+}
+
+export type SceneOriginalitySignal =
+  | 'semantic_scene'
+  | 'ordered_sequence'
+  | 'causal_graph'
+  | 'character_function_graph'
+  | 'multi_source_convergence'
+
+export interface SceneGraphNode {
+  id: string
+  label: string
+  semantic_terms: string[]
+}
+
+export interface SceneGraphEdge {
+  source: string
+  target: string
+  relation: string
+}
+
+export interface SceneOriginalityFinding {
+  signal: SceneOriginalitySignal
+  score: number
+  summary: string
+  source_segment_ids: string[]
+  evidence_sha256: string
+}
+
+export interface SceneOriginalityCheck {
+  id: string
+  application_id: string
+  blueprint_revision: number
+  risk_level: OriginalityRiskLevel
+  score: number
+  threshold_version: string
+  candidate_graph: {
+    nodes: SceneGraphNode[]
+    edges: SceneGraphEdge[]
+  }
+  findings: SceneOriginalityFinding[]
+  source_segment_ids: string[]
+  source_work_count: number
+  input_sha256: string
+  legal_notice: string
+  status: OriginalityStatus
+  viewed_at: string | null
+  acknowledged_at: string | null
   created_at: string
 }
 

@@ -154,6 +154,7 @@ from app.models import (
     ReviewOutboundPreview,
     RollbackChapterVersionRequest,
     RollingChapterPlan,
+    SceneOriginalityCheck,
     SelectDirectorCandidateRequest,
     SerialDashboard,
     SetSerialDailyGoalRequest,
@@ -2132,6 +2133,41 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="原创性报告不存在") from error
 
+    @application.post(
+        "/api/projects/{project_id}/reference-blueprints/{application_id}/scene-originality-checks",
+        response_model=SceneOriginalityCheck,
+    )
+    def get_or_run_scene_originality_check(
+        project_id: UUID,
+        application_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> SceneOriginalityCheck:
+        try:
+            return repository.get_latest_scene_originality_check(
+                str(project_id),
+                str(application_id),
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="场景原创性报告不存在") from error
+        except InvalidReferenceApplicationError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="蓝图缺少可重检的来源或旧版报告，请重新应用模式卡",
+            ) from error
+
+    @application.get(
+        "/api/scene-originality-checks/{check_id}",
+        response_model=SceneOriginalityCheck,
+    )
+    def get_scene_originality_check(
+        check_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> SceneOriginalityCheck:
+        try:
+            return repository.get_scene_originality_check(str(check_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="场景原创性报告不存在") from error
+
     @application.patch(
         "/api/projects/{project_id}/reference-blueprints/{application_id}",
         response_model=ReferencePatternApplication,
@@ -2174,6 +2210,32 @@ def create_app(
         except InvalidReferenceApplicationError as error:
             raise HTTPException(
                 status_code=409, detail="当前报告不能确认，高风险蓝图必须先修改"
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/reference-blueprints/{application_id}/scene-originality-acknowledgements",
+        response_model=ReferencePatternApplication,
+    )
+    def acknowledge_scene_originality_check(
+        project_id: UUID,
+        application_id: UUID,
+        body: AcknowledgeOriginalityReportRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferencePatternApplication:
+        try:
+            return repository.acknowledge_scene_originality_check(
+                str(project_id),
+                str(application_id),
+                body,
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="蓝图不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再处理") from error
+        except InvalidReferenceApplicationError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="场景报告尚未查看、不是中风险，或高风险必须先修改",
             ) from error
 
     @application.get("/api/projects/{project_id}", response_model=Workspace)

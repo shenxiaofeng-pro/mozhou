@@ -36,6 +36,8 @@ from app.models import (
     ReviewFinding,
     RollingChapterPlan,
     RollingChapterPlanContent,
+    SceneOriginalityCheck,
+    SceneOriginalityFinding,
     SourceCard,
     SourceDocument,
     StoryEntity,
@@ -51,7 +53,7 @@ from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 6
+ARCHIVE_FORMAT_VERSION = 7
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -772,6 +774,7 @@ ARCHIVE_TABLES = (
             "source_segment_ids_json",
             "input_sha256",
             "viewed_at",
+            "acknowledged_at",
             "created_at",
         ),
         "application_id IN (SELECT id FROM reference_pattern_applications WHERE project_id = ?)",
@@ -781,6 +784,45 @@ ARCHIVE_TABLES = (
             "evidence_json",
             "source_segment_ids_json",
         ),
+    ),
+    ArchiveTable(
+        "scene_originality_checks",
+        (
+            "id",
+            "application_id",
+            "blueprint_revision",
+            "risk_level",
+            "score",
+            "threshold_version",
+            "candidate_graph_json",
+            "source_segment_ids_json",
+            "source_work_count",
+            "input_sha256",
+            "viewed_at",
+            "acknowledged_at",
+            "created_at",
+        ),
+        "application_id IN (SELECT id FROM reference_pattern_applications WHERE project_id = ?)",
+        (("application_id", "reference_pattern_applications", False),),
+        ("candidate_graph_json", "source_segment_ids_json"),
+    ),
+    ArchiveTable(
+        "scene_originality_findings",
+        (
+            "id",
+            "check_id",
+            "ordinal",
+            "signal",
+            "score",
+            "summary",
+            "source_segment_ids_json",
+            "evidence_sha256",
+        ),
+        "check_id IN (SELECT s.id FROM scene_originality_checks s "
+        "JOIN reference_pattern_applications a ON a.id = s.application_id "
+        "WHERE a.project_id = ?)",
+        (("check_id", "scene_originality_checks", False),),
+        ("source_segment_ids_json",),
     ),
 )
 
@@ -1058,6 +1100,34 @@ def _validate_business_rows(
                     "legal_notice": LEGAL_NOTICE,
                 }
             )
+        findings_by_check: dict[str, list[dict[str, Any]]] = {}
+        for row in tables["scene_originality_findings"]:
+            finding = SceneOriginalityFinding.model_validate(
+                {
+                    **row,
+                    "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+                }
+            )
+            findings_by_check.setdefault(row["check_id"], []).append(
+                finding.model_dump(mode="json")
+            )
+        for row in tables["scene_originality_checks"]:
+            SceneOriginalityCheck.model_validate(
+                {
+                    **row,
+                    "candidate_graph": _parse_json(row["candidate_graph_json"]),
+                    "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+                    "findings": findings_by_check.get(row["id"], []),
+                    "status": (
+                        "blocked"
+                        if row["risk_level"] == "high"
+                        else "review_required"
+                        if row["risk_level"] == "medium" and row["acknowledged_at"] is None
+                        else "passed"
+                    ),
+                    "legal_notice": "场景语义与情节图检测用于创作风控，不是抄袭认定或法律结论。",
+                }
+            )
 
         for row in tables["chapter_events"]:
             ChapterStatus(row["from_status"])
@@ -1122,6 +1192,7 @@ def _validate_business_rows(
             "started_at",
             "completed_at",
             "viewed_at",
+            "acknowledged_at",
             "deleted_at",
             "undone_at",
         }
@@ -1427,7 +1498,7 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5, 6}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5, 6, 7}:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1456,6 +1527,8 @@ class ProjectArchiveService:
             value = self._upgrade_v4_archive(value)
         if value["format_version"] == 5:
             value = self._upgrade_v5_archive(value)
+        if value["format_version"] == 6:
+            value = self._upgrade_v6_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1783,6 +1856,28 @@ class ProjectArchiveService:
         upgraded_tables["manuscript_scenes"] = []
         upgraded_tables["directory_events"] = []
         upgraded_tables["serial_daily_goals"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 6
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v6_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        originality_rows = tables.get("originality_reports")
+        if not isinstance(originality_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["originality_reports"] = [
+            {**row, "acknowledged_at": None} for row in originality_rows
+        ]
+        upgraded_tables["scene_originality_checks"] = []
+        upgraded_tables["scene_originality_findings"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
         unsigned = dict(upgraded)

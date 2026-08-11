@@ -137,6 +137,14 @@ class OriginalitySignal(StrEnum):
     MULTI_DIMENSION = "multi_dimension"
 
 
+class SceneOriginalitySignal(StrEnum):
+    SEMANTIC_SCENE = "semantic_scene"
+    ORDERED_SEQUENCE = "ordered_sequence"
+    CAUSAL_GRAPH = "causal_graph"
+    CHARACTER_FUNCTION_GRAPH = "character_function_graph"
+    MULTI_SOURCE_CONVERGENCE = "multi_source_convergence"
+
+
 class BookBlueprintField(StrEnum):
     TITLE = "title"
     GENRE = "genre"
@@ -1619,6 +1627,53 @@ class OriginalityReport(OriginalityAssessment):
     application_id: str
     blueprint_revision: int = Field(ge=0)
     viewed_at: str | None = None
+    created_at: str
+
+
+class SceneGraphNode(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=240)
+    semantic_terms: list[str] = Field(default_factory=list, max_length=24)
+
+
+class SceneGraphEdge(BaseModel):
+    source: str = Field(min_length=1, max_length=40)
+    target: str = Field(min_length=1, max_length=40)
+    relation: str = Field(min_length=1, max_length=40)
+
+
+class ScenePlotGraph(BaseModel):
+    nodes: list[SceneGraphNode] = Field(max_length=40)
+    edges: list[SceneGraphEdge] = Field(max_length=80)
+
+
+class SceneOriginalityFinding(BaseModel):
+    signal: SceneOriginalitySignal
+    score: int = Field(ge=0, le=100)
+    summary: str = Field(min_length=1, max_length=300)
+    source_segment_ids: list[str] = Field(default_factory=list, max_length=72)
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SceneOriginalityAssessment(BaseModel):
+    risk_level: OriginalityRiskLevel
+    score: int = Field(ge=0, le=100)
+    threshold_version: str = Field(min_length=1, max_length=80)
+    candidate_graph: ScenePlotGraph
+    findings: list[SceneOriginalityFinding] = Field(max_length=30)
+    source_segment_ids: list[str] = Field(max_length=72)
+    source_work_count: int = Field(ge=1, le=12)
+    input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    legal_notice: str = Field(min_length=1, max_length=200)
+
+
+class SceneOriginalityCheck(SceneOriginalityAssessment):
+    id: str
+    application_id: str
+    blueprint_revision: int = Field(ge=0)
+    status: OriginalityStatus
+    viewed_at: str | None = None
+    acknowledged_at: str | None = None
     created_at: str
 
 

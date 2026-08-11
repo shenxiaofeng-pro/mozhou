@@ -20,6 +20,7 @@ from app.migrations import (
     v15,
     v16,
     v17,
+    v18,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -54,6 +55,11 @@ MIGRATIONS = (
     ),
     Migration(version=16, name="closed_beta_evaluation", upgrade=v16.upgrade),
     Migration(version=17, name="narrative_sandbox", upgrade=v17.upgrade),
+    Migration(
+        version=18,
+        name="scene_plot_graph_originality",
+        upgrade=v18.upgrade,
+    ),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

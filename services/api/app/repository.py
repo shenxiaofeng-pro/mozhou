@@ -58,6 +58,9 @@ from app.models import (
     ReferenceWork,
     RejectFactChangeSetRequest,
     ReviewFutureKnowledgeRequest,
+    SceneOriginalityAssessment,
+    SceneOriginalityCheck,
+    SceneOriginalityFinding,
     SetSourceCardConfirmationRequest,
     SourceCard,
     SourceDocument,
@@ -80,6 +83,7 @@ from app.originality_guard import assess_blueprint
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 from app.review.repository import ReviewRepository
 from app.safe_import import ParsedReferenceFile
+from app.scene_originality import assess_scene_plot_graph
 
 
 class NotFoundError(Exception):
@@ -994,7 +998,11 @@ class ProjectRepository:
             raise InvalidReferenceApplicationError("invalid_pattern_sources")
         sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
         assessment = assess_blueprint(blueprint, sources)
-        status = self._status_for_assessment(assessment)
+        scene_assessment = assess_scene_plot_graph(blueprint, sources)
+        status, combined_risk, combined_threshold = self._combined_originality_state(
+            assessment,
+            scene_assessment,
+        )
         report_id = str(uuid4())
         dimensions = {
             dimension.value: state.generated_variant.model_dump(mode="json")
@@ -1025,9 +1033,9 @@ class ProjectRepository:
                         request.application_note,
                         blueprint.model_dump_json(),
                         status.value,
-                        assessment.risk_level.value,
+                        combined_risk.value,
                         report_id,
-                        assessment.threshold_version,
+                        combined_threshold,
                         timestamp,
                         timestamp,
                     ),
@@ -1049,6 +1057,13 @@ class ProjectRepository:
                 application_id=application_id,
                 revision=0,
                 assessment=assessment,
+                timestamp=timestamp,
+            )
+            self._insert_scene_originality_check(
+                connection,
+                application_id=application_id,
+                revision=0,
+                assessment=scene_assessment,
                 timestamp=timestamp,
             )
             row = connection.execute(
@@ -1166,7 +1181,11 @@ class ProjectRepository:
             relationship_changed=request.relationship_changed,
             previous=previous_report,
         )
-        status = self._status_for_assessment(assessment)
+        scene_assessment = assess_scene_plot_graph(blueprint, sources)
+        status, combined_risk, combined_threshold = self._combined_originality_state(
+            assessment,
+            scene_assessment,
+        )
         report_id = str(uuid4())
         revision = current.revision + 1
         timestamp = now_iso()
@@ -1188,9 +1207,9 @@ class ProjectRepository:
                     blueprint.relationship.generated_variant,
                     blueprint.model_dump_json(),
                     status.value,
-                    assessment.risk_level.value,
+                    combined_risk.value,
                     report_id,
-                    assessment.threshold_version,
+                    combined_threshold,
                     revision,
                     timestamp,
                     application_id,
@@ -1217,6 +1236,13 @@ class ProjectRepository:
                 assessment=assessment,
                 timestamp=timestamp,
             )
+            self._insert_scene_originality_check(
+                connection,
+                application_id=application_id,
+                revision=revision,
+                assessment=scene_assessment,
+                timestamp=timestamp,
+            )
             row = connection.execute(
                 "SELECT * FROM reference_pattern_applications WHERE id = ?",
                 (application_id,),
@@ -1241,19 +1267,256 @@ class ProjectRepository:
         timestamp = now_iso()
         with self.database.connect() as connection:
             report = connection.execute(
-                "SELECT viewed_at FROM originality_reports WHERE id = ?",
+                "SELECT risk_level, viewed_at FROM originality_reports WHERE id = ?",
                 (current.latest_report_id,),
             ).fetchone()
-            if report is None or report["viewed_at"] is None:
+            if (
+                report is None
+                or report["viewed_at"] is None
+                or report["risk_level"] != OriginalityRiskLevel.MEDIUM.value
+            ):
                 raise InvalidReferenceApplicationError("report_not_viewed")
+            connection.execute(
+                "UPDATE originality_reports SET acknowledged_at = ? WHERE id = ?",
+                (timestamp, current.latest_report_id),
+            )
+            scene_row = connection.execute(
+                """
+                SELECT risk_level, acknowledged_at FROM scene_originality_checks
+                WHERE application_id = ? AND blueprint_revision = ?
+                """,
+                (application_id, current.revision),
+            ).fetchone()
+            next_status = (
+                self._status_for_risk(
+                    OriginalityRiskLevel(scene_row["risk_level"]),
+                    acknowledged=scene_row["acknowledged_at"] is not None,
+                )
+                if scene_row is not None
+                else OriginalityStatus.PASSED
+            )
             result = connection.execute(
                 """
                 UPDATE reference_pattern_applications
-                SET originality_status = 'passed', updated_at = ?
+                SET originality_status = ?, updated_at = ?
                 WHERE id = ? AND project_id = ? AND revision = ?
                   AND originality_status = 'review_required'
                 """,
-                (timestamp, application_id, project_id, request.expected_revision),
+                (
+                    next_status.value,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_revision,
+                ),
+            )
+            if result.rowcount == 0:
+                raise StaleRevisionError(str(current.revision))
+            row = connection.execute(
+                "SELECT * FROM reference_pattern_applications WHERE id = ?",
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
+
+    def get_scene_originality_check(self, check_id: str) -> SceneOriginalityCheck:
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE scene_originality_checks SET viewed_at = ? "
+                "WHERE id = ? AND viewed_at IS NULL",
+                (now_iso(), check_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM scene_originality_checks WHERE id = ?",
+                (check_id,),
+            ).fetchone()
+            finding_rows = (
+                connection.execute(
+                    "SELECT * FROM scene_originality_findings "
+                    "WHERE check_id = ? ORDER BY ordinal",
+                    (check_id,),
+                ).fetchall()
+                if row is not None
+                else []
+            )
+        if row is None:
+            raise NotFoundError(check_id)
+        return self._scene_originality_check(row, finding_rows)
+
+    def get_latest_scene_originality_check(
+        self,
+        project_id: str,
+        application_id: str,
+    ) -> SceneOriginalityCheck:
+        current = self._get_reference_application(project_id, application_id)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM scene_originality_checks
+                WHERE application_id = ? AND blueprint_revision = ?
+                """,
+                (application_id, current.revision),
+            ).fetchone()
+            finding_rows = (
+                connection.execute(
+                    "SELECT * FROM scene_originality_findings "
+                    "WHERE check_id = ? ORDER BY ordinal",
+                    (row["id"],),
+                ).fetchall()
+                if row is not None
+                else []
+            )
+        if row is None:
+            if current.blueprint is None or current.latest_report_id is None:
+                raise InvalidReferenceApplicationError("missing_blueprint_or_report")
+            with self.database.connect() as connection:
+                card = connection.execute(
+                    """
+                    SELECT c.selected_segment_ids_json
+                    FROM reference_pattern_cards c
+                    JOIN reference_pattern_applications a ON a.pattern_card_id = c.id
+                    WHERE a.id = ? AND a.project_id = ?
+                    """,
+                    (application_id, project_id),
+                ).fetchone()
+                legacy_row = connection.execute(
+                    "SELECT risk_level, acknowledged_at FROM originality_reports WHERE id = ?",
+                    (current.latest_report_id,),
+                ).fetchone()
+            if card is None or legacy_row is None:
+                raise InvalidReferenceApplicationError("missing_originality_sources")
+            selected_segment_ids = json.loads(card["selected_segment_ids_json"])
+            if not isinstance(selected_segment_ids, list) or not all(
+                isinstance(segment_id, str) for segment_id in selected_segment_ids
+            ):
+                raise InvalidReferenceApplicationError("invalid_pattern_sources")
+            sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
+            assessment = assess_scene_plot_graph(current.blueprint, sources)
+            legacy_risk = OriginalityRiskLevel(legacy_row["risk_level"])
+            legacy_status = self._status_for_risk(
+                legacy_risk,
+                acknowledged=legacy_row["acknowledged_at"] is not None,
+            )
+            scene_status = self._status_for_risk(assessment.risk_level)
+            next_status = self._merge_originality_statuses(legacy_status, scene_status)
+            rank = {
+                OriginalityRiskLevel.LOW: 0,
+                OriginalityRiskLevel.MEDIUM: 1,
+                OriginalityRiskLevel.HIGH: 2,
+            }
+            combined_risk = (
+                assessment.risk_level
+                if rank[assessment.risk_level] > rank[legacy_risk]
+                else legacy_risk
+            )
+            threshold_version = (
+                assessment.threshold_version
+                if combined_risk == assessment.risk_level
+                and rank[assessment.risk_level] > rank[legacy_risk]
+                else current.threshold_version
+            )
+            timestamp = now_iso()
+            with self.database.connect() as connection:
+                try:
+                    check_id = self._insert_scene_originality_check(
+                        connection,
+                        application_id=application_id,
+                        revision=current.revision,
+                        assessment=assessment,
+                        timestamp=timestamp,
+                    )
+                except IntegrityError:
+                    existing = connection.execute(
+                        """
+                        SELECT id FROM scene_originality_checks
+                        WHERE application_id = ? AND blueprint_revision = ?
+                        """,
+                        (application_id, current.revision),
+                    ).fetchone()
+                    if existing is None:
+                        raise
+                    check_id = existing["id"]
+                connection.execute(
+                    """
+                    UPDATE reference_pattern_applications
+                    SET originality_status = ?, risk_level = ?, threshold_version = ?, updated_at = ?
+                    WHERE id = ? AND project_id = ? AND revision = ?
+                    """,
+                    (
+                        next_status.value,
+                        combined_risk.value,
+                        threshold_version,
+                        timestamp,
+                        application_id,
+                        project_id,
+                        current.revision,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM scene_originality_checks WHERE id = ?",
+                    (check_id,),
+                ).fetchone()
+                finding_rows = connection.execute(
+                    "SELECT * FROM scene_originality_findings "
+                    "WHERE check_id = ? ORDER BY ordinal",
+                    (check_id,),
+                ).fetchall()
+            if row is None:
+                raise NotFoundError(application_id)
+        return self._scene_originality_check(row, finding_rows)
+
+    def acknowledge_scene_originality_check(
+        self,
+        project_id: str,
+        application_id: str,
+        request: AcknowledgeOriginalityReportRequest,
+    ) -> ReferencePatternApplication:
+        current = self._get_reference_application(project_id, application_id)
+        if current.revision != request.expected_revision:
+            raise StaleRevisionError(str(current.revision))
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            scene_row = connection.execute(
+                """
+                SELECT * FROM scene_originality_checks
+                WHERE application_id = ? AND blueprint_revision = ?
+                """,
+                (application_id, current.revision),
+            ).fetchone()
+            if (
+                scene_row is None
+                or scene_row["risk_level"] != OriginalityRiskLevel.MEDIUM.value
+                or scene_row["viewed_at"] is None
+            ):
+                raise InvalidReferenceApplicationError("scene_report_not_acknowledgeable")
+            connection.execute(
+                "UPDATE scene_originality_checks SET acknowledged_at = ? WHERE id = ?",
+                (timestamp, scene_row["id"]),
+            )
+            legacy_row = connection.execute(
+                "SELECT risk_level, acknowledged_at FROM originality_reports WHERE id = ?",
+                (current.latest_report_id,),
+            ).fetchone()
+            if legacy_row is None:
+                raise InvalidReferenceApplicationError("missing_report")
+            next_status = self._status_for_risk(
+                OriginalityRiskLevel(legacy_row["risk_level"]),
+                acknowledged=legacy_row["acknowledged_at"] is not None,
+            )
+            result = connection.execute(
+                """
+                UPDATE reference_pattern_applications
+                SET originality_status = ?, updated_at = ?
+                WHERE id = ? AND project_id = ? AND revision = ?
+                """,
+                (
+                    next_status.value,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_revision,
+                ),
             )
             if result.rowcount == 0:
                 raise StaleRevisionError(str(current.revision))
@@ -1344,6 +1607,46 @@ class ProjectRepository:
         return OriginalityStatus.PASSED
 
     @staticmethod
+    def _status_for_risk(
+        risk: OriginalityRiskLevel,
+        *,
+        acknowledged: bool = False,
+    ) -> OriginalityStatus:
+        if risk == OriginalityRiskLevel.HIGH:
+            return OriginalityStatus.BLOCKED
+        if risk == OriginalityRiskLevel.MEDIUM and not acknowledged:
+            return OriginalityStatus.REVIEW_REQUIRED
+        return OriginalityStatus.PASSED
+
+    @classmethod
+    def _combined_originality_state(
+        cls,
+        legacy: OriginalityAssessment,
+        scene: SceneOriginalityAssessment,
+    ) -> tuple[OriginalityStatus, OriginalityRiskLevel, str]:
+        rank = {
+            OriginalityRiskLevel.LOW: 0,
+            OriginalityRiskLevel.MEDIUM: 1,
+            OriginalityRiskLevel.HIGH: 2,
+        }
+        if rank[scene.risk_level] > rank[legacy.risk_level]:
+            return cls._status_for_risk(scene.risk_level), scene.risk_level, scene.threshold_version
+        return cls._status_for_risk(legacy.risk_level), legacy.risk_level, legacy.threshold_version
+
+    @staticmethod
+    def _merge_originality_statuses(
+        left: OriginalityStatus,
+        right: OriginalityStatus,
+    ) -> OriginalityStatus:
+        if OriginalityStatus.BLOCKED in {left, right}:
+            return OriginalityStatus.BLOCKED
+        if OriginalityStatus.REVIEW_REQUIRED in {left, right}:
+            return OriginalityStatus.REVIEW_REQUIRED
+        if OriginalityStatus.NEEDS_CHECK in {left, right}:
+            return OriginalityStatus.NEEDS_CHECK
+        return OriginalityStatus.PASSED
+
+    @staticmethod
     def _insert_blueprint_version(
         connection: Connection,
         *,
@@ -1390,8 +1693,8 @@ class ProjectRepository:
             INSERT INTO originality_reports (
                 id, application_id, blueprint_revision, risk_level, score,
                 threshold_version, checked_dimensions_json, evidence_json,
-                source_segment_ids_json, input_sha256, viewed_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                source_segment_ids_json, input_sha256, viewed_at, acknowledged_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
             """,
             (
                 report_id,
@@ -1414,6 +1717,59 @@ class ProjectRepository:
                 timestamp,
             ),
         )
+
+    @staticmethod
+    def _insert_scene_originality_check(
+        connection: Connection,
+        *,
+        application_id: str,
+        revision: int,
+        assessment: SceneOriginalityAssessment,
+        timestamp: str,
+    ) -> str:
+        check_id = str(uuid4())
+        connection.execute(
+            """
+            INSERT INTO scene_originality_checks (
+                id, application_id, blueprint_revision, risk_level, score,
+                threshold_version, candidate_graph_json, source_segment_ids_json,
+                source_work_count, input_sha256, viewed_at, acknowledged_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                check_id,
+                application_id,
+                revision,
+                assessment.risk_level.value,
+                assessment.score,
+                assessment.threshold_version,
+                assessment.candidate_graph.model_dump_json(),
+                json.dumps(assessment.source_segment_ids, separators=(",", ":")),
+                assessment.source_work_count,
+                assessment.input_sha256,
+                timestamp,
+            ),
+        )
+        for ordinal, finding in enumerate(assessment.findings, start=1):
+            connection.execute(
+                """
+                INSERT INTO scene_originality_findings (
+                    id, check_id, ordinal, signal, score, summary,
+                    source_segment_ids_json, evidence_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    check_id,
+                    ordinal,
+                    finding.signal.value,
+                    finding.score,
+                    finding.summary,
+                    json.dumps(finding.source_segment_ids, separators=(",", ":")),
+                    finding.evidence_sha256,
+                ),
+            )
+        return check_id
 
     def create_story_entity(
         self,
@@ -2904,5 +3260,32 @@ class ProjectRepository:
                 "evidence": json.loads(row["evidence_json"]),
                 "source_segment_ids": json.loads(row["source_segment_ids_json"]),
                 "legal_notice": "原创性风险提示用于创作风控，不是法律结论。",
+            }
+        )
+
+    @staticmethod
+    def _scene_originality_check(row: Row, finding_rows: list[Row]) -> SceneOriginalityCheck:
+        risk = OriginalityRiskLevel(row["risk_level"])
+        return SceneOriginalityCheck.model_validate(
+            {
+                **dict(row),
+                "candidate_graph": json.loads(row["candidate_graph_json"]),
+                "source_segment_ids": json.loads(row["source_segment_ids_json"]),
+                "findings": [
+                    SceneOriginalityFinding.model_validate(
+                        {
+                            **dict(finding),
+                            "source_segment_ids": json.loads(
+                                finding["source_segment_ids_json"]
+                            ),
+                        }
+                    )
+                    for finding in finding_rows
+                ],
+                "status": ProjectRepository._status_for_risk(
+                    risk,
+                    acknowledged=row["acknowledged_at"] is not None,
+                ),
+                "legal_notice": "场景语义与情节图检测用于创作风控，不是抄袭认定或法律结论。",
             }
         )

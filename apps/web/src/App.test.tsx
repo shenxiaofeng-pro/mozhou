@@ -1618,6 +1618,45 @@ describe('App', () => {
     })
     const acknowledgeReport = vi.spyOn(api, 'acknowledgeOriginalityReport').mockResolvedValue({
       ...patternApplication,
+      originality_status: 'review_required',
+    })
+    const sceneReport = {
+      id: 'scene-report-1',
+      application_id: patternApplication.id,
+      blueprint_revision: 0,
+      risk_level: 'medium' as const,
+      score: 48,
+      threshold_version: 'scene-plot-graph-v1',
+      candidate_graph: {
+        nodes: [
+          { id: 'scene-1', label: '发现机会窗口', semantic_terms: ['调查'] },
+          { id: 'scene-2', label: '小胜验证资源', semantic_terms: ['取得'] },
+        ],
+        edges: [{ source: 'scene-1', target: 'scene-2', relation: 'leads_to' }],
+      },
+      findings: [{
+        signal: 'ordered_sequence' as const,
+        score: 48,
+        summary: '候选场景的功能顺序与来源节拍序列接近，建议重排触发条件与结果链。',
+        source_segment_ids: sourceSegmentIds,
+        evidence_sha256: 'f'.repeat(64),
+      }],
+      source_segment_ids: sourceSegmentIds,
+      source_work_count: 2,
+      input_sha256: '1'.repeat(64),
+      legal_notice: '场景语义与情节图检测用于创作风控，不是抄袭认定或法律结论。',
+      status: 'review_required' as const,
+      viewed_at: null,
+      acknowledged_at: null,
+      created_at: '2026-08-09T01:05:00Z',
+    }
+    const getSceneReport = vi.spyOn(api, 'getOrRunSceneOriginalityCheck').mockResolvedValue(sceneReport)
+    vi.spyOn(api, 'getSceneOriginalityCheck').mockResolvedValue({
+      ...sceneReport,
+      viewed_at: '2026-08-09T01:06:00Z',
+    })
+    const acknowledgeSceneReport = vi.spyOn(api, 'acknowledgeSceneOriginalityCheck').mockResolvedValue({
+      ...patternApplication,
       originality_status: 'passed',
     })
     const updateBlueprint = vi.spyOn(api, 'updateReferenceBlueprint').mockImplementation(
@@ -1680,12 +1719,24 @@ describe('App', () => {
     })
     expect(await screen.findByText('已应用到当前作品')).toBeVisible()
     expect(screen.getByText('需查看完整报告并显式确认，当前不传给 AI。')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '查看原创性报告' }))
+    await user.click(screen.getByRole('button', { name: '查看文本与结构报告' }))
     const originalityReport = await screen.findByLabelText('原创性报告')
     expect(originalityReport).toHaveTextContent('35/100')
     expect(within(originalityReport).getByText('原创性风险提示用于创作风控，不是法律结论。')).toBeVisible()
     await user.click(screen.getByRole('button', { name: '我已查看报告，确认继续使用这份蓝图' }))
     expect(acknowledgeReport).toHaveBeenCalledWith(
+      workspace.project.id,
+      patternApplication.id,
+      { expected_revision: 0 },
+    )
+    await user.click(screen.getByRole('button', { name: '查看场景情节图报告' }))
+    const sceneGraphReport = await screen.findByLabelText('场景情节图报告')
+    expect(sceneGraphReport).toHaveTextContent('48/100')
+    expect(sceneGraphReport).toHaveTextContent('发现机会窗口')
+    expect(sceneGraphReport).toHaveTextContent('2 本书')
+    expect(getSceneReport).toHaveBeenCalledWith(workspace.project.id, patternApplication.id)
+    await user.click(screen.getByRole('button', { name: '我已查看情节图，确认继续使用这份蓝图' }))
+    expect(acknowledgeSceneReport).toHaveBeenCalledWith(
       workspace.project.id,
       patternApplication.id,
       { expected_revision: 0 },

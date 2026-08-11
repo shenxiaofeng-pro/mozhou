@@ -153,7 +153,7 @@ def test_archive_round_trip_preserves_hierarchy_events_and_daily_goal(tmp_path: 
             headers={"Content-Type": "application/json"},
         )
 
-        assert archive["format_version"] == 6
+        assert archive["format_version"] == 7
         assert restored_response.status_code == 201
         restored = restored_response.json()
         assert restored["manuscript_scenes"][0]["title"] == scene["title"]

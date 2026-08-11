@@ -369,12 +369,48 @@ CREATE TABLE IF NOT EXISTS originality_reports (
     source_segment_ids_json TEXT NOT NULL CHECK(length(source_segment_ids_json) BETWEEN 2 AND 5000),
     input_sha256 TEXT NOT NULL CHECK(length(input_sha256) = 64),
     viewed_at TEXT,
+    acknowledged_at TEXT,
     created_at TEXT NOT NULL,
     UNIQUE(application_id, blueprint_revision)
 );
 
 CREATE INDEX IF NOT EXISTS idx_originality_reports_application
 ON originality_reports(application_id, blueprint_revision DESC);
+
+CREATE TABLE IF NOT EXISTS scene_originality_checks (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES reference_pattern_applications(id) ON DELETE CASCADE,
+    blueprint_revision INTEGER NOT NULL CHECK(blueprint_revision >= 0),
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high')),
+    score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 100),
+    threshold_version TEXT NOT NULL CHECK(length(threshold_version) BETWEEN 1 AND 80),
+    candidate_graph_json TEXT NOT NULL CHECK(json_valid(candidate_graph_json)),
+    source_segment_ids_json TEXT NOT NULL CHECK(json_valid(source_segment_ids_json)),
+    source_work_count INTEGER NOT NULL CHECK(source_work_count BETWEEN 1 AND 12),
+    input_sha256 TEXT NOT NULL CHECK(length(input_sha256) = 64),
+    viewed_at TEXT,
+    acknowledged_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(application_id, blueprint_revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scene_originality_checks_application
+ON scene_originality_checks(application_id, blueprint_revision DESC);
+
+CREATE TABLE IF NOT EXISTS scene_originality_findings (
+    id TEXT PRIMARY KEY,
+    check_id TEXT NOT NULL REFERENCES scene_originality_checks(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+    signal TEXT NOT NULL CHECK(signal IN ('semantic_scene', 'ordered_sequence', 'causal_graph', 'character_function_graph', 'multi_source_convergence')),
+    score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 100),
+    summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 300),
+    source_segment_ids_json TEXT NOT NULL CHECK(json_valid(source_segment_ids_json)),
+    evidence_sha256 TEXT NOT NULL CHECK(length(evidence_sha256) = 64),
+    UNIQUE(check_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scene_originality_findings_check
+ON scene_originality_findings(check_id, ordinal);
 
 CREATE TABLE IF NOT EXISTS book_blueprints (
     id TEXT PRIMARY KEY,

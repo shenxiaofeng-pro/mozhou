@@ -6863,6 +6863,8 @@ textarea:focus-visible {
 }
 
 .reference-proposal {
+  min-width: 0;
+  max-width: 100%;
   margin-top: 0.85rem;
   border: 1px solid #c6c1b5;
   border-top: 4px solid var(--rust);
@@ -6995,6 +6997,7 @@ textarea:focus-visible {
 }
 
 .reference-application {
+  min-width: 0;
   margin-top: 0.85rem;
   border: 1px solid #aebbb8;
   padding: 0.75rem;
@@ -7150,6 +7153,11 @@ textarea:focus-visible {
   margin-top: 0.7rem;
 }
 
+.reference-blueprint-editor > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .originality-gate-summary {
   display: flex;
   gap: 0.8rem;
@@ -7172,6 +7180,7 @@ textarea:focus-visible {
 }
 
 .originality-gate-summary > div {
+  min-width: 0;
   display: grid;
   gap: 0.15rem;
 }
@@ -7207,6 +7216,18 @@ textarea:focus-visible {
   background: #304b59;
   font-size: 0.55rem;
   font-weight: 850;
+}
+
+.originality-gate-actions {
+  display: grid;
+  flex: 0 0 9.5rem;
+  gap: 0.35rem;
+}
+
+.originality-gate-actions button:last-child {
+  color: #2f4d52;
+  border: 1px solid #7f9996;
+  background: #edf3ef;
 }
 
 .originality-gate-summary button:disabled,
@@ -7290,6 +7311,65 @@ textarea:focus-visible {
   color: #843327 !important;
   background: #fff2ef;
   font-weight: 750;
+}
+
+.scene-originality-report {
+  border-top: 4px solid #365f63;
+}
+
+.scene-plot-strip {
+  display: flex;
+  gap: 0;
+  margin: 0.7rem 0;
+  padding: 0 0 0.25rem;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.scene-plot-strip li {
+  position: relative;
+  display: grid;
+  flex: 0 0 min(12rem, 72vw);
+  align-content: start;
+  gap: 0.22rem;
+  min-height: 5.2rem;
+  border: 1px solid #a8b8b3;
+  border-left: 4px solid #486e6d;
+  padding: 0.55rem 0.7rem;
+  background: #f1f5ef;
+}
+
+.scene-plot-strip li + li {
+  margin-left: 1.25rem;
+}
+
+.scene-plot-strip li + li::before {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 1.25rem;
+  height: 1px;
+  content: "";
+  background: #6d8580;
+}
+
+.scene-plot-strip li small {
+  color: #57716e;
+  font-size: 0.46rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.scene-plot-strip li strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.58rem;
+  line-height: 1.5;
+}
+
+.scene-plot-strip li span {
+  color: #70807d;
+  font-size: 0.46rem;
 }
 
 .blueprint-dimension-list {
@@ -7387,6 +7467,10 @@ textarea:focus-visible {
   .originality-gate-summary {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .originality-gate-actions {
+    flex-basis: auto;
   }
 
   .blueprint-dimension-list {
