@@ -5,7 +5,7 @@ description = "墨舟本地优先小说工作台 API"
 requires-python = ">=3.14"
 dependencies = [
   "fastapi>=0.115,<1",
-  "openai>=2.0,<3",
+  "openai>=2.0,<4",
   "pydantic>=2.10,<3",
   "pypdf>=6.0,<7",
   "uvicorn>=0.34,<1",
@@ -14,7 +14,7 @@ dependencies = [
 [dependency-groups]
 dev = [
   "httpx2>=2.9,<3",
-  "mypy>=1.15,<2",
+  "mypy>=1.15,<3",
   "pyinstaller>=6.16,<7",
   "pytest>=8.3,<10",
   "ruff>=0.11,<1",
