@@ -38,6 +38,9 @@ ARCHIVE_TABLES = {
     "job_attempts",
     "job_artifacts",
     "job_events",
+    "craft_pattern_assets",
+    "project_craft_pattern_assets",
+    "craft_pattern_job_outputs",
     "topic_decisions",
     "topic_decision_versions",
     "topic_decision_candidate_sets",
@@ -119,7 +122,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 12
+    assert archive["format_version"] == 13
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -248,7 +251,7 @@ def test_round_trip_preserves_confirmed_topic_versions_and_rejected_candidates(
                 (restored_project_id,),
             ).fetchall()
 
-    assert archive["format_version"] == 12
+    assert archive["format_version"] == 13
     assert len(archive["tables"]["topic_decisions"]) == 1
     assert len(archive["tables"]["topic_decision_versions"]) == 1
     assert len(archive["tables"]["topic_decision_candidate_sets"]) == 1
@@ -648,7 +651,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 12
+    assert archive["format_version"] == 13
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()

@@ -154,6 +154,8 @@ class ReferenceWorkImpact:
     work: ReferenceWork
     projects: list[Project]
     cache_entries: int
+    retained_craft_asset_count: int = 0
+    affected_craft_job_count: int = 0
 
 
 ALLOWED_CHAPTER_TRANSITIONS: dict[ChapterStatus, set[ChapterStatus]] = {
@@ -860,11 +862,50 @@ class ProjectRepository:
                 """,
                 (work_id,),
             ).fetchone()[0]
+            retained_craft_asset_count = connection.execute(
+                """
+                SELECT COUNT(*) FROM craft_pattern_assets a
+                WHERE EXISTS (
+                    SELECT 1 FROM json_each(a.source_work_ids_json)
+                    WHERE value = ?
+                )
+                """,
+                (work_id,),
+            ).fetchone()[0]
+            affected_craft_job_count = len(
+                self._active_craft_job_ids_for_reference_work(connection, work_id)
+            )
         return ReferenceWorkImpact(
             work=work,
             projects=[self._project(row) for row in project_rows],
             cache_entries=int(cache_entries),
+            retained_craft_asset_count=int(retained_craft_asset_count),
+            affected_craft_job_count=affected_craft_job_count,
         )
+
+    def active_craft_job_ids_for_reference_work(self, work_id: str) -> list[str]:
+        with self.database.connect() as connection:
+            return self._active_craft_job_ids_for_reference_work(connection, work_id)
+
+    @staticmethod
+    def _active_craft_job_ids_for_reference_work(
+        connection: Connection,
+        work_id: str,
+    ) -> list[str]:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT j.id
+            FROM jobs j
+            JOIN json_each(j.input_json, '$.selected_segment_ids') chosen
+            JOIN reference_segments s ON s.id = chosen.value
+            WHERE j.workflow = 'craft_pattern_analysis_v2'
+              AND j.state IN ('queued', 'running', 'pause_requested')
+              AND s.reference_work_id = ?
+            ORDER BY j.id
+            """,
+            (work_id,),
+        ).fetchall()
+        return [str(row["id"]) for row in rows]
 
     def purge_reference_work(self, work_id: str) -> ReferenceWorkImpact:
         impact = self.get_reference_work_impact(work_id)
@@ -919,7 +960,12 @@ class ProjectRepository:
         self,
         project_id: str,
         segment_ids: list[str],
+        *,
+        require_multiple_works: bool = True,
+        max_characters: int = 2_000_000,
     ) -> list[ReferenceAnalysisInput]:
+        if not segment_ids:
+            raise InvalidReferenceSelectionError("empty_selection")
         placeholders = ", ".join("?" for _ in segment_ids)
         with self.database.connect() as connection:
             if (
@@ -946,9 +992,9 @@ class ProjectRepository:
         if len(by_id) != len(segment_ids):
             raise InvalidReferenceSelectionError("missing_or_cross_project_segment")
         selected = [by_id[segment_id] for segment_id in segment_ids]
-        if len({segment.work_id for segment in selected}) < 2:
+        if require_multiple_works and len({segment.work_id for segment in selected}) < 2:
             raise InvalidReferenceSelectionError("multiple_works_required")
-        if sum(len(segment.content) for segment in selected) > 2_000_000:
+        if sum(len(segment.content) for segment in selected) > max_characters:
             raise InvalidReferenceSelectionError("selection_too_large")
         return selected
 
@@ -1478,102 +1524,9 @@ class ProjectRepository:
                 else []
             )
         if row is None:
-            if current.blueprint is None or current.latest_report_id is None:
-                raise InvalidReferenceApplicationError("missing_blueprint_or_report")
-            with self.database.connect() as connection:
-                card = connection.execute(
-                    """
-                    SELECT c.selected_segment_ids_json
-                    FROM reference_pattern_cards c
-                    JOIN reference_pattern_applications a ON a.pattern_card_id = c.id
-                    WHERE a.id = ? AND a.project_id = ?
-                    """,
-                    (application_id, project_id),
-                ).fetchone()
-                legacy_row = connection.execute(
-                    "SELECT risk_level, acknowledged_at FROM originality_reports WHERE id = ?",
-                    (current.latest_report_id,),
-                ).fetchone()
-            if card is None or legacy_row is None:
-                raise InvalidReferenceApplicationError("missing_originality_sources")
-            selected_segment_ids = json.loads(card["selected_segment_ids_json"])
-            if not isinstance(selected_segment_ids, list) or not all(
-                isinstance(segment_id, str) for segment_id in selected_segment_ids
-            ):
-                raise InvalidReferenceApplicationError("invalid_pattern_sources")
-            sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
-            assessment = assess_scene_plot_graph(current.blueprint, sources)
-            legacy_risk = OriginalityRiskLevel(legacy_row["risk_level"])
-            legacy_status = self._status_for_risk(
-                legacy_risk,
-                acknowledged=legacy_row["acknowledged_at"] is not None,
-            )
-            scene_status = self._status_for_risk(assessment.risk_level)
-            next_status = self._merge_originality_statuses(legacy_status, scene_status)
-            rank = {
-                OriginalityRiskLevel.LOW: 0,
-                OriginalityRiskLevel.MEDIUM: 1,
-                OriginalityRiskLevel.HIGH: 2,
-            }
-            combined_risk = (
-                assessment.risk_level
-                if rank[assessment.risk_level] > rank[legacy_risk]
-                else legacy_risk
-            )
-            threshold_version = (
-                assessment.threshold_version
-                if combined_risk == assessment.risk_level
-                and rank[assessment.risk_level] > rank[legacy_risk]
-                else current.threshold_version
-            )
-            timestamp = now_iso()
-            with self.database.connect() as connection:
-                try:
-                    check_id = self._insert_scene_originality_check(
-                        connection,
-                        application_id=application_id,
-                        revision=current.revision,
-                        assessment=assessment,
-                        timestamp=timestamp,
-                    )
-                except IntegrityError:
-                    existing = connection.execute(
-                        """
-                        SELECT id FROM scene_originality_checks
-                        WHERE application_id = ? AND blueprint_revision = ?
-                        """,
-                        (application_id, current.revision),
-                    ).fetchone()
-                    if existing is None:
-                        raise
-                    check_id = existing["id"]
-                connection.execute(
-                    """
-                    UPDATE reference_pattern_applications
-                    SET originality_status = ?, risk_level = ?, threshold_version = ?, updated_at = ?
-                    WHERE id = ? AND project_id = ? AND revision = ?
-                    """,
-                    (
-                        next_status.value,
-                        combined_risk.value,
-                        threshold_version,
-                        timestamp,
-                        application_id,
-                        project_id,
-                        current.revision,
-                    ),
-                )
-                row = connection.execute(
-                    "SELECT * FROM scene_originality_checks WHERE id = ?",
-                    (check_id,),
-                ).fetchone()
-                finding_rows = connection.execute(
-                    "SELECT * FROM scene_originality_findings "
-                    "WHERE check_id = ? ORDER BY ordinal",
-                    (check_id,),
-                ).fetchall()
-            if row is None:
-                raise NotFoundError(application_id)
+            # V1 reference blueprints are read-only. Missing historical checks
+            # must not be recomputed from raw source text through a legacy POST.
+            raise NotFoundError(application_id)
         return self._scene_originality_check(row, finding_rows)
 
     def acknowledge_scene_originality_check(

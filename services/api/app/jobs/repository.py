@@ -34,6 +34,10 @@ class ArtifactConflictError(ValueError):
     pass
 
 
+class JobRequiresNewPreflightError(ValueError):
+    pass
+
+
 def _now(value: datetime | None = None) -> datetime:
     current = value or datetime.now(UTC)
     return current if current.tzinfo is not None else current.replace(tzinfo=UTC)
@@ -337,6 +341,15 @@ class JobRepository:
 
     def retry_job(self, job_id: str, *, now: datetime | None = None) -> Job:
         job = self.get_job(job_id)
+        if (
+            (
+                job.workflow
+                in {"craft_pattern_analysis_v2", "craft_pattern_fusion_v2"}
+                and job.error_code == "restored_requires_resubmission"
+            )
+            or (job.kind == JobKind.REFERENCE_FUSION and not job.workflow)
+        ):
+            raise JobRequiresNewPreflightError(job_id)
         if job.state not in {JobState.FAILED, JobState.INTERRUPTED, JobState.CANCELLED}:
             return job
         return self.transition_job(job_id, JobState.QUEUED, event_type="retried", now=now)

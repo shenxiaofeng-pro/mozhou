@@ -22,6 +22,7 @@ interface TaskCenterProps {
   onClose: () => void
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+  onOpenReferenceLibrary: () => void
 }
 
 const kindLabels: Record<JobKind, string> = {
@@ -50,6 +51,13 @@ const stateLabels: Record<JobState, string> = {
 
 const activeStates = new Set<JobState>(['queued', 'running', 'pause_requested'])
 const retryableStates = new Set<JobState>(['failed', 'interrupted', 'cancelled'])
+const craftPatternWorkflows = new Set(['craft_pattern_analysis_v2', 'craft_pattern_fusion_v2'])
+
+function jobLabel(job: Pick<Job, 'kind' | 'workflow'>): string {
+  if (job.workflow === 'craft_pattern_analysis_v2') return '单书写作模式拆解'
+  if (job.workflow === 'craft_pattern_fusion_v2') return '多书模式融合'
+  return kindLabels[job.kind]
+}
 
 type TaskResult =
   | { kind: 'brief'; proposal: AiChapterBriefProposal }
@@ -62,6 +70,7 @@ export function TaskCenter({
   onClose,
   onChapterChanged,
   onWorkspaceChanged,
+  onOpenReferenceLibrary,
 }: TaskCenterProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [selected, setSelected] = useState<JobDetail | null>(null)
@@ -70,6 +79,7 @@ export function TaskCenter({
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [staleDraftRunIds, setStaleDraftRunIds] = useState<Set<string>>(() => new Set())
+  const [resubmissionJobIds, setResubmissionJobIds] = useState<Set<string>>(() => new Set())
   const activeCount = useMemo(
     () => jobs.filter((job) => activeStates.has(job.state)).length,
     [jobs],
@@ -187,10 +197,24 @@ export function TaskCenter({
     try {
       replaceJob(await api.retryJob(job.id))
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '重试任务失败')
+      if (
+        craftPatternWorkflows.has(job.workflow)
+        && caught instanceof ApiError
+        && caught.status === 409
+      ) {
+        setResubmissionJobIds((current) => new Set(current).add(job.id))
+        setError('原预检依据已过期，请回到拆书库重新预检后提交。')
+      } else {
+        setError(caught instanceof Error ? caught.message : '重试任务失败')
+      }
     } finally {
       setBusyAction(null)
     }
+  }
+
+  function openCraftPreflight() {
+    onClose()
+    onOpenReferenceLibrary()
   }
 
   async function viewArtifact(artifactId: string) {
@@ -218,7 +242,12 @@ export function TaskCenter({
       } else if (job.kind === 'chapter_draft') {
         setResult({ kind: 'draft', run: await api.getAiChapterDraftJobResult(job.id) })
       } else if (job.kind === 'reference_fusion') {
-        onWorkspaceChanged(await api.getProjectSummary(projectId))
+        if (craftPatternWorkflows.has(job.workflow)) {
+          onClose()
+          onOpenReferenceLibrary()
+        } else {
+          onWorkspaceChanged(await api.getProjectSummary(projectId))
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '读取任务结果失败')
@@ -311,7 +340,7 @@ export function TaskCenter({
             {jobs.length > 0 ? jobs.map((job) => (
               <article key={job.id} data-state={job.state} data-selected={selected?.id === job.id}>
                 <button type="button" className="task-main" onClick={() => { void inspectJob(job) }}>
-                  <span>{kindLabels[job.kind]}</span>
+                  <span>{jobLabel(job)}</span>
                   <strong>{job.error_message || job.current_step || stateLabels[job.state]}</strong>
                   <small>{stateLabels[job.state]} · {job.progress_current}/{job.progress_total || '—'}</small>
                   <progress value={job.progress_current} max={Math.max(job.progress_total, 1)} />
@@ -324,7 +353,15 @@ export function TaskCenter({
                       disabled={busyAction === `cancel:${job.id}`}
                     >停止</button>
                   ) : null}
-                  {retryableStates.has(job.state) ? (
+                  {retryableStates.has(job.state) && craftPatternWorkflows.has(job.workflow) && (
+                    job.error_code === 'restored_requires_resubmission'
+                    || resubmissionJobIds.has(job.id)
+                  ) ? (
+                    <button
+                      type="button"
+                      onClick={openCraftPreflight}
+                    >重新预检</button>
+                  ) : retryableStates.has(job.state) ? (
                     <button
                       type="button"
                       onClick={() => { void retryJob(job) }}
@@ -336,7 +373,7 @@ export function TaskCenter({
                       type="button"
                       onClick={() => { void continueResult(job) }}
                       disabled={busyAction === `result:${job.id}`}
-                    >继续采用</button>
+                    >{craftPatternWorkflows.has(job.workflow) ? '查看模式素材' : '继续采用'}</button>
                   ) : null}
                 </div>
               </article>
@@ -345,7 +382,7 @@ export function TaskCenter({
 
           {selected ? (
             <section className="task-detail" aria-label="任务详情">
-              <header><span>{kindLabels[selected.kind]}</span><strong>{stateLabels[selected.state]}</strong></header>
+              <header><span>{jobLabel(selected)}</span><strong>{stateLabels[selected.state]}</strong></header>
               <dl>
                 <div><dt>模型</dt><dd>{selected.provider} · {selected.model}</dd></div>
                 <div><dt>调用</dt><dd>{selected.completed_calls} / 预计 {selected.estimated_calls}</dd></div>

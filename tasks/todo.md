@@ -8,7 +8,7 @@
 - [x] M29 AI-first 人工选题台
   - Acceptance：选题可持久化、比较、锁定和确认；新项目默认进入选题任务。
   - Verify：TopicDecision API/Prompt/Web/浏览器测试。
-- [ ] M30 长篇拆解与写作模式 v2
+- [x] M30 长篇拆解与写作模式 v2
   - Acceptance：单书与 300 万字阶段卡可用；技法带章节/字符证据与费用预览。
   - Verify：长篇恢复、证据安全、缓存、导入和 UI 测试。
 - [ ] M31 多书模式配方与 AI 原创迁移

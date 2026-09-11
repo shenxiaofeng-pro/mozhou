@@ -76,6 +76,22 @@ export type OriginalityStatus = 'needs_check' | 'blocked' | 'review_required' | 
 
 export type ReferenceApplicationLifecycleState = 'draft' | 'active' | 'archived'
 
+export type CraftPatternAssetType = 'stage' | 'book_evolution' | 'fusion_material'
+
+export type CraftPatternLifecycleState = 'active' | 'archived'
+
+export type CraftPatternDimension =
+  | ReferencePatternDimension
+  | 'hook_mechanics'
+  | 'promise_payoff_cadence'
+  | 'emotional_rhythm'
+  | 'information_reveal'
+  | 'foreshadowing_cycle'
+  | 'scene_design'
+  | 'pov_narrative_distance'
+  | 'expression_parameters'
+  | 'power_progression'
+
 export type OriginalitySignal =
   | 'phrase_overlap'
   | 'proper_noun'
@@ -1300,6 +1316,8 @@ export interface ReferenceWorkImpact {
   work: ReferenceWork
   projects: Project[]
   cache_entries: number
+  retained_craft_asset_count?: number
+  affected_craft_job_count?: number
 }
 
 export interface ContinuityIssue {
@@ -1887,6 +1905,149 @@ export interface ReferenceSynthesisInput {
   selected_segment_ids: string[]
   author_focus: string
   confirm_external_processing: boolean
+}
+
+export interface CraftPatternAnalysisPreviewInput {
+  selected_segment_ids: string[]
+  author_focus: string
+}
+
+export interface CraftPatternAnalysisJobInput extends CraftPatternAnalysisPreviewInput {
+  confirm_external_processing: boolean
+  confirm_unknown_cost: boolean
+  max_estimated_cost_microusd: number | null
+  expected_preflight_sha256: string
+}
+
+export interface CraftPatternFusionPreviewInput {
+  selected_asset_version_ids: string[]
+  author_focus: string
+}
+
+export interface CraftPatternFusionJobInput extends CraftPatternFusionPreviewInput {
+  confirm_external_processing: boolean
+  confirm_unknown_cost: boolean
+  max_estimated_cost_microusd: number | null
+  expected_preflight_sha256: string
+}
+
+export interface CraftPatternPreviewWork {
+  work_id: string
+  title: string
+  segment_count: number
+  character_count: number
+}
+
+export interface CraftPatternPreviewSegment {
+  segment_id: string
+  work_id: string
+  work_title: string
+  ordinal: number
+  start_char: number
+  end_char: number
+  chapter_start: string | null
+  chapter_end: string | null
+  character_count: number
+}
+
+export interface CraftPatternPreviewAsset {
+  asset_version_id: string
+  content_sha256: string
+  title: string
+  asset_type: CraftPatternAssetType
+  version: number
+  source_work_ids: string[]
+}
+
+export interface CraftPatternPreflight {
+  operation: 'analysis' | 'fusion'
+  selected_works: CraftPatternPreviewWork[]
+  selected_segments: CraftPatternPreviewSegment[]
+  selected_assets: CraftPatternPreviewAsset[]
+  selected_character_count: number
+  stage_card_count: number
+  book_evolution_count: number
+  fusion_material_count: number
+  map_calls: number
+  stage_calls: number
+  book_calls: number
+  fusion_calls: number
+  planned_calls: number
+  cache_hit_calls: number
+  uncached_calls: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  profile_id: string | null
+  profile_name: string | null
+  provider: AiProvider
+  model: string
+  data_types: string[]
+  content_scope: string
+  prompt_version: string
+  preflight_sha256: string
+}
+
+export interface CraftPatternEvidence {
+  id: string
+  work_id: string
+  work_title: string
+  segment_id: string
+  stage_label: string
+  chapter_label: string | null
+  absolute_start_char: number
+  absolute_end_char: number
+  evidence_summary: string
+  evidence_sha256: string
+  confidence: number
+}
+
+export interface CraftPatternItem {
+  dimension: CraftPatternDimension
+  name: string
+  observation: string
+  transferable_rule: string
+  adaptation_risk: string
+  evidence: CraftPatternEvidence[]
+}
+
+export interface CraftPatternAssetSummary {
+  id: string
+  series_id: string
+  asset_type: CraftPatternAssetType
+  version: number
+  content_sha256: string
+  lifecycle_state: CraftPatternLifecycleState | null
+  lifecycle_revision: number | null
+  source_work_ids: string[]
+  source_segment_ids: string[]
+  source_asset_version_ids: string[]
+  title: string
+  summary: string
+  provider: AiProvider
+  model: string
+  prompt_version: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CraftPatternAsset extends CraftPatternAssetSummary {
+  schema_version: 2
+  source_job_id: string | null
+  author_focus: string
+  craft_items: CraftPatternItem[]
+}
+
+export interface CraftPatternAssetPage {
+  items: CraftPatternAssetSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface UpdateCraftPatternLifecycleInput {
+  state: CraftPatternLifecycleState
+  expected_lifecycle_revision: number
 }
 
 export interface ReferenceDimensionSynthesis {

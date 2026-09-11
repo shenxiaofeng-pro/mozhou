@@ -303,6 +303,7 @@ export function App() {
         onClose={() => setIsTaskCenterOpen(false)}
         onChapterChanged={handleChapterChanged}
         onWorkspaceChanged={handleWorkspaceChanged}
+        onOpenReferenceLibrary={() => setActiveView('reference-library')}
       />
     </>
   )

@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
-MAX_TEXT_FILE_BYTES = 20 * 1024 * 1024
+MAX_TEXT_FILE_BYTES = 25 * 1024 * 1024
 MAX_PDF_FILE_BYTES = 25 * 1024 * 1024
 MAX_ZIP_FILE_BYTES = 25 * 1024 * 1024
 MAX_ZIP_ENTRIES = 5_000

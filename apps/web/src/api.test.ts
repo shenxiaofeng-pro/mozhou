@@ -160,3 +160,120 @@ it('sends only the author-selected topic fields when adopting a candidate', asyn
     }),
   )
 })
+
+it('keeps raw reference analysis separate from persisted-asset fusion', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ id: 'job-1' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+
+  await api.startCraftPatternAnalysisJob('project/id', {
+    selected_segment_ids: ['segment-1'],
+    author_focus: '章末钩子',
+    expected_preflight_sha256: 'analysis-fingerprint',
+    confirm_external_processing: true,
+    confirm_unknown_cost: false,
+    max_estimated_cost_microusd: 30_000,
+  })
+  await api.startCraftPatternFusionJob('project/id', {
+    selected_asset_version_ids: ['stage-1', 'book-2'],
+    author_focus: '融合升级与兑现节奏',
+    expected_preflight_sha256: 'fusion-fingerprint',
+    confirm_external_processing: true,
+    confirm_unknown_cost: false,
+    max_estimated_cost_microusd: 12_000,
+  })
+
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/craft-pattern-analysis-jobs',
+    expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        selected_segment_ids: ['segment-1'],
+        author_focus: '章末钩子',
+        expected_preflight_sha256: 'analysis-fingerprint',
+        confirm_external_processing: true,
+        confirm_unknown_cost: false,
+        max_estimated_cost_microusd: 30_000,
+      }),
+    }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/craft-pattern-fusion-jobs',
+    expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        selected_asset_version_ids: ['stage-1', 'book-2'],
+        author_focus: '融合升级与兑现节奏',
+        expected_preflight_sha256: 'fusion-fingerprint',
+        confirm_external_processing: true,
+        confirm_unknown_cost: false,
+        max_estimated_cost_microusd: 12_000,
+      }),
+    }),
+  )
+})
+
+it('updates a craft asset lifecycle with its project-link revision', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ id: 'asset-1', lifecycle_state: 'archived', lifecycle_revision: 5 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', request)
+
+  await api.updateCraftPatternLifecycle('project id', 'asset/id', {
+    state: 'archived',
+    expected_lifecycle_revision: 4,
+  })
+
+  expect(request).toHaveBeenCalledWith(
+    'http://127.0.0.1:8765/api/projects/project%20id/reference-craft-assets/asset%2Fid/lifecycle',
+    expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ state: 'archived', expected_lifecycle_revision: 4 }),
+    }),
+  )
+})
+
+it('discovers immutable craft assets globally and loads unlinked detail without project scoping', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+
+  await api.listGlobalReferenceCraftAssets({
+    for_project_id: 'project id',
+    asset_type: 'book_evolution',
+    work_id: 'work/id',
+    limit: 50,
+    offset: 100,
+  })
+  await api.getReferenceCraftAsset('asset/id')
+
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:8765/api/reference-craft-assets?for_project_id=project+id&asset_type=book_evolution&work_id=work%2Fid&limit=50&offset=100',
+    expect.objectContaining({ headers: expect.any(Headers) }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    'http://127.0.0.1:8765/api/reference-craft-assets/asset%2Fid',
+    expect.objectContaining({ headers: expect.any(Headers) }),
+  )
+})

@@ -7704,6 +7704,1093 @@ textarea:focus-visible {
   line-height: 1.65;
 }
 
+/* Craft Pattern V2 — an editorial dossier, from source stages to reusable assets. */
+.craft-pattern-workbench {
+  min-width: 0;
+  margin-top: 2rem;
+  border-top: 4px solid var(--rust);
+  padding-top: 1.15rem;
+}
+
+.craft-pattern-heading,
+.craft-source-works > header,
+.craft-asset-catalog > header,
+.craft-asset-group > header,
+.craft-asset-card > header,
+.craft-preflight > header,
+.craft-job-status > header {
+  min-width: 0;
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.craft-pattern-heading p,
+.craft-pattern-heading h2,
+.craft-source-works h3,
+.craft-source-works p,
+.craft-run-desk h3,
+.craft-run-desk p,
+.craft-asset-catalog h3,
+.craft-asset-catalog p,
+.craft-asset-group h3,
+.craft-asset-group p,
+.craft-asset-card h4,
+.craft-asset-card p,
+.craft-preflight p,
+.craft-job-status p {
+  margin: 0;
+}
+
+.craft-pattern-heading > div,
+.craft-source-works > header > div,
+.craft-asset-catalog > header > div,
+.craft-asset-group > header > div,
+.craft-asset-card > header > div,
+.craft-preflight > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.craft-pattern-heading p,
+.craft-source-works > header small,
+.craft-run-desk > header small,
+.craft-asset-catalog > header small,
+.craft-asset-group > header small,
+.craft-asset-card > header small,
+.craft-preflight > header small,
+.global-pattern-vault > header small {
+  color: var(--rust);
+  font: 800 0.75rem/1.3 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.08em;
+}
+
+.craft-pattern-heading h2 {
+  max-width: 36rem;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: clamp(1.45rem, 2.5vw, 2.25rem);
+  font-weight: 650;
+  line-height: 1.22;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+.craft-pattern-heading > span {
+  flex: 0 0 auto;
+  border: 1px solid #9faeaa;
+  padding: 0.45rem 0.65rem;
+  color: #415c56;
+  background: #e3ebe4;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.craft-asset-route {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 1.2rem;
+  border: 1px solid #9eacaa;
+  background: #9eacaa;
+  gap: 1px;
+}
+
+.craft-asset-route a {
+  min-width: 0;
+  min-height: 5.6rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0.12rem 0.65rem;
+  align-content: center;
+  padding: 0.8rem;
+  color: var(--ink);
+  background: #f8f7f1;
+  text-decoration: none;
+}
+
+.craft-asset-route a:hover,
+.craft-asset-route a:focus-visible {
+  background: #efe8dd;
+}
+
+.craft-asset-route b {
+  grid-row: 1 / 3;
+  color: var(--rust);
+  font: 850 1.15rem/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-asset-route span {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1rem;
+  font-weight: 750;
+}
+
+.craft-asset-route small {
+  overflow-wrap: anywhere;
+  color: var(--slate);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.craft-pattern-layout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(19rem, 0.72fr);
+  gap: 1rem;
+  align-items: start;
+  margin-top: 1rem;
+}
+
+.craft-source-works,
+.craft-run-desk,
+.craft-asset-catalog {
+  min-width: 0;
+  border: 1px solid #b9c3bf;
+  padding: clamp(1rem, 2vw, 1.4rem);
+  background: #faf9f4;
+}
+
+.craft-source-works > header > span,
+.craft-asset-catalog > header > span,
+.craft-asset-group > header > span {
+  flex: 0 0 auto;
+  color: var(--slate);
+  font: 750 0.75rem/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-source-works h3,
+.craft-run-desk h3,
+.craft-asset-catalog > header h3,
+.craft-asset-group h3 {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.18rem;
+  line-height: 1.3;
+}
+
+.craft-source-works > p,
+.craft-asset-catalog > p,
+.craft-asset-group > p {
+  margin-top: 0.55rem;
+  color: var(--slate);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.craft-source-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.craft-source-list > article {
+  min-width: 0;
+  border: 1px solid #c7cfca;
+  border-left: 4px solid #80918c;
+  padding: 0.85rem;
+  background: #f2f3ed;
+}
+
+.craft-source-list > article[data-selected="true"] {
+  border-left-color: var(--rust);
+  background: #fbf2e9;
+}
+
+.craft-source-list > article > header {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.craft-source-list > article > header div {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.craft-source-list > article > header small {
+  color: var(--slate);
+  font: 700 0.75rem/1.3 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-source-list > article > header strong {
+  overflow: hidden;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.craft-source-list button,
+.craft-operation-choices button,
+.craft-preflight > button,
+.craft-job-status button,
+.craft-asset-actions button,
+.global-pattern-pages button {
+  min-height: 2.65rem;
+  border: 1px solid #405b63;
+  padding: 0.55rem 0.8rem;
+  color: #f6f5ef;
+  background: #294650;
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.craft-source-list button {
+  min-height: 2.3rem;
+  color: var(--ink-soft);
+  background: transparent;
+}
+
+.craft-source-list button:disabled,
+.craft-operation-choices button:disabled,
+.craft-preflight > button:disabled,
+.craft-job-status button:disabled,
+.craft-asset-actions button:disabled,
+.global-pattern-pages button:disabled {
+  opacity: 0.5;
+}
+
+.craft-stage-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.craft-stage-picker label {
+  min-width: 0;
+  min-height: 4.2rem;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: center;
+  border: 1px solid #c8cfcb;
+  padding: 0.6rem;
+  color: var(--ink-soft);
+  background: #fffefa;
+  cursor: pointer;
+}
+
+.craft-stage-picker label[data-selected="true"] {
+  border-color: #a36749;
+  box-shadow: inset 3px 0 var(--rust);
+}
+
+.craft-stage-picker input,
+.craft-submit-confirm input,
+.craft-asset-actions input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--rust);
+}
+
+.craft-stage-picker b {
+  color: var(--rust);
+  font: 850 0.78rem/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-stage-picker span {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.craft-stage-picker strong,
+.craft-stage-picker small {
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.craft-stage-picker small {
+  color: var(--slate);
+}
+
+.craft-run-desk {
+  position: sticky;
+  top: 1rem;
+  border-top: 4px solid #294650;
+  background: #e9eeea;
+}
+
+.craft-run-desk > header {
+  margin-bottom: 0.9rem;
+}
+
+.craft-run-desk > label,
+.craft-budget-field {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.craft-run-desk textarea,
+.craft-budget-field input,
+.global-pattern-toolbar select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #aebbb6;
+  border-radius: 0;
+  padding: 0.7rem;
+  color: var(--ink);
+  background: #fffefa;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.craft-run-desk textarea {
+  resize: vertical;
+}
+
+.craft-operation-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.craft-operation-choices section {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 0.35rem;
+  border: 1px solid #c3ccc8;
+  padding: 0.7rem;
+  background: #f8f7f2;
+}
+
+.craft-operation-choices span {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.95rem;
+  font-weight: 750;
+}
+
+.craft-operation-choices p {
+  color: var(--slate);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.craft-operation-choices section:last-child button,
+.craft-preflight > button {
+  border-color: var(--rust);
+  background: var(--rust);
+}
+
+.craft-run-notice,
+.global-pattern-empty {
+  margin-top: 0.8rem !important;
+  border-left: 3px solid #547869;
+  padding: 0.65rem 0.75rem;
+  color: #315a46;
+  background: #e3ece4;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.craft-preflight,
+.craft-job-status {
+  min-width: 0;
+  margin-top: 0.85rem;
+  border: 1px solid #b69b86;
+  padding: 0.85rem;
+  background: #fffaf1;
+}
+
+.craft-preflight > header strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1rem;
+}
+
+.craft-preflight > header > span {
+  flex: 0 0 auto;
+  color: var(--rust);
+  font: 850 1.05rem/1.3 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-preflight-selection {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.75rem !important;
+  border-left: 3px solid var(--rust-light);
+  padding: 0.5rem 0.6rem;
+  color: var(--slate);
+  background: #f4ebdd;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.craft-preflight-selection b {
+  color: var(--ink);
+}
+
+.craft-call-ledger {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0.75rem 0;
+  background: #c8c2b7;
+}
+
+.craft-call-ledger div {
+  min-width: 0;
+  padding: 0.55rem;
+  background: #faf8f1;
+}
+
+.craft-call-ledger dt {
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+
+.craft-call-ledger dd {
+  overflow-wrap: anywhere;
+  margin: 0.18rem 0 0;
+  font: 800 0.78rem/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-preflight-scope,
+.craft-asset-detail,
+.craft-evidence-drawer {
+  border-top: 1px solid #c9c4b9;
+  padding-top: 0.65rem;
+}
+
+.craft-preflight-scope summary,
+.craft-asset-detail > summary,
+.craft-evidence-drawer summary {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  color: #294650;
+  font-size: 0.78rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.craft-preflight-scope dl,
+.craft-item dl {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.55rem 0;
+}
+
+.craft-preflight-scope dl div,
+.craft-item dl div {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.craft-preflight-scope dt,
+.craft-item dt {
+  color: var(--slate);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.craft-preflight-scope dd,
+.craft-item dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.craft-budget-field {
+  margin-top: 0.7rem;
+}
+
+.craft-budget-field small {
+  color: var(--slate);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.craft-submit-confirm {
+  min-height: 2.8rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  margin-top: 0.65rem;
+  border: 1px solid #c5b9a9;
+  padding: 0.65rem;
+  color: var(--ink-soft);
+  background: #fbf7ee;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.craft-submit-confirm[data-warning="true"] {
+  border-color: #b86955;
+  color: #73362e;
+  background: #fff0e9;
+}
+
+.craft-submit-confirm input {
+  margin-top: 0.15rem;
+}
+
+.craft-budget-error {
+  margin-top: 0.55rem !important;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.craft-preflight > button {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+.craft-job-status {
+  border-color: #8ea19b;
+  background: #f2f6f1;
+}
+
+.craft-job-status > header span,
+.craft-job-status p {
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+
+.craft-job-status progress {
+  width: 100%;
+  margin-top: 0.55rem;
+  accent-color: var(--rust);
+}
+
+.craft-job-status p {
+  margin-top: 0.45rem;
+}
+
+.craft-job-status > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+}
+
+.craft-asset-catalog {
+  grid-column: 1 / -1;
+  background: #edf1ed;
+}
+
+.craft-asset-group {
+  scroll-margin-top: 1rem;
+  margin-top: 1.2rem;
+  border-top: 2px solid #6c817b;
+  padding-top: 0.85rem;
+}
+
+.craft-asset-list,
+.global-pattern-list {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.75rem;
+}
+
+.craft-source-lineage {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--paper) 86%, var(--accent-soft));
+}
+
+.craft-source-lineage > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.craft-source-lineage button {
+  min-height: 2.25rem;
+  max-width: 100%;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 72%, var(--accent-soft));
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.craft-source-lineage button:hover:not(:disabled),
+.craft-source-lineage button:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.reference-blueprint-snapshot {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--paper) 90%, var(--accent-soft));
+}
+
+.reference-blueprint-snapshot > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.reference-blueprint-snapshot article {
+  min-width: 0;
+  padding: 0.7rem;
+  border-left: 3px solid var(--accent);
+  background: var(--paper);
+}
+
+.reference-blueprint-snapshot small,
+.reference-blueprint-snapshot strong,
+.reference-blueprint-snapshot p {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.global-pattern-lineage-preview {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--paper);
+}
+
+.global-pattern-lineage-preview > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.craft-asset-card {
+  min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22rem;
+  border: 1px solid #bfc6c1;
+  border-left: 5px solid #657d76;
+  padding: 0.9rem;
+  background: #fffefa;
+  box-shadow: 0.22rem 0.26rem 0 rgb(38 55 56 / 8%);
+}
+
+.craft-asset-card[data-asset-type="book_evolution"] {
+  border-left-color: var(--rust);
+}
+
+.craft-asset-card[data-asset-type="fusion_material"] {
+  border-left-color: #294650;
+}
+
+.craft-asset-card[data-lifecycle="archived"] {
+  opacity: 0.74;
+}
+
+.craft-asset-card > header h4 {
+  overflow-wrap: anywhere;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.02rem;
+  line-height: 1.35;
+}
+
+.craft-asset-card > header > span {
+  flex: 0 0 auto;
+  border: 1px solid #9aae9e;
+  padding: 0.3rem 0.45rem;
+  color: #315a46;
+  background: #e5eee6;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.craft-asset-card[data-lifecycle="archived"] > header > span,
+.craft-asset-card[data-lifecycle="null"] > header > span {
+  border-color: #b9b8b0;
+  color: var(--slate);
+  background: #ecece7;
+}
+
+.craft-asset-summary {
+  margin-top: 0.7rem !important;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.craft-asset-provenance {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0.75rem 0;
+  background: #d3d4cd;
+}
+
+.craft-asset-provenance div {
+  min-width: 0;
+  padding: 0.5rem;
+  background: #f2f2ec;
+}
+
+.craft-asset-provenance dt,
+.craft-asset-provenance dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.craft-asset-provenance dt {
+  color: var(--slate);
+}
+
+.craft-asset-provenance dd {
+  margin-top: 0.15rem;
+  font-weight: 800;
+}
+
+.craft-asset-detail[open] {
+  margin-top: 0.65rem;
+}
+
+.craft-asset-detail > p[role="status"] {
+  color: var(--slate);
+  font-size: 0.78rem;
+}
+
+.craft-asset-focus {
+  display: grid;
+  gap: 0.2rem;
+  border-left: 3px solid var(--rust-light);
+  padding: 0.55rem 0.65rem;
+  color: var(--slate);
+  background: #f4ede3;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.craft-item-list {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.7rem;
+}
+
+.craft-item {
+  min-width: 0;
+  border: 1px solid #cbd0ca;
+  padding: 0.7rem;
+  background: #f6f6f1;
+}
+
+.craft-item > header {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.craft-item > header span {
+  color: var(--rust);
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.craft-item > header strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 0.95rem;
+}
+
+.craft-item > p {
+  margin-top: 0.5rem !important;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.65;
+}
+
+.craft-evidence-drawer ol {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.craft-evidence-drawer li {
+  min-width: 0;
+  border-left: 3px solid #718983;
+  padding: 0.55rem 0.65rem;
+  background: #e9eeea;
+}
+
+.craft-evidence-drawer li > div {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.craft-evidence-drawer li strong,
+.craft-evidence-drawer li span,
+.craft-evidence-drawer li p,
+.craft-evidence-drawer li small,
+.craft-content-fingerprint {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.craft-evidence-drawer li span {
+  flex: 0 0 auto;
+  color: #315a46;
+  font-weight: 800;
+}
+
+.craft-evidence-drawer li p {
+  margin-top: 0.3rem !important;
+  color: var(--ink-soft);
+}
+
+.craft-evidence-drawer li small,
+.craft-content-fingerprint {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--slate);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.craft-asset-actions {
+  display: flex;
+  gap: 0.55rem;
+  align-items: stretch;
+  justify-content: space-between;
+  margin-top: 0.8rem;
+  border-top: 1px solid #d0d2cb;
+  padding-top: 0.7rem;
+}
+
+.craft-asset-actions label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.craft-asset-actions label[data-selected="true"] {
+  color: var(--rust);
+  font-weight: 850;
+}
+
+.craft-asset-empty {
+  margin-top: 0.7rem !important;
+  border: 1px dashed #acb8b4;
+  padding: 0.8rem;
+  color: var(--slate);
+  background: #f4f5f0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.global-pattern-vault {
+  max-width: 88rem;
+  min-width: 0;
+  margin: 1.4rem auto 0;
+  border: 1px solid #aebbb9;
+  border-top: 4px solid var(--rust);
+  padding: clamp(1.2rem, 3vw, 2.2rem);
+  background: #edf1ed;
+}
+
+.global-pattern-vault > header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.global-pattern-vault > header h2,
+.global-pattern-vault > header p {
+  margin: 0;
+}
+
+.global-pattern-vault > header h2 {
+  margin-top: 0.3rem;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: clamp(1.4rem, 2.5vw, 2rem);
+}
+
+.global-pattern-vault > header p {
+  max-width: 48rem;
+  margin-top: 0.55rem;
+  color: var(--slate);
+  font-size: 0.8rem;
+  line-height: 1.65;
+}
+
+.global-pattern-vault > header > span {
+  flex: 0 0 auto;
+  border-block: 1px solid #9dacaa;
+  padding: 0.55rem 0;
+  color: var(--slate);
+  font: 800 0.78rem/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+.global-pattern-toolbar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.8fr) minmax(12rem, 0.7fr) minmax(16rem, 1.4fr);
+  gap: 0.7rem;
+  align-items: end;
+  margin-top: 1rem;
+  border-block: 1px solid #bbc5c1;
+  padding-block: 0.9rem;
+}
+
+.global-pattern-toolbar label {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.global-pattern-toolbar p {
+  margin: 0;
+  color: var(--slate);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.global-pattern-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+.global-pattern-pages {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.global-pattern-pages span {
+  color: var(--slate);
+  font-size: 0.78rem;
+}
+
+.reference-library-content .reference-import-grid label,
+.reference-library-content .reference-file-field span,
+.reference-library-content .reference-import-grid input,
+.reference-library-content .reference-import-grid select,
+.reference-library-content .reference-import-action,
+.reference-library-content .reference-boundary-note {
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1180px) {
+  .craft-pattern-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .craft-run-desk {
+    position: static;
+  }
+
+  .global-pattern-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1040px) {
+  .craft-asset-route {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .global-pattern-vault {
+    margin-inline: 1.4rem;
+  }
+
+  .global-pattern-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .global-pattern-toolbar p {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .craft-pattern-heading,
+  .craft-source-works > header,
+  .craft-asset-catalog > header,
+  .craft-asset-group > header,
+  .global-pattern-vault > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .craft-pattern-heading > span,
+  .craft-source-works > header > span,
+  .craft-asset-catalog > header > span,
+  .craft-asset-group > header > span,
+  .global-pattern-vault > header > span {
+    align-self: flex-start;
+  }
+
+  .craft-asset-route,
+  .craft-operation-choices,
+  .craft-asset-list,
+  .global-pattern-list,
+  .global-pattern-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .global-pattern-toolbar p {
+    grid-column: auto;
+  }
+
+  .craft-asset-route a {
+    min-height: 4.6rem;
+  }
+
+  .craft-asset-provenance,
+  .craft-call-ledger {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .craft-asset-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reference-blueprint-snapshot > div {
+    grid-template-columns: 1fr;
+  }
+
+  .global-pattern-vault {
+    margin-inline: 0.8rem;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .project-form,
   .onboarding-intro > * {

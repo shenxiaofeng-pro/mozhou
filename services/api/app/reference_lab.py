@@ -36,6 +36,18 @@ class ReferenceAnalysisInput:
     content: str
 
 
+def reference_chapter_label_at(content: str, relative_position: int) -> str | None:
+    """Return the nearest chapter heading at or before a verified source position."""
+    if relative_position < 0 or relative_position > len(content):
+        raise ValueError("reference position is outside the segment")
+    label: str | None = None
+    for match in _CHAPTER_HEADING.finditer(content):
+        if match.start() > relative_position:
+            break
+        label = match.group(0).strip()
+    return label
+
+
 def segment_reference_text(
     content: str,
     target_characters: int = 500_000,

@@ -12,6 +12,15 @@ import type {
   ApplyTextChangeSetInput,
   Chapter,
   ChapterVersion,
+  CraftPatternAnalysisJobInput,
+  CraftPatternAnalysisPreviewInput,
+  CraftPatternAsset,
+  CraftPatternAssetPage,
+  CraftPatternAssetSummary,
+  CraftPatternAssetType,
+  CraftPatternFusionJobInput,
+  CraftPatternFusionPreviewInput,
+  CraftPatternPreflight,
   ComicAiPreview,
   ComicAsset,
   ComicAuditIssue,
@@ -119,6 +128,7 @@ import type {
   UpdateChapterBriefInput,
   UpdateChapterInput,
   UpdateBookBlueprintInput,
+  UpdateCraftPatternLifecycleInput,
   UpdateRollingChapterPlanInput,
   UpdateVolumePlanInput,
   UpdateModelProfileInput,
@@ -1245,6 +1255,79 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     })
+  },
+  previewCraftPatternAnalysis(projectId: string, input: CraftPatternAnalysisPreviewInput) {
+    return request<CraftPatternPreflight>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-analysis-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startCraftPatternAnalysisJob(projectId: string, input: CraftPatternAnalysisJobInput) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-analysis-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewCraftPatternFusion(projectId: string, input: CraftPatternFusionPreviewInput) {
+    return request<CraftPatternPreflight>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-fusion-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startCraftPatternFusionJob(projectId: string, input: CraftPatternFusionJobInput) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-fusion-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listReferenceCraftAssets(projectId: string) {
+    return request<CraftPatternAssetSummary[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets`,
+    )
+  },
+  listGlobalReferenceCraftAssets(input: {
+    for_project_id?: string
+    asset_type?: CraftPatternAssetType
+    work_id?: string
+    limit?: number
+    offset?: number
+  } = {}) {
+    const query = new URLSearchParams()
+    if (input.for_project_id) query.set('for_project_id', input.for_project_id)
+    if (input.asset_type) query.set('asset_type', input.asset_type)
+    if (input.work_id) query.set('work_id', input.work_id)
+    query.set('limit', String(input.limit ?? 50))
+    query.set('offset', String(input.offset ?? 0))
+    return request<CraftPatternAssetPage>(`/api/reference-craft-assets?${query}`)
+  },
+  getReferenceCraftAsset(assetId: string, forProjectId?: string) {
+    const query = new URLSearchParams()
+    if (forProjectId) query.set('for_project_id', forProjectId)
+    const suffix = query.size > 0 ? `?${query}` : ''
+    return request<CraftPatternAsset>(
+      `/api/reference-craft-assets/${encodeURIComponent(assetId)}${suffix}`,
+    )
+  },
+  listJobReferenceCraftAssets(jobId: string) {
+    return request<CraftPatternAsset[]>(
+      `/api/jobs/${encodeURIComponent(jobId)}/reference-craft-assets`,
+    )
+  },
+  reuseReferenceCraftAsset(projectId: string, assetId: string) {
+    return request<CraftPatternAsset>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets/${encodeURIComponent(assetId)}/reuse`,
+      { method: 'POST' },
+    )
+  },
+  updateCraftPatternLifecycle(
+    projectId: string,
+    assetId: string,
+    input: UpdateCraftPatternLifecycleInput,
+  ) {
+    return request<CraftPatternAsset>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets/${encodeURIComponent(assetId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
   },
   applyReferencePattern(projectId: string, cardId: string, input: ApplyReferencePatternInput) {
     return request<ReferencePatternApplication>(

@@ -321,6 +321,72 @@ CREATE TABLE IF NOT EXISTS reference_pattern_cards (
 CREATE INDEX IF NOT EXISTS idx_reference_pattern_cards_project_created
 ON reference_pattern_cards(project_id, created_at, id);
 
+CREATE TABLE IF NOT EXISTS craft_pattern_assets (
+    id TEXT PRIMARY KEY,
+    series_id TEXT NOT NULL CHECK(length(series_id) = 64),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+    asset_type TEXT NOT NULL CHECK(asset_type IN ('stage', 'book_evolution', 'fusion_material')),
+    version INTEGER NOT NULL CHECK(version > 0),
+    generation_fingerprint_sha256 TEXT NOT NULL UNIQUE
+        CHECK(length(generation_fingerprint_sha256) = 64),
+    source_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+    source_work_ids_json TEXT NOT NULL CHECK(json_valid(source_work_ids_json)),
+    source_segment_ids_json TEXT NOT NULL CHECK(json_valid(source_segment_ids_json)),
+    source_asset_version_ids_json TEXT NOT NULL CHECK(json_valid(source_asset_version_ids_json)),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+    summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 1000),
+    author_focus TEXT NOT NULL CHECK(length(author_focus) <= 1000),
+    craft_items_json TEXT NOT NULL CHECK(length(craft_items_json) BETWEEN 2 AND 200000),
+    provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 40),
+    provider_profile_id TEXT,
+    profile_revision INTEGER CHECK(profile_revision IS NULL OR profile_revision >= 0),
+    model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 100),
+    prompt_version TEXT NOT NULL CHECK(length(prompt_version) BETWEEN 1 AND 100),
+    evidence_validator_version TEXT NOT NULL
+        CHECK(length(evidence_validator_version) BETWEEN 1 AND 100),
+    source_fingerprint_sha256 TEXT NOT NULL CHECK(length(source_fingerprint_sha256) = 64),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(series_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_craft_pattern_assets_series_version
+ON craft_pattern_assets(series_id, version DESC);
+
+CREATE INDEX IF NOT EXISTS idx_craft_pattern_assets_type_created
+ON craft_pattern_assets(asset_type, created_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS project_craft_pattern_assets (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    asset_version_id TEXT NOT NULL REFERENCES craft_pattern_assets(id) ON DELETE CASCADE,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, asset_version_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_craft_pattern_assets_project_lifecycle
+ON project_craft_pattern_assets(project_id, lifecycle_state, updated_at DESC, id);
+
+CREATE INDEX IF NOT EXISTS idx_project_craft_pattern_assets_asset
+ON project_craft_pattern_assets(asset_version_id, project_id);
+
+CREATE TABLE IF NOT EXISTS craft_pattern_job_outputs (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    asset_version_id TEXT NOT NULL REFERENCES craft_pattern_assets(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    created_at TEXT NOT NULL,
+    UNIQUE(job_id, asset_version_id),
+    UNIQUE(job_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_craft_pattern_job_outputs_asset
+ON craft_pattern_job_outputs(asset_version_id, job_id);
+
 CREATE TABLE IF NOT EXISTS reference_pattern_applications (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

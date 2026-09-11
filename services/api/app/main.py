@@ -81,6 +81,11 @@ from app.context import (
     InvalidContextPacketError,
     StaleContextDirectiveError,
 )
+from app.craft_patterns import (
+    CraftPatternRepository,
+    CraftPatternService,
+    InvalidCraftPatternError,
+)
 from app.database import Database
 from app.diagnostics import (
     DiagnosticService,
@@ -107,6 +112,7 @@ from app.jobs import (
     JobKind,
     JobNotFoundError,
     JobRepository,
+    JobRequiresNewPreflightError,
     JobRuntime,
 )
 from app.jobs.runtime import JobExecutionContext
@@ -137,6 +143,13 @@ from app.models import (
     ConfigureAiRequest,
     ConfirmManuscriptImportRequest,
     ConfirmTopicDecisionRequest,
+    CraftPatternAnalysisPreviewRequest,
+    CraftPatternAsset,
+    CraftPatternAssetPage,
+    CraftPatternAssetSummary,
+    CraftPatternAssetType,
+    CraftPatternFusionPreviewRequest,
+    CraftPatternPreflight,
     CreateChapterRequest,
     CreateComicProjectRequest,
     CreateDirectoryNodeRequest,
@@ -206,6 +219,8 @@ from app.models import (
     StartGenerationRequest,
     StoryEntity,
     StoryThread,
+    SubmitCraftPatternAnalysisRequest,
+    SubmitCraftPatternFusionRequest,
     TextChangeSet,
     TimelineEvent,
     TopicDecision,
@@ -219,6 +234,7 @@ from app.models import (
     UpdateBookBlueprintRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateCraftPatternLifecycleRequest,
     UpdateReferenceApplicationLifecycleRequest,
     UpdateReferenceBlueprintRequest,
     UpdateRollingChapterPlanRequest,
@@ -378,6 +394,12 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
         )
+        application.state.craft_pattern_service = CraftPatternService(
+            application.state.repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
         application.state.chapter_job_service = ChapterJobService(
             application.state.repository,
             application.state.job_repository,
@@ -429,10 +451,16 @@ def create_app(
                         ) from error
                 application.state.director_service.handle(context, job)
 
+        def handle_reference_job(context: JobExecutionContext, job: Job) -> None:
+            if application.state.craft_pattern_service.handles(job):
+                application.state.craft_pattern_service.handle(context, job)
+            else:
+                application.state.reference_job_service.handle(context, job)
+
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
             {
-                JobKind.REFERENCE_FUSION: application.state.reference_job_service.handle,
+                JobKind.REFERENCE_FUSION: handle_reference_job,
                 JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
                 JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
                 JobKind.REVIEW: handle_review_job,
@@ -1130,6 +1158,8 @@ def create_app(
             work=impact.work,
             projects=impact.projects,
             cache_entries=impact.cache_entries,
+            retained_craft_asset_count=impact.retained_craft_asset_count,
+            affected_craft_job_count=impact.affected_craft_job_count,
         )
 
     @application.delete(
@@ -1144,13 +1174,19 @@ def create_app(
         if not confirm_purge:
             raise HTTPException(status_code=409, detail="请先查看受影响作品并确认清理")
         try:
-            impact = repository.purge_reference_work(str(work_id))
+            impact = repository.get_reference_work_impact(str(work_id))
+            jobs: JobRepository = application.state.job_repository
+            for job_id in repository.active_craft_job_ids_for_reference_work(str(work_id)):
+                jobs.request_cancel(job_id)
+            repository.purge_reference_work(str(work_id))
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="参考资产不存在") from error
         return ReferenceWorkImpactResponse(
             work=impact.work,
             projects=impact.projects,
             cache_entries=impact.cache_entries,
+            retained_craft_asset_count=impact.retained_craft_asset_count,
+            affected_craft_job_count=impact.affected_craft_job_count,
         )
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetail)
@@ -1199,6 +1235,11 @@ def create_app(
             return job
         except JobNotFoundError as error:
             raise HTTPException(status_code=404, detail="任务不存在") from error
+        except JobRequiresNewPreflightError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="该拆书任务需要从写作模式工作台重新预检并提交",
+            ) from error
 
     @application.get("/api/ai/status", response_model=AiStatus)
     def get_ai_status(
@@ -2682,26 +2723,14 @@ def create_app(
         project_id: UUID,
         body: ReferenceSynthesisRequest,
     ) -> Job:
-        service: ReferenceJobService = application.state.reference_job_service
-        try:
-            job = service.submit(str(project_id), body)
-            application.state.job_runtime.wake()
-            return job
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
-        except InvalidReferenceSelectionError as error:
-            messages = {
-                "external_processing_not_confirmed": "必须确认允许把选中区段发送给当前 AI",
-                "multiple_works_required": "至少选择两本不同作品的区段",
-                "selection_too_large": "单次最多处理 200 万字参考内容",
-                "missing_or_cross_project_segment": "选择中包含无效参考区段",
-            }
-            raise HTTPException(
-                status_code=400,
-                detail=messages.get(str(error), "参考区段选择无效"),
-            ) from error
-        except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+        del project_id, body
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版拆书已转为只读，请使用写作模式工作台",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/reference-synthesis-proposals",
@@ -2712,19 +2741,210 @@ def create_app(
         body: ReferenceSynthesisRequest,
         service: Annotated[ReferenceAnalysisService, Depends(get_reference_analysis_service)],
     ) -> ReferencePatternCard:
+        del project_id, body, service
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版拆书已转为只读，请使用写作模式工作台",
+            },
+        )
+
+    def craft_pattern_error(error: Exception) -> HTTPException:
+        code = str(error)
+        messages = {
+            "single_work_required": "单书拆解只能选择同一本作品的区段",
+            "multiple_works_required": "融合至少需要两本不同作品的模式资产",
+            "asset_not_active": "选中的模式资产已归档",
+            "fusion_asset_cannot_be_source": "融合素材不能再次作为融合来源",
+            "preflight_changed": "预检条件已变化，请重新预览",
+            "external_processing_not_confirmed": "请确认允许发送本次未命中内容给当前 AI",
+            "unknown_cost_not_confirmed": "模型价格未知，请明确确认后再提交",
+            "cost_limit_required": "请设置本次任务的最高费用",
+            "estimated_cost_exceeds_limit": "当前预估费用超过了你设置的上限",
+            "missing_or_cross_project_segment": "选择中包含无效或未关联的参考区段",
+            "selection_too_large": "单次最多分析 2000 万字符",
+        }
+        conflict_codes = {
+            "preflight_changed",
+            "asset_not_active",
+            "external_processing_not_confirmed",
+            "unknown_cost_not_confirmed",
+            "cost_limit_required",
+            "estimated_cost_exceeds_limit",
+        }
+        return HTTPException(
+            status_code=409 if code in conflict_codes else 400,
+            detail={"code": code, "message": messages.get(code, "写作模式请求无效")},
+        )
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-analysis-preview",
+        response_model=CraftPatternPreflight,
+    )
+    def preview_craft_pattern_analysis(
+        project_id: UUID,
+        body: CraftPatternAnalysisPreviewRequest,
+    ) -> CraftPatternPreflight:
+        service: CraftPatternService = application.state.craft_pattern_service
         try:
-            return service.synthesize(str(project_id), body)
+            return service.preview_analysis(str(project_id), body)
         except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="项目不存在") from error
-        except InvalidReferenceSelectionError as error:
-            raise HTTPException(
-                status_code=400,
-                detail="请从至少两本书选择区段并确认外部处理；单次最多分析 200 万字",
-            ) from error
+            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
+        except (InvalidCraftPatternError, InvalidReferenceSelectionError) as error:
+            raise craft_pattern_error(error) from error
         except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
-        except AiProviderError as error:
-            raise HTTPException(status_code=502, detail="AI 暂时未能完成多书结构萃取") from error
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-analysis-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_craft_pattern_analysis(
+        project_id: UUID,
+        body: SubmitCraftPatternAnalysisRequest,
+    ) -> Job:
+        service: CraftPatternService = application.state.craft_pattern_service
+        try:
+            job = service.submit_analysis(str(project_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
+        except (InvalidCraftPatternError, InvalidReferenceSelectionError) as error:
+            raise craft_pattern_error(error) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-fusion-preview",
+        response_model=CraftPatternPreflight,
+    )
+    def preview_craft_pattern_fusion(
+        project_id: UUID,
+        body: CraftPatternFusionPreviewRequest,
+    ) -> CraftPatternPreflight:
+        service: CraftPatternService = application.state.craft_pattern_service
+        try:
+            return service.preview_fusion(str(project_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或模式资产不存在") from error
+        except InvalidCraftPatternError as error:
+            raise craft_pattern_error(error) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-fusion-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_craft_pattern_fusion(
+        project_id: UUID,
+        body: SubmitCraftPatternFusionRequest,
+    ) -> Job:
+        service: CraftPatternService = application.state.craft_pattern_service
+        try:
+            job = service.submit_fusion(str(project_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或模式资产不存在") from error
+        except InvalidCraftPatternError as error:
+            raise craft_pattern_error(error) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.get(
+        "/api/projects/{project_id}/reference-craft-assets",
+        response_model=list[CraftPatternAssetSummary],
+    )
+    def list_project_craft_assets(project_id: UUID) -> list[CraftPatternAssetSummary]:
+        assets = CraftPatternRepository(database)
+        try:
+            return assets.list_project_summaries(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/reference-craft-assets",
+        response_model=CraftPatternAssetPage,
+    )
+    def list_global_craft_assets(
+        for_project_id: Annotated[UUID | None, Query()] = None,
+        asset_type: Annotated[CraftPatternAssetType | None, Query()] = None,
+        work_id: Annotated[UUID | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 30,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> CraftPatternAssetPage:
+        assets = CraftPatternRepository(database)
+        try:
+            return assets.list_global_summaries(
+                for_project_id=str(for_project_id) if for_project_id else None,
+                asset_type=asset_type,
+                work_id=str(work_id) if work_id else None,
+                limit=limit,
+                offset=offset,
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/reference-craft-assets/{asset_id}",
+        response_model=CraftPatternAsset,
+    )
+    def get_craft_asset(
+        asset_id: UUID,
+        for_project_id: Annotated[UUID | None, Query()] = None,
+    ) -> CraftPatternAsset:
+        try:
+            return CraftPatternRepository(database).get_asset(
+                str(asset_id),
+                for_project_id=str(for_project_id) if for_project_id else None,
+            )
+        except (NotFoundError, InvalidCraftPatternError) as error:
+            raise HTTPException(status_code=404, detail="写作模式资产不存在或已损坏") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/reference-craft-assets",
+        response_model=list[CraftPatternAsset],
+    )
+    def get_job_craft_assets(job_id: UUID) -> list[CraftPatternAsset]:
+        try:
+            return CraftPatternRepository(database).get_job_assets(str(job_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/reference-craft-assets/{asset_id}/reuse",
+        response_model=CraftPatternAsset,
+    )
+    def reuse_craft_asset(project_id: UUID, asset_id: UUID) -> CraftPatternAsset:
+        try:
+            return CraftPatternRepository(database).reuse(str(project_id), str(asset_id))
+        except (NotFoundError, InvalidCraftPatternError) as error:
+            raise HTTPException(status_code=404, detail="作品或写作模式资产不存在") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/reference-craft-assets/{asset_id}/lifecycle",
+        response_model=CraftPatternAsset,
+    )
+    def update_craft_asset_lifecycle(
+        project_id: UUID,
+        asset_id: UUID,
+        body: UpdateCraftPatternLifecycleRequest,
+    ) -> CraftPatternAsset:
+        try:
+            return CraftPatternRepository(database).update_lifecycle(
+                str(project_id), str(asset_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或写作模式资产不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="资产状态已更新，请刷新后重试") from error
+        except InvalidCraftPatternError as error:
+            raise craft_pattern_error(error) from error
 
     @application.post(
         "/api/projects/{project_id}/reference-pattern-cards/{card_id}/applications",
@@ -2737,14 +2957,14 @@ def create_app(
         body: ApplyReferencePatternRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
-        try:
-            return repository.apply_reference_pattern(str(project_id), str(card_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="模式卡不存在于当前作品") from error
-        except InvalidReferenceApplicationError as error:
-            raise HTTPException(
-                status_code=409, detail="蓝图无法应用，请检查来源或是否已应用"
-            ) from error
+        del project_id, card_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版模式卡已转为只读，不能再创建应用",
+            },
+        )
 
     @application.patch(
         "/api/projects/{project_id}/reference-pattern-applications/"
@@ -2834,16 +3054,14 @@ def create_app(
         body: UpdateReferenceBlueprintRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
-        try:
-            return repository.update_reference_blueprint(str(project_id), str(application_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="蓝图不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再修改") from error
-        except InvalidReferenceApplicationError as error:
-            raise HTTPException(
-                status_code=409, detail="蓝图修改不合法，请检查变更维度和锁定状态"
-            ) from error
+        del project_id, application_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版参考蓝图已转为只读，不能再修改",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/reference-blueprints/{application_id}/originality-acknowledgements",
@@ -2855,18 +3073,14 @@ def create_app(
         body: AcknowledgeOriginalityReportRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
-        try:
-            return repository.acknowledge_originality_report(
-                str(project_id), str(application_id), body
-            )
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="蓝图不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再处理") from error
-        except InvalidReferenceApplicationError as error:
-            raise HTTPException(
-                status_code=409, detail="当前报告不能确认，高风险蓝图必须先修改"
-            ) from error
+        del project_id, application_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版原创性报告已转为只读，不能再确认",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/reference-blueprints/{application_id}/scene-originality-acknowledgements",
@@ -2878,21 +3092,14 @@ def create_app(
         body: AcknowledgeOriginalityReportRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
-        try:
-            return repository.acknowledge_scene_originality_check(
-                str(project_id),
-                str(application_id),
-                body,
-            )
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="蓝图不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再处理") from error
-        except InvalidReferenceApplicationError as error:
-            raise HTTPException(
-                status_code=409,
-                detail="场景报告尚未查看、不是中风险，或高风险必须先修改",
-            ) from error
+        del project_id, application_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版场景原创性报告已转为只读，不能再确认",
+            },
+        )
 
     @application.get("/api/projects/{project_id}", response_model=Workspace)
     def get_project(

@@ -248,6 +248,7 @@ beforeEach(() => {
   vi.spyOn(api, 'listAiTaskDefaults').mockResolvedValue([])
   vi.spyOn(api, 'listContextDirectives').mockResolvedValue([])
   vi.spyOn(api, 'listComicProjects').mockResolvedValue([])
+  vi.spyOn(api, 'listReferenceCraftAssets').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -1672,7 +1673,7 @@ describe('App', () => {
     expect(screen.queryByText(generatedRun.candidate_content!)).not.toBeInTheDocument()
   })
 
-  it('imports another reference work and selects segments across books', async () => {
+  it('imports another reference work, keeps raw analysis single-book, and preserves old v1 cards', async () => {
     const existingWork = {
       id: 'reference-alpha',
       project_id: workspace.project.id,
@@ -1722,10 +1723,6 @@ describe('App', () => {
         chapter_end: '第一章 新局',
       }],
     }
-    vi.spyOn(api, 'createProject').mockResolvedValue({
-      ...workspace,
-      reference_works: [existingWork],
-    })
     const filePreview = {
       source_filename: 'beta.md',
       source_format: 'markdown' as const,
@@ -1769,49 +1766,15 @@ describe('App', () => {
       relationship_recomposition: '新作改为师徒与竞争者的三角制衡。',
       originality_risks: ['不能复用产业、专名和相同场景顺序'],
     }
-    const referenceJob = {
-      id: patternCard.source_job_id,
-      project_id: workspace.project.id,
-      chapter_id: null,
-      parent_job_id: null,
-      kind: 'reference_fusion' as const,
-      workflow: '',
-      state: 'queued' as const,
-      idempotency_key: 'reference-test',
-      progress_current: 0,
-      progress_total: 5,
-      current_step: '',
-      estimated_calls: 5,
-      completed_calls: 0,
-      provider: 'openai',
-      provider_profile_id: null,
-      model: 'test-reference-model',
-      lease_owner: null,
-      lease_expires_at: null,
-      heartbeat_at: null,
-      error_code: null,
-      error_message: null,
-      created_at: '2026-08-09T01:00:00Z',
-      updated_at: '2026-08-09T01:00:00Z',
-      started_at: null,
-      completed_at: null,
-    }
-    const startAnalysis = vi.spyOn(api, 'startReferenceAnalysisJob').mockResolvedValue(referenceJob)
-    vi.spyOn(api, 'getJob').mockResolvedValue({
-      ...referenceJob,
-      state: 'succeeded',
-      progress_current: 5,
-      completed_calls: 5,
-      current_step: '跨书合成六维结构',
-      chunks: [],
-      attempts: [],
-      artifacts: [],
-      events: [],
-    })
-    vi.mocked(api.getProjectSummary).mockResolvedValue(summarizeWorkspace({
+    const workspaceWithLegacyCard = {
       ...workspace,
-      reference_works: [existingWork, importedWork],
+      reference_works: [existingWork],
       reference_pattern_cards: [patternCard],
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspaceWithLegacyCard)
+    vi.mocked(api.getProjectSummary).mockResolvedValue(summarizeWorkspace({
+      ...workspaceWithLegacyCard,
+      reference_works: [existingWork, importedWork],
     }))
     const appliedDimensions = ['era', 'core_desire', 'conflict_causality', 'resource_system', 'key_scene_sequence'] as const
     const appliedBlueprint: ReferenceBlueprintState = {
@@ -1885,7 +1848,7 @@ describe('App', () => {
       viewed_at: null,
       created_at: '2026-08-09T01:05:00Z',
     })
-    const acknowledgeReport = vi.spyOn(api, 'acknowledgeOriginalityReport').mockResolvedValue({
+    vi.spyOn(api, 'acknowledgeOriginalityReport').mockResolvedValue({
       ...patternApplication,
       originality_status: 'review_required',
     })
@@ -1919,16 +1882,16 @@ describe('App', () => {
       acknowledged_at: null,
       created_at: '2026-08-09T01:05:00Z',
     }
-    const getSceneReport = vi.spyOn(api, 'getOrRunSceneOriginalityCheck').mockResolvedValue(sceneReport)
+    vi.spyOn(api, 'getOrRunSceneOriginalityCheck').mockResolvedValue(sceneReport)
     vi.spyOn(api, 'getSceneOriginalityCheck').mockResolvedValue({
       ...sceneReport,
       viewed_at: '2026-08-09T01:06:00Z',
     })
-    const acknowledgeSceneReport = vi.spyOn(api, 'acknowledgeSceneOriginalityCheck').mockResolvedValue({
+    vi.spyOn(api, 'acknowledgeSceneOriginalityCheck').mockResolvedValue({
       ...patternApplication,
       originality_status: 'passed',
     })
-    const updateBlueprint = vi.spyOn(api, 'updateReferenceBlueprint').mockImplementation(
+    vi.spyOn(api, 'updateReferenceBlueprint').mockImplementation(
       async (_projectId, _applicationId, input) => ({
         ...patternApplication,
         blueprint: input.blueprint,
@@ -1962,67 +1925,20 @@ describe('App', () => {
       confirm_uncertain_encoding: false,
       project_id: workspace.project.id,
     })
-    await user.click(await screen.findByRole('checkbox', { name: '选择参考甲第 1 段' }))
-    await user.click(screen.getByRole('checkbox', { name: '选择beta第 1 段' }))
-    expect(screen.getByText('已跨 2 本书选择 2 个区段')).toBeVisible()
-    await user.click(screen.getByRole('checkbox', { name: '允许把选中区段分块发送给当前 AI' }))
-    await user.type(screen.getByLabelText('多书分析重点'), '重点比较资源增长')
-    await user.click(screen.getByRole('button', { name: 'AI 萃取六维结构' }))
+    const alphaStage = await screen.findByRole('checkbox', { name: '选择参考甲第 1 阶段' })
+    const betaStage = screen.getByRole('checkbox', { name: '选择beta第 1 阶段' })
+    await user.click(alphaStage)
+    expect(alphaStage).toBeChecked()
+    await user.click(betaStage)
+    expect(alphaStage).not.toBeChecked()
+    expect(betaStage).toBeChecked()
+    expect(screen.getByText('切换到另一本书时，上一本的勾选会自动清空。', { exact: false })).toBeVisible()
 
-    expect(startAnalysis).toHaveBeenCalledWith(workspace.project.id, {
-      selected_segment_ids: sourceSegmentIds,
-      author_focus: '重点比较资源增长',
-      confirm_external_processing: true,
-    })
     expect(await screen.findByText('知识逐步转化为人脉和组织资源。')).toBeVisible()
     expect(screen.getByText('新作改为师徒与竞争者的三角制衡。')).toBeVisible()
-    await user.click(screen.getByRole('checkbox', { name: '应用维度：结局' }))
-    await user.type(screen.getByLabelText('用于当前作品的改编备注'), '落到南平本地产业，人物关系全部重组。')
-    await user.click(screen.getByRole('checkbox', { name: '确认原创改编边界' }))
-    await user.click(screen.getByRole('button', { name: `应用到《${workspace.project.title}》` }))
-
-    expect(applyPattern).toHaveBeenCalledWith(workspace.project.id, patternCard.id, {
-      selected_dimensions: ['era', 'core_desire', 'conflict_causality', 'resource_system', 'key_scene_sequence'],
-      application_note: '落到南平本地产业，人物关系全部重组。',
-      confirm_original_adaptation: true,
-    })
-    expect(await screen.findByRole('button', { name: '暂停用于 AI' })).toBeVisible()
-    expect(screen.getByText('需查看完整报告并显式确认，当前不传给 AI。')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '查看文本与结构报告' }))
-    const originalityReport = await screen.findByLabelText('原创性报告')
-    expect(originalityReport).toHaveTextContent('35/100')
-    expect(within(originalityReport).getByText('原创性风险提示用于创作风控，不是法律结论。')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '我已查看报告，确认继续使用这份蓝图' }))
-    expect(acknowledgeReport).toHaveBeenCalledWith(
-      workspace.project.id,
-      patternApplication.id,
-      { expected_revision: 0 },
-    )
-    await user.click(screen.getByRole('button', { name: '查看场景情节图报告' }))
-    const sceneGraphReport = await screen.findByLabelText('场景情节图报告')
-    expect(sceneGraphReport).toHaveTextContent('48/100')
-    expect(sceneGraphReport).toHaveTextContent('发现机会窗口')
-    expect(sceneGraphReport).toHaveTextContent('2 本书')
-    expect(getSceneReport).toHaveBeenCalledWith(workspace.project.id, patternApplication.id)
-    await user.click(screen.getByRole('button', { name: '我已查看情节图，确认继续使用这份蓝图' }))
-    expect(acknowledgeSceneReport).toHaveBeenCalledWith(
-      workspace.project.id,
-      patternApplication.id,
-      { expected_revision: 0 },
-    )
-    const eraSummary = screen.getByLabelText('时代候选蓝图摘要')
-    await user.clear(eraSummary)
-    await user.type(eraSummary, '南平旧城的口碑服务网络起步。')
-    await user.click(screen.getByRole('button', { name: '保存并重检 1 项' }))
-    expect(updateBlueprint).toHaveBeenCalledWith(
-      workspace.project.id,
-      patternApplication.id,
-      expect.objectContaining({
-        changed_dimensions: ['era'],
-        relationship_changed: false,
-        expected_revision: 0,
-      }),
-    )
+    expect(screen.getByText('这张旧版卡片仅供查看，不再新建应用。', { exact: false })).toBeVisible()
+    expect(screen.queryByRole('button', { name: `应用到《${workspace.project.title}》` })).not.toBeInTheDocument()
+    expect(applyPattern).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '返回创作台' }))
     expect(screen.getByLabelText('章节正文')).toBeVisible()
     expect(screen.queryByRole('heading', { name: '先拆成规律，再带回你的书' })).not.toBeInTheDocument()

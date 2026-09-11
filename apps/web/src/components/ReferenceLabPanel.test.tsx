@@ -7,7 +7,7 @@ import type {
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -155,6 +155,7 @@ function LifecycleHarness({
 
 beforeEach(() => {
   vi.spyOn(api, 'listJobs').mockResolvedValue([])
+  vi.spyOn(api, 'listReferenceCraftAssets').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -163,6 +164,38 @@ afterEach(() => {
 })
 
 describe('reference application lifecycle', () => {
+  it('keeps existing v1 applications as readable snapshots without legacy write actions', async () => {
+    const current = application('active', 'passed')
+    const getReport = vi.spyOn(api, 'getOriginalityReport').mockResolvedValue({
+      id: 'report-1',
+      application_id: current.id,
+      blueprint_revision: current.revision,
+      risk_level: 'low',
+      score: 8,
+      threshold_version: 'originality-rules-v1',
+      checked_dimensions: ['era'],
+      evidence: [],
+      source_segment_ids: [],
+      input_sha256: 'a'.repeat(64),
+      legal_notice: '历史风险提示不是法律结论。',
+      viewed_at: null,
+      created_at: '2026-09-11T00:00:00Z',
+    })
+    const user = userEvent.setup()
+    render(<LifecycleHarness initialWorkspace={workspaceWith(current)} />)
+
+    const applicationPanel = screen.getByRole('region', { name: '应用结构到当前作品' })
+    expect(within(applicationPanel).getByText(/V1 历史快照/)).toBeVisible()
+    expect(within(applicationPanel).getByRole('region', { name: '历史蓝图快照' })).toBeVisible()
+    expect(within(applicationPanel).queryByRole('button', { name: /save|保存并重检/i })).not.toBeInTheDocument()
+    expect(within(applicationPanel).queryByRole('button', { name: '查看场景情节图报告' })).not.toBeInTheDocument()
+    expect(within(applicationPanel).queryByRole('button', { name: /确认继续使用/ })).not.toBeInTheDocument()
+
+    await user.click(within(applicationPanel).getByRole('button', { name: '查看历史原创性报告' }))
+    expect(await within(applicationPanel).findByRole('region', { name: '历史原创性报告' })).toBeVisible()
+    expect(getReport).toHaveBeenCalledWith('report-1')
+  })
+
   it('pauses an active unchecked blueprint and keeps activation disabled', async () => {
     const current = application('active', 'review_required')
     const update = vi.spyOn(api, 'updateReferenceApplicationLifecycle').mockResolvedValue({
@@ -263,8 +296,8 @@ describe('reference application lifecycle', () => {
       />,
     )
 
-    const label = screen.getByText('使用中')
+    const label = screen.getByText('旧版使用中')
     expect(label.tagName).toBe('DT')
-    expect(label.parentElement).toHaveTextContent('使用中0')
+    expect(label.parentElement).toHaveTextContent('旧版使用中0')
   })
 })

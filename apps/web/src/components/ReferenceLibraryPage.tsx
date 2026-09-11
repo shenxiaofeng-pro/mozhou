@@ -44,13 +44,13 @@ export function ReferenceLibraryPage({
         <div>
           <p>REFERENCE DOSSIER / {genreLabels[workspace.project.genre]}</p>
           <h1 id="reference-library-title">先拆成规律，再带回你的书</h1>
-          <span>参考原文留在隔离库；只有作者选中的抽象结构，才能成为当前作品的创作蓝图。</span>
+          <span>参考原文留在隔离库；阶段、整书与跨书规律会保存为可追溯素材，当前不会直接写入正文。</span>
         </div>
         <dl>
           <div><dt>参考作品</dt><dd>{workspace.reference_works.length}</dd></div>
           <div><dt>分析区段</dt><dd>{segmentCount}</dd></div>
-          <div><dt>模式卡</dt><dd>{workspace.reference_pattern_cards.length}</dd></div>
-          <div><dt>使用中</dt><dd>{activeApplicationCount}</dd></div>
+          <div><dt>旧版模式卡</dt><dd>{workspace.reference_pattern_cards.length}</dd></div>
+          <div><dt>旧版使用中</dt><dd>{activeApplicationCount}</dd></div>
         </dl>
       </section>
 
@@ -59,21 +59,25 @@ export function ReferenceLibraryPage({
           <p>内容边界</p>
           <ol>
             <li data-complete={workspace.reference_works.length > 0}>
-              <span>原文隔离</span><small>多书导入与 50 万字切段</small>
+              <span>来源作品</span><small>安全导入与约 50 万字切段</small>
             </li>
-            <li data-complete={workspace.reference_pattern_cards.length > 0}>
-              <span>六维模式</span><small>只留下可验证的抽象规律</small>
+            <li data-complete={false}>
+              <span>阶段卡</span><small>先看长篇每一阶段怎样运转</small>
             </li>
-            <li data-complete={workspace.reference_pattern_applications.length > 0}>
-              <span>应用蓝图</span><small>由作者选择后进入当前作品</small>
+            <li data-complete={false}>
+              <span>单书演变</span><small>按顺序归纳钩子与兑现变化</small>
+            </li>
+            <li data-complete={false}>
+              <span>多书融合</span><small>只使用已保存的抽象素材</small>
             </li>
           </ol>
-          <blockquote>“参考”提供功能规律，不提供可以照搬的桥段。</blockquote>
+          <blockquote>“参考”提供功能规律，不提供可以照搬的桥段；素材进入写作需等待下一阶段。</blockquote>
         </aside>
         <div className="reference-library-content">
           <ReferenceLabPanel
             workspace={workspace}
             onWorkspaceChanged={onWorkspaceChanged}
+            onOpenTaskCenter={onOpenTaskCenter}
           />
         </div>
       </div>

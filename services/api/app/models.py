@@ -154,6 +154,40 @@ class ReferencePatternDimension(StrEnum):
     ENDING = "ending"
 
 
+class CraftPatternOperation(StrEnum):
+    ANALYSIS = "analysis"
+    FUSION = "fusion"
+
+
+class CraftPatternAssetType(StrEnum):
+    STAGE = "stage"
+    BOOK_EVOLUTION = "book_evolution"
+    FUSION_MATERIAL = "fusion_material"
+
+
+class CraftPatternLifecycleState(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class CraftPatternDimension(StrEnum):
+    ERA = "era"
+    CORE_DESIRE = "core_desire"
+    CONFLICT_CAUSALITY = "conflict_causality"
+    RESOURCE_SYSTEM = "resource_system"
+    KEY_SCENE_SEQUENCE = "key_scene_sequence"
+    ENDING = "ending"
+    HOOK_MECHANICS = "hook_mechanics"
+    PROMISE_PAYOFF_CADENCE = "promise_payoff_cadence"
+    EMOTIONAL_RHYTHM = "emotional_rhythm"
+    INFORMATION_REVEAL = "information_reveal"
+    FORESHADOWING_CYCLE = "foreshadowing_cycle"
+    SCENE_DESIGN = "scene_design"
+    POV_NARRATIVE_DISTANCE = "pov_narrative_distance"
+    EXPRESSION_PARAMETERS = "expression_parameters"
+    POWER_PROGRESSION = "power_progression"
+
+
 class BlueprintMode(StrEnum):
     PRESERVE = "preserve"
     ADJUST = "adjust"
@@ -1743,8 +1777,6 @@ class ImportReferenceWorkRequest(BaseModel):
             raise ValueError("参考作品不能包含空字节")
         if not value.strip():
             raise ValueError("参考作品不能为空")
-        if len(value.encode("utf-8")) > 20 * 1024 * 1024:
-            raise ValueError("参考作品不能超过 20 MB")
         return value
 
 
@@ -1767,6 +1799,8 @@ class ReferenceWorkImpactResponse(BaseModel):
     work: ReferenceWork
     projects: list[Project]
     cache_entries: int
+    retained_craft_asset_count: int = Field(default=0, ge=0)
+    affected_craft_job_count: int = Field(default=0, ge=0)
 
 
 class ReferenceSynthesisRequest(BaseModel):
@@ -1860,6 +1894,409 @@ class ReferencePatternCard(ReferenceSynthesisProposal):
     provider: AiProvider
     model: str
     created_at: str
+
+
+class CraftPatternAnalysisPreviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    selected_segment_ids: list[str] = Field(min_length=1, max_length=64)
+    author_focus: str = Field(default="", max_length=1000)
+
+    @field_validator("selected_segment_ids")
+    @classmethod
+    def validate_segment_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("参考区段不能重复选择")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("参考区段标识无效") from error
+        return value
+
+    @field_validator("author_focus")
+    @classmethod
+    def validate_author_focus(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("分析重点不能包含空字节")
+        return value
+
+
+class SubmitCraftPatternAnalysisRequest(CraftPatternAnalysisPreviewRequest):
+    confirm_external_processing: bool = False
+    confirm_unknown_cost: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    expected_preflight_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CraftPatternFusionPreviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    selected_asset_version_ids: list[str] = Field(min_length=2, max_length=30)
+    author_focus: str = Field(default="", max_length=1000)
+
+    @field_validator("selected_asset_version_ids")
+    @classmethod
+    def validate_asset_version_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("写作模式资产不能重复选择")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("写作模式资产标识无效") from error
+        return value
+
+    @field_validator("author_focus")
+    @classmethod
+    def validate_author_focus(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("融合重点不能包含空字节")
+        return value
+
+
+class SubmitCraftPatternFusionRequest(CraftPatternFusionPreviewRequest):
+    confirm_external_processing: bool = False
+    confirm_unknown_cost: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    expected_preflight_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CraftPatternSelectedWork(BaseModel):
+    work_id: str = Field(min_length=36, max_length=36)
+    title: str = Field(min_length=1, max_length=160)
+    segment_count: int = Field(ge=0)
+    character_count: int = Field(ge=0)
+
+    @field_validator("work_id")
+    @classmethod
+    def validate_work_id(cls, value: str) -> str:
+        try:
+            if str(UUID(value)) != value:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("参考作品标识无效") from error
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def reject_work_title_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("参考作品标题不能包含空字节")
+        return value
+
+
+class CraftPatternSelectedSegment(BaseModel):
+    segment_id: str = Field(min_length=36, max_length=36)
+    work_id: str = Field(min_length=36, max_length=36)
+    work_title: str = Field(min_length=1, max_length=160)
+    ordinal: int = Field(ge=1)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+    chapter_start: str | None = Field(default=None, max_length=160)
+    chapter_end: str | None = Field(default=None, max_length=160)
+    character_count: int = Field(gt=0)
+
+    @field_validator("segment_id", "work_id")
+    @classmethod
+    def validate_source_ids(cls, value: str) -> str:
+        try:
+            if str(UUID(value)) != value:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("参考区段来源标识无效") from error
+        return value
+
+    @field_validator("work_title", "chapter_start", "chapter_end")
+    @classmethod
+    def reject_segment_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("参考区段字段不能包含空字节")
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self) -> CraftPatternSelectedSegment:
+        if self.end_char <= self.start_char or self.end_char - self.start_char != self.character_count:
+            raise ValueError("参考区段字符范围无效")
+        return self
+
+
+class CraftPatternSelectedAsset(BaseModel):
+    asset_version_id: str = Field(min_length=36, max_length=36)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=160)
+    asset_type: CraftPatternAssetType
+    version: int = Field(ge=1)
+    source_work_ids: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator("asset_version_id", "source_work_ids", mode="before")
+    @classmethod
+    def validate_selected_asset_ids(cls, value: object) -> object:
+        items = value if isinstance(value, list) else [value]
+        if len(items) != len(set(items)):
+            raise ValueError("写作模式来源不能重复")
+        for item in items:
+            try:
+                if str(UUID(str(item))) != str(item):
+                    raise ValueError
+            except (TypeError, ValueError) as error:
+                raise ValueError("写作模式来源标识无效") from error
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def reject_selected_asset_title_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式标题不能包含空字节")
+        return value
+
+
+class CraftPatternPreflight(BaseModel):
+    operation: CraftPatternOperation
+    selected_works: list[CraftPatternSelectedWork]
+    selected_segments: list[CraftPatternSelectedSegment]
+    selected_assets: list[CraftPatternSelectedAsset]
+    selected_character_count: int = Field(ge=0)
+    stage_card_count: int = Field(ge=0)
+    book_evolution_count: int = Field(ge=0)
+    fusion_material_count: int = Field(ge=0)
+    map_calls: int = Field(ge=0)
+    stage_calls: int = Field(ge=0)
+    book_calls: int = Field(ge=0)
+    fusion_calls: int = Field(ge=0)
+    planned_calls: int = Field(ge=0)
+    cache_hit_calls: int = Field(ge=0)
+    uncached_calls: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    profile_id: str | None
+    profile_name: str | None
+    provider: str
+    model: str
+    data_types: list[str]
+    content_scope: str
+    prompt_version: str
+    preflight_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CraftPatternMapEvidenceDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    work_id: str = Field(min_length=1, max_length=100)
+    segment_id: str = Field(min_length=1, max_length=100)
+    evidence_text: str = Field(min_length=8, max_length=240)
+    evidence_summary: str = Field(min_length=1, max_length=160)
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("work_id", "segment_id", "evidence_text", "evidence_summary")
+    @classmethod
+    def reject_unsafe_evidence_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("证据不能包含空字节")
+        return value
+
+
+class CraftPatternItemFields(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    dimension: CraftPatternDimension
+    name: str = Field(min_length=1, max_length=120)
+    observation: str = Field(min_length=1, max_length=1000)
+    transferable_rule: str = Field(min_length=1, max_length=1000)
+    adaptation_risk: str = Field(min_length=1, max_length=600)
+
+    @field_validator("name", "observation", "transferable_rule", "adaptation_risk")
+    @classmethod
+    def reject_unsafe_pattern_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式不能包含空字节")
+        return value
+
+
+class CraftPatternMapItemDraft(CraftPatternItemFields):
+    evidence: list[CraftPatternMapEvidenceDraft] = Field(min_length=1, max_length=8)
+
+
+class CraftPatternMapDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    craft_items: list[CraftPatternMapItemDraft] = Field(min_length=1, max_length=30)
+
+    @field_validator("title", "summary")
+    @classmethod
+    def reject_unsafe_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式不能包含空字节")
+        return value
+
+
+class CraftPatternReductionItemDraft(CraftPatternItemFields):
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def validate_evidence_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("证据标识不能重复")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("证据标识无效") from error
+        return value
+
+
+class CraftPatternReductionDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    craft_items: list[CraftPatternReductionItemDraft] = Field(min_length=1, max_length=30)
+
+    @field_validator("title", "summary")
+    @classmethod
+    def reject_unsafe_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式不能包含空字节")
+        return value
+
+
+class CraftPatternEvidence(BaseModel):
+    id: str = Field(min_length=36, max_length=36)
+    work_id: str = Field(min_length=36, max_length=36)
+    work_title: str = Field(min_length=1, max_length=160)
+    segment_id: str = Field(min_length=36, max_length=36)
+    stage_label: str = Field(min_length=1, max_length=240)
+    chapter_label: str | None = Field(default=None, max_length=160)
+    absolute_start_char: int = Field(ge=0)
+    absolute_end_char: int = Field(gt=0)
+    evidence_summary: str = Field(min_length=1, max_length=160)
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("id", "work_id", "segment_id")
+    @classmethod
+    def validate_uuid_fields(cls, value: str) -> str:
+        try:
+            if str(UUID(value)) != value:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("证据来源标识无效") from error
+        return value
+
+    @field_validator("work_title", "stage_label", "chapter_label", "evidence_summary")
+    @classmethod
+    def reject_evidence_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("证据字段不能包含空字节")
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self) -> CraftPatternEvidence:
+        if self.absolute_end_char <= self.absolute_start_char:
+            raise ValueError("证据字符范围无效")
+        return self
+
+
+class CraftPatternItem(CraftPatternItemFields):
+    evidence: list[CraftPatternEvidence] = Field(min_length=1, max_length=20)
+
+
+class CraftPatternMaterial(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    craft_items: list[CraftPatternItem] = Field(min_length=1, max_length=30)
+
+
+class CraftPatternAsset(BaseModel):
+    id: str = Field(min_length=36, max_length=36)
+    series_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    schema_version: Literal[2] = 2
+    asset_type: CraftPatternAssetType
+    version: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lifecycle_state: CraftPatternLifecycleState | None
+    lifecycle_revision: int | None = Field(default=None, ge=0)
+    source_job_id: str | None
+    source_work_ids: list[str] = Field(min_length=1, max_length=30)
+    source_segment_ids: list[str] = Field(min_length=1, max_length=64)
+    source_asset_version_ids: list[str] = Field(default_factory=list, max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    author_focus: str = Field(default="", max_length=1000)
+    craft_items: list[CraftPatternItem] = Field(min_length=1, max_length=30)
+    provider: str = Field(min_length=1, max_length=40)
+    model: str = Field(min_length=1, max_length=100)
+    prompt_version: str = Field(min_length=1, max_length=100)
+    created_at: str
+    updated_at: str
+
+    @field_validator(
+        "id",
+        "source_job_id",
+        "source_work_ids",
+        "source_segment_ids",
+        "source_asset_version_ids",
+        mode="before",
+    )
+    @classmethod
+    def validate_asset_ids(cls, value: object) -> object:
+        if value is None:
+            return value
+        items = value if isinstance(value, list) else [value]
+        if len(items) != len(set(items)):
+            raise ValueError("写作模式来源不能重复")
+        for item in items:
+            try:
+                if str(UUID(str(item))) != str(item):
+                    raise ValueError
+            except (TypeError, ValueError) as error:
+                raise ValueError("写作模式来源标识无效") from error
+        return value
+
+    @field_validator("title", "summary", "author_focus", "provider", "model", "prompt_version")
+    @classmethod
+    def reject_asset_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式资产不能包含空字节")
+        return value
+
+
+class CraftPatternAssetSummary(BaseModel):
+    id: str
+    series_id: str
+    asset_type: CraftPatternAssetType
+    version: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lifecycle_state: CraftPatternLifecycleState | None
+    lifecycle_revision: int | None = Field(default=None, ge=0)
+    source_work_ids: list[str]
+    source_segment_ids: list[str]
+    source_asset_version_ids: list[str]
+    title: str
+    summary: str
+    provider: str
+    model: str
+    prompt_version: str
+    created_at: str
+    updated_at: str
+
+
+class CraftPatternAssetPage(BaseModel):
+    items: list[CraftPatternAssetSummary]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class UpdateCraftPatternLifecycleRequest(BaseModel):
+    state: CraftPatternLifecycleState
+    expected_lifecycle_revision: int = Field(ge=0)
 
 
 class AppliedReferenceDimension(BaseModel):

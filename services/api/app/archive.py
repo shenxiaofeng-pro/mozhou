@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hmac import compare_digest
 from typing import Any, cast
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import ValidationError
 
@@ -22,6 +22,8 @@ from app.models import (
     ComicProject,
     ComicScene,
     ComicVersion,
+    CraftPatternAssetType,
+    CraftPatternMaterial,
     FactChange,
     FactChangeSet,
     FutureKnowledge,
@@ -66,7 +68,7 @@ from app.repository import NotFoundError
 from app.topic_decisions import topic_subgenre_label
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 12
+ARCHIVE_FORMAT_VERSION = 13
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -479,6 +481,76 @@ ARCHIVE_TABLES = (
         "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
         (("job_id", "jobs", False),),
         ("detail_json",),
+    ),
+    ArchiveTable(
+        "craft_pattern_assets",
+        (
+            "id",
+            "series_id",
+            "schema_version",
+            "asset_type",
+            "version",
+            "generation_fingerprint_sha256",
+            "source_job_id",
+            "source_work_ids_json",
+            "source_segment_ids_json",
+            "source_asset_version_ids_json",
+            "title",
+            "summary",
+            "author_focus",
+            "craft_items_json",
+            "provider",
+            "provider_profile_id",
+            "profile_revision",
+            "model",
+            "prompt_version",
+            "evidence_validator_version",
+            "source_fingerprint_sha256",
+            "content_sha256",
+            "created_at",
+        ),
+        "id IN ("
+        "WITH RECURSIVE asset_tree(id) AS ("
+        "SELECT asset_version_id FROM project_craft_pattern_assets WHERE project_id = ?1 "
+        "UNION SELECT o.asset_version_id FROM craft_pattern_job_outputs o "
+        "JOIN jobs j ON j.id = o.job_id WHERE j.project_id = ?1 "
+        "UNION SELECT child.value FROM asset_tree tree "
+        "JOIN craft_pattern_assets parent ON parent.id = tree.id "
+        "JOIN json_each(parent.source_asset_version_ids_json) child"
+        ") SELECT id FROM asset_tree)",
+        (("source_job_id", "jobs", True),),
+        (
+            "source_work_ids_json",
+            "source_segment_ids_json",
+            "source_asset_version_ids_json",
+            "craft_items_json",
+        ),
+    ),
+    ArchiveTable(
+        "project_craft_pattern_assets",
+        (
+            "id",
+            "project_id",
+            "asset_version_id",
+            "lifecycle_state",
+            "lifecycle_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("asset_version_id", "craft_pattern_assets", False),
+        ),
+    ),
+    ArchiveTable(
+        "craft_pattern_job_outputs",
+        ("id", "job_id", "asset_version_id", "ordinal", "created_at"),
+        "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
+        (
+            ("job_id", "jobs", False),
+            ("asset_version_id", "craft_pattern_assets", False),
+        ),
     ),
     ArchiveTable(
         "topic_decisions",
@@ -1231,6 +1303,188 @@ def _remap_json(value: Any, id_map: dict[str, str]) -> Any:
     return value
 
 
+def _craft_asset_material(row: dict[str, Any]) -> CraftPatternMaterial:
+    return CraftPatternMaterial.model_validate(
+        {
+            "title": row["title"],
+            "summary": row["summary"],
+            "craft_items": _parse_json(row["craft_items_json"]),
+        }
+    )
+
+
+def _craft_asset_content_hash(row: dict[str, Any]) -> str:
+    material = _craft_asset_material(row)
+    payload = {
+        "schema_version": row["schema_version"],
+        "asset_type": row["asset_type"],
+        "source_work_ids": _parse_json(row["source_work_ids_json"]),
+        "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+        "source_asset_version_ids": _parse_json(
+            row["source_asset_version_ids_json"]
+        ),
+        "title": material.title,
+        "summary": material.summary,
+        "author_focus": row["author_focus"],
+        "craft_items": [
+            item.model_dump(mode="json") for item in material.craft_items
+        ],
+        "provider": row["provider"],
+        "model": row["model"],
+        "prompt_version": row["prompt_version"],
+        "evidence_validator_version": row["evidence_validator_version"],
+        "source_fingerprint_sha256": row["source_fingerprint_sha256"],
+    }
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
+
+
+def _craft_asset_series_id(row: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        canonical_json(
+            {
+                "asset_type": row["asset_type"],
+                "source_work_ids": _parse_json(row["source_work_ids_json"]),
+                "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+                "source_asset_version_ids": _parse_json(
+                    row["source_asset_version_ids_json"]
+                ),
+            }
+        )
+    ).hexdigest()
+
+
+def _validate_craft_pattern_rows(tables: dict[str, Any]) -> None:
+    required_dimensions = {
+        "era",
+        "core_desire",
+        "conflict_causality",
+        "resource_system",
+        "key_scene_sequence",
+        "ending",
+        "hook_mechanics",
+        "promise_payoff_cadence",
+        "emotional_rhythm",
+        "scene_design",
+        "pov_narrative_distance",
+        "expression_parameters",
+        "information_reveal",
+        "foreshadowing_cycle",
+        "power_progression",
+    }
+    assets: dict[str, tuple[dict[str, Any], CraftPatternMaterial]] = {}
+    for row in tables["craft_pattern_assets"]:
+        if row["schema_version"] != 2:
+            raise InvalidProjectArchiveError("invalid_craft_schema_version")
+        asset_type = CraftPatternAssetType(str(row["asset_type"]))
+        work_ids = _parse_json(row["source_work_ids_json"])
+        segment_ids = _parse_json(row["source_segment_ids_json"])
+        parent_ids = _parse_json(row["source_asset_version_ids_json"])
+        if not all(
+            isinstance(items, list)
+            and all(isinstance(item, str) for item in items)
+            and len(items) == len(set(items))
+            for items in (work_ids, segment_ids, parent_ids)
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        if (
+            len(work_ids) > 30
+            or len(segment_ids) > 64
+            or len(parent_ids) > 64
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        if any(
+            _valid_uuid(item) != item
+            for items in (work_ids, segment_ids, parent_ids)
+            for item in items
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        if not work_ids or not segment_ids:
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        material = _craft_asset_material(row)
+        dimensions = {item.dimension.value for item in material.craft_items}
+        if not required_dimensions <= dimensions:
+            raise InvalidProjectArchiveError("invalid_craft_dimensions")
+        evidence = [entry for item in material.craft_items for entry in item.evidence]
+        if any(
+            entry.work_id not in work_ids or entry.segment_id not in segment_ids
+            for entry in evidence
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_evidence_source")
+        if asset_type == CraftPatternAssetType.STAGE:
+            if len(work_ids) != 1 or len(segment_ids) != 1 or parent_ids:
+                raise InvalidProjectArchiveError("invalid_craft_stage")
+        elif asset_type == CraftPatternAssetType.BOOK_EVOLUTION:
+            if len(work_ids) != 1 or not parent_ids:
+                raise InvalidProjectArchiveError("invalid_craft_book")
+            if {entry.segment_id for entry in evidence} != set(segment_ids):
+                raise InvalidProjectArchiveError("invalid_craft_book_evidence")
+        else:
+            if len(work_ids) < 2 or not parent_ids:
+                raise InvalidProjectArchiveError("invalid_craft_fusion")
+            if {entry.work_id for entry in evidence} != set(work_ids):
+                raise InvalidProjectArchiveError("invalid_craft_fusion_evidence")
+        if not compare_digest(_craft_asset_content_hash(row), row["content_sha256"]):
+            raise InvalidProjectArchiveError("invalid_craft_content_hash")
+        assets[str(row["id"])] = (row, material)
+
+    for row, material in assets.values():
+        asset_type = CraftPatternAssetType(str(row["asset_type"]))
+        parent_ids = _parse_json(row["source_asset_version_ids_json"])
+        if not parent_ids:
+            continue
+        if any(parent_id not in assets for parent_id in parent_ids):
+            raise InvalidProjectArchiveError("external_craft_parent")
+        parent_values = [assets[parent_id] for parent_id in parent_ids]
+        if asset_type == CraftPatternAssetType.BOOK_EVOLUTION and any(
+            CraftPatternAssetType(str(parent[0]["asset_type"]))
+            != CraftPatternAssetType.STAGE
+            for parent in parent_values
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_book_parent")
+        if asset_type == CraftPatternAssetType.FUSION_MATERIAL and any(
+            CraftPatternAssetType(str(parent[0]["asset_type"]))
+            == CraftPatternAssetType.FUSION_MATERIAL
+            for parent in parent_values
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_fusion_parent")
+        allowed = {
+            evidence.id: evidence
+            for _parent_row, parent_material in parent_values
+            for item in parent_material.craft_items
+            for evidence in item.evidence
+        }
+        for item in material.craft_items:
+            for entry in item.evidence:
+                if allowed.get(entry.id) != entry:
+                    raise InvalidProjectArchiveError("invalid_craft_evidence_reference")
+        if asset_type == CraftPatternAssetType.FUSION_MATERIAL:
+            cited_ids = {
+                entry.id for item in material.craft_items for entry in item.evidence
+            }
+            for _parent_row, parent_material in parent_values:
+                parent_ids = {
+                    entry.id
+                    for item in parent_material.craft_items
+                    for entry in item.evidence
+                }
+                if cited_ids.isdisjoint(parent_ids):
+                    raise InvalidProjectArchiveError(
+                        "invalid_craft_fusion_parent_evidence"
+                    )
+
+    for row in tables["project_craft_pattern_assets"]:
+        if row["lifecycle_state"] not in {"active", "archived"} or not isinstance(
+            row["lifecycle_revision"], int
+        ) or row["lifecycle_revision"] < 0:
+            raise InvalidProjectArchiveError("invalid_craft_lifecycle")
+    ordinals_by_job: set[tuple[str, int]] = set()
+    for row in tables["craft_pattern_job_outputs"]:
+        marker = (str(row["job_id"]), int(row["ordinal"]))
+        if marker in ordinals_by_job or marker[1] < 0:
+            raise InvalidProjectArchiveError("invalid_craft_job_output")
+        ordinals_by_job.add(marker)
+
+
 def _validate_business_rows(
     tables: dict[str, Any],
     ids_by_table: dict[str, set[str]],
@@ -1620,6 +1874,8 @@ def _validate_business_rows(
                 raise InvalidProjectArchiveError("invalid_job_event_detail")
             JobEvent.model_validate({**row, "detail": detail})
 
+        _validate_craft_pattern_rows(tables)
+
         for row in tables["comic_projects"]:
             source_ids = _parse_json(row["source_chapter_ids_json"])
             snapshot = _parse_json(row["source_snapshot_json"])
@@ -1802,6 +2058,16 @@ class ProjectArchiveService:
                 if table.name == "source_cards" and not include_reference_assets:
                     for row in table_rows:
                         row["source_document_id"] = None
+                if table.name == "craft_pattern_assets":
+                    for row in table_rows:
+                        source_job_id = row["source_job_id"]
+                        if source_job_id is not None and connection.execute(
+                            "SELECT 1 FROM jobs WHERE id = ? AND project_id = ?",
+                            (source_job_id, project_id),
+                        ).fetchone() is None:
+                            # The immutable asset is global; a reused asset may
+                            # have been produced by a different project's job.
+                            row["source_job_id"] = None
                 tables[table.name] = table_rows
 
         payload: dict[str, Any] = {
@@ -1834,18 +2100,35 @@ class ProjectArchiveService:
 
         ids_by_table: dict[str, set[str]] = {}
         id_map: dict[str, str] = {}
-        for table in ARCHIVE_TABLES:
-            rows = tables[table.name]
-            assert isinstance(rows, list)
-            table_ids: set[str] = set()
-            for row in rows:
-                assert isinstance(row, dict)
-                old_id = _valid_uuid(row["id"])
-                if old_id != row["id"] or old_id in id_map:
-                    raise InvalidProjectArchiveError("duplicate_or_noncanonical_uuid")
-                table_ids.add(old_id)
-                id_map[old_id] = str(uuid4())
-            ids_by_table[table.name] = table_ids
+        reused_craft_asset_ids: set[str] = set()
+        has_raw_reference_assets = bool(
+            tables["reference_works"] or tables["reference_segments"]
+        )
+        with self.database.connect() as lookup:
+            for table in ARCHIVE_TABLES:
+                rows = tables[table.name]
+                assert isinstance(rows, list)
+                table_ids: set[str] = set()
+                for row in rows:
+                    assert isinstance(row, dict)
+                    old_id = _valid_uuid(row["id"])
+                    if old_id != row["id"] or old_id in id_map:
+                        raise InvalidProjectArchiveError("duplicate_or_noncanonical_uuid")
+                    table_ids.add(old_id)
+                    existing_id: str | None = None
+                    if (
+                        table.name == "craft_pattern_assets"
+                        and not has_raw_reference_assets
+                    ):
+                        existing = lookup.execute(
+                            "SELECT id FROM craft_pattern_assets WHERE content_sha256 = ?",
+                            (row["content_sha256"],),
+                        ).fetchone()
+                        if existing is not None:
+                            existing_id = str(existing["id"])
+                            reused_craft_asset_ids.add(old_id)
+                    id_map[old_id] = existing_id or str(uuid4())
+                ids_by_table[table.name] = table_ids
 
         source_project_id = _valid_uuid(archive["source_project_id"])
         project_rows = tables["projects"]
@@ -1859,6 +2142,7 @@ class ProjectArchiveService:
 
         remapped: dict[str, list[dict[str, Any]]] = {}
         comic_source_hash_map: dict[str, str] = {}
+        imported_at = datetime.now(UTC).isoformat()
         for table in ARCHIVE_TABLES:
             source_rows = tables[table.name]
             assert isinstance(source_rows, list)
@@ -1937,8 +2221,117 @@ class ProjectArchiveService:
                     row["payload_sha256"] = hashlib.sha256(
                         row["payload"].encode("utf-8")
                     ).hexdigest()
+                if table.name == "jobs" and row["state"] in {
+                    "queued",
+                    "running",
+                    "pause_requested",
+                }:
+                    row["state"] = "interrupted"
+                    row["lease_owner"] = None
+                    row["lease_expires_at"] = None
+                    row["heartbeat_at"] = None
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的 AI 任务需要重新预检并提交"
+                    row["updated_at"] = imported_at
+                    row["completed_at"] = imported_at
+                if (
+                    table.name == "jobs"
+                    and row["workflow"]
+                    in {"craft_pattern_analysis_v2", "craft_pattern_fusion_v2"}
+                    and row["state"] != "succeeded"
+                ):
+                    # Imported craft jobs are historical records. Retrying must
+                    # always start from a fresh preflight and fresh consent,
+                    # including archives whose job was already failed/cancelled.
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的写作模式任务需要重新预检并提交"
+                if table.name == "job_chunks" and row["state"] in {"queued", "running"}:
+                    row["state"] = "interrupted"
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的任务块不会自动继续"
+                    row["updated_at"] = imported_at
+                if table.name == "job_attempts" and row["state"] == "running":
+                    row["state"] = "interrupted"
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的调用不会自动继续"
+                    row["completed_at"] = imported_at
+                if table.name == "craft_pattern_assets" and old_id in reused_craft_asset_ids:
+                    continue
                 remapped_rows.append(row)
             remapped[table.name] = remapped_rows
+
+        evidence_id_map: dict[str, str] = {}
+        for row in remapped["craft_pattern_assets"]:
+            craft_items = _parse_json(row["craft_items_json"])
+            if not isinstance(craft_items, list):
+                raise InvalidProjectArchiveError("invalid_craft_items")
+            for item in craft_items:
+                if not isinstance(item, dict) or not isinstance(item.get("evidence"), list):
+                    raise InvalidProjectArchiveError("invalid_craft_items")
+                for evidence in item["evidence"]:
+                    if not isinstance(evidence, dict):
+                        raise InvalidProjectArchiveError("invalid_craft_evidence")
+                    old_evidence_id = _valid_uuid(evidence.get("id"))
+                    identity = (
+                        "mozhou-craft-evidence:"
+                        f"{evidence.get('work_id')}:{evidence.get('segment_id')}:"
+                        f"{evidence.get('absolute_start_char')}:"
+                        f"{evidence.get('absolute_end_char')}:"
+                        f"{evidence.get('evidence_sha256')}"
+                    )
+                    new_evidence_id = str(uuid5(NAMESPACE_URL, identity))
+                    previous = evidence_id_map.setdefault(
+                        old_evidence_id, new_evidence_id
+                    )
+                    if previous != new_evidence_id:
+                        raise InvalidProjectArchiveError(
+                            "inconsistent_craft_evidence_identity"
+                        )
+        for row in remapped["craft_pattern_assets"]:
+            craft_items = _parse_json(row["craft_items_json"])
+            row["craft_items_json"] = json.dumps(
+                _remap_json(craft_items, evidence_id_map),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            row["series_id"] = _craft_asset_series_id(row)
+            row["content_sha256"] = _craft_asset_content_hash(row)
+            row["generation_fingerprint_sha256"] = hashlib.sha256(
+                canonical_json(
+                    {
+                        "archive_import_asset_id": row["id"],
+                        "content_sha256": row["content_sha256"],
+                    }
+                )
+            ).hexdigest()
+
+        # Validate the actual post-remap graph before opening the write
+        # transaction. Abstract-only archives may reuse immutable global
+        # versions; raw-inclusive archives remap the complete graph so that old
+        # and new provenance identities are never mixed in one closure.
+        validation_assets = list(remapped["craft_pattern_assets"])
+        if reused_craft_asset_ids:
+            reused_ids = sorted({id_map[old_id] for old_id in reused_craft_asset_ids})
+            placeholders = ",".join("?" for _ in reused_ids)
+            with self.database.connect() as lookup:
+                rows = lookup.execute(
+                    f"SELECT * FROM craft_pattern_assets WHERE id IN ({placeholders})",
+                    reused_ids,
+                ).fetchall()
+            if len(rows) != len(reused_ids):
+                raise InvalidProjectArchiveError("external_craft_parent")
+            validation_assets.extend(dict(row) for row in rows)
+        _validate_craft_pattern_rows(
+            {
+                "craft_pattern_assets": validation_assets,
+                "project_craft_pattern_assets": remapped[
+                    "project_craft_pattern_assets"
+                ],
+                "craft_pattern_job_outputs": remapped[
+                    "craft_pattern_job_outputs"
+                ],
+            }
+        )
 
         restored_project = remapped["projects"][0]
         title = restored_project["title"]
@@ -2101,6 +2494,7 @@ class ProjectArchiveService:
             10,
             11,
             12,
+            13,
         }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
@@ -2142,6 +2536,8 @@ class ProjectArchiveService:
             value = self._upgrade_v10_archive(value)
         if value["format_version"] == 11:
             value = self._upgrade_v11_archive(value)
+        if value["format_version"] == 12:
+            value = self._upgrade_v12_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -2616,6 +3012,23 @@ class ProjectArchiveService:
         upgraded_tables["topic_decision_candidates"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = 12
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v12_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["craft_pattern_assets"] = []
+        upgraded_tables["project_craft_pattern_assets"] = []
+        upgraded_tables["craft_pattern_job_outputs"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 13
         unsigned = dict(upgraded)
         unsigned.pop("checksum_sha256", None)
         upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
