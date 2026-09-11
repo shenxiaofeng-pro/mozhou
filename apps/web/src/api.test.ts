@@ -429,3 +429,122 @@ it('routes immutable recipe versions, reuse previews, and lifecycle revisions ex
     expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ state: 'active', expected_lifecycle_revision: 4 }) }),
   )
 })
+
+it('keeps pattern adaptation preflight, candidates, adoption, and originality on explicit safe routes', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ id: 'fixture' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+  const safeInput = {
+    profile_version_id: 'profile-version-id-0000000000000000',
+    expected_profile_fingerprint_sha256: 'f'.repeat(64),
+    expected_topic_revision: 4,
+    expected_topic_content_sha256: 't'.repeat(64),
+    expected_base_blueprint_revision: null,
+    expected_base_blueprint_content_sha256: null,
+    author_intent: '把人物关系彻底重构，给出三条真正不同的整书路线。',
+    provider_profile_id: null,
+  }
+
+  await api.previewPatternAdaptation('project/id', safeInput)
+  await api.startPatternAdaptation('project/id', {
+    ...safeInput,
+    expected_preview_sha256: 'p'.repeat(64),
+    confirm_external_processing: true,
+    max_estimated_cost_microusd: 12_345,
+  })
+  await api.getPatternAdaptationResult('project/id', 'job/id')
+  await api.editPatternAdaptationCandidate('project/id', 'candidate/id', {
+    blueprint: {
+      title: '自有新故事', genre: 'urban_rebirth', rebirth_year: 1998,
+      rebirth_location: '南平', target_audience: '成长向读者',
+      core_selling_points: ['产业升级'], core_desire: '改变家庭命运',
+      divergence_point: '接下一张订单', long_term_promise: '建立产业网络',
+      ending_direction: '完成共同富裕', protagonist_arc: '学会信任伙伴',
+      resource_growth: '订单到产业链', relationship_design: '由对立到合作',
+    },
+    key_scene_sequence: ['危机', '选择', '代价'],
+    transformation_notes: ['人物关系重构'],
+    changed_fields: ['relationship_design'],
+    expected_revision: 0,
+    expected_content_sha256: 'c'.repeat(64),
+  })
+  await api.adoptPatternAdaptationCandidate('project/id', 'candidate/id', {
+    expected_candidate_revision: 1,
+    expected_candidate_content_sha256: 'd'.repeat(64),
+    expected_profile_fingerprint_sha256: 'f'.repeat(64),
+    expected_recipe_content_sha256: 'r'.repeat(64),
+    expected_topic_revision: 4,
+    expected_topic_content_sha256: 't'.repeat(64),
+    expected_base_blueprint_revision: null,
+    expected_base_blueprint_content_sha256: null,
+    idempotency_key: 'adopt-candidate-idempotency',
+  })
+  await api.runPatternOriginalityCheck('project/id', {
+    expected_blueprint_revision: 0,
+    expected_blueprint_content_sha256: 'b'.repeat(64),
+    expected_profile_fingerprint_sha256: 'f'.repeat(64),
+    expected_recipe_content_sha256: 'r'.repeat(64),
+  })
+  await api.getPatternOriginalityReport('report/id')
+  await api.viewPatternOriginalityReport('report/id')
+  await api.acknowledgePatternOriginalityReport('report/id')
+
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/pattern-adaptations/preview',
+    expect.objectContaining({ method: 'POST', body: JSON.stringify(safeInput) }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    3,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/pattern-adaptation-jobs/job%2Fid/result',
+    expect.any(Object),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    4,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/pattern-adaptation-candidates/candidate%2Fid',
+    expect.objectContaining({ method: 'PATCH' }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    5,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/pattern-adaptation-candidates/candidate%2Fid/adopt',
+    expect.objectContaining({ method: 'POST' }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    6,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/pattern-originality-checks',
+    expect.objectContaining({ method: 'POST' }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    9,
+    'http://127.0.0.1:8765/api/pattern-originality-reports/report%2Fid/acknowledgements',
+    expect.objectContaining({ method: 'POST' }),
+  )
+  expect(JSON.stringify(request.mock.calls.map((call) => (call[1] as RequestInit).body))).not.toMatch(
+    /observation|evidence|work_title|chapter_label|absolute_start_char|raw_text/,
+  )
+})
+
+it('loads the persisted project originality gate after refresh', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ state: 'needs_check', requires_check: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', request)
+
+  await api.getPatternOriginalityGate('project/id')
+
+  expect(request).toHaveBeenCalledWith(
+    'http://127.0.0.1:8765/api/projects/project%2Fid/pattern-originality-gate',
+    expect.any(Object),
+  )
+})

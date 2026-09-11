@@ -15,6 +15,7 @@ from app.ai import (
 )
 from app.context import ContextCompiler, ContextPacket, ContextRepository, ContextTaskType
 from app.context.compiler import estimate_tokens
+from app.creative_safety import CreativeSafetyProvenance
 from app.director.repository import (
     DirectorNotFoundError,
     DirectorRepository,
@@ -100,6 +101,7 @@ class DirectorJobInput(BaseModel):
     request: dict[str, object]
     topic_decision_revision: int | None = None
     topic_content_sha256: str | None = None
+    creative_safety: CreativeSafetyProvenance | None = None
 
 
 class DirectorService:
@@ -178,6 +180,7 @@ class DirectorService:
         task_input = DirectorJobInput.model_validate(self.jobs.load_input(job.id))
         if job.project_id != project_id or task_input.project_id != project_id:
             raise DirectorNotFoundError(project_id)
+        self._require_job_creative_safety(job, task_input)
         self._require_frozen_startup_source(project_id, task_input, for_job=False)
         result = self.get_startup_result(request.job_id)
         if result.project_id != project_id:
@@ -191,6 +194,7 @@ class DirectorService:
             result.idea,
             candidate,
             request.expected_blueprint_revision,
+            creative_safety=task_input.creative_safety,
         )
 
     def preview_expansion(
@@ -234,6 +238,10 @@ class DirectorService:
         project_id: str,
         request: ApplyDirectorProposalRequest,
     ) -> DirectorPlanningSnapshot:
+        job = self._require_workflow(request.job_id, DirectorWorkflow.EXPANSION)
+        self._require_job_creative_safety(
+            job, DirectorJobInput.model_validate(self.jobs.load_input(job.id))
+        )
         proposal = self.get_expansion_result(request.job_id)
         if proposal.project_id != project_id:
             raise DirectorNotFoundError(project_id)
@@ -241,6 +249,9 @@ class DirectorService:
             project_id,
             DirectorExpansionDraft.model_validate(proposal.model_dump()),
             request.expected_revision,
+            creative_safety=DirectorJobInput.model_validate(
+                self.jobs.load_input(job.id)
+            ).creative_safety,
         )
         return DirectorPlanningSnapshot(
             book_blueprint=blueprint,
@@ -295,10 +306,17 @@ class DirectorService:
         project_id: str,
         request: ApplyDirectorProposalRequest,
     ) -> BookBlueprint:
+        job = self._require_workflow(request.job_id, DirectorWorkflow.FIELD_REGENERATION)
+        self._require_job_creative_safety(
+            job, DirectorJobInput.model_validate(self.jobs.load_input(job.id))
+        )
         return self.director.apply_field_proposal(
             project_id,
             self.get_field_result(request.job_id),
             request.expected_revision,
+            creative_safety=DirectorJobInput.model_validate(
+                self.jobs.load_input(job.id)
+            ).creative_safety,
         )
 
     def preview_chapter_pipeline(
@@ -380,6 +398,8 @@ class DirectorService:
 
     def get_chapter_pipeline_result(self, job_id: str) -> DirectorChapterPipelineResult:
         job = self._require_workflow(job_id, DirectorWorkflow.CHAPTER_PIPELINE)
+        task_input = DirectorJobInput.model_validate(self.jobs.load_input(job_id))
+        self._require_job_creative_safety(job, task_input)
         brief_artifact = self.jobs.find_artifact(job_id, "pipeline_brief")
         review_artifact = self.jobs.find_artifact(job_id, "pipeline_pre_review")
         draft_artifact = self.jobs.find_artifact(job_id, "pipeline_draft")
@@ -390,7 +410,6 @@ class DirectorService:
             or draft_artifact is None
         ):
             raise ValueError("pipeline_result_unavailable")
-        task_input = DirectorJobInput.model_validate(self.jobs.load_input(job_id))
         pipeline_request = DirectorChapterPipelineRequest.model_validate(task_input.request)
         expected_revision = pipeline_request.expected_revision
         run_id = str(uuid5(NAMESPACE_URL, f"mozhou:{job.id}:pipeline-generation-run"))
@@ -401,6 +420,7 @@ class DirectorService:
             draft_artifact.payload,
             job.provider,
             job.model,
+            creative_safety=task_input.creative_safety,
         )
         return DirectorChapterPipelineResult(
             job_id=job.id,
@@ -423,6 +443,7 @@ class DirectorService:
         task_input = DirectorJobInput.model_validate(self.jobs.load_input(job.id))
         if task_input.workflow != workflow or task_input.project_id != job.project_id:
             raise JobExecutionError("invalid_input", "总导演任务输入无效")
+        self._require_job_creative_safety(job, task_input, for_job=True)
         workspace = self._load_workspace(job.project_id)
         if workflow == DirectorWorkflow.STARTUP:
             startup_request = DirectorStartupRequest.model_validate(task_input.request)
@@ -623,6 +644,7 @@ class DirectorService:
             draft_artifact.payload,
             job.provider,
             job.model,
+            creative_safety=task_input.creative_safety,
         )
 
     def _pipeline_context_packet(
@@ -656,6 +678,9 @@ class DirectorService:
                 directives=self.contexts.list_directives(chapter.id),
             )
         )
+        creative_safety = DirectorJobInput.model_validate(
+            self.jobs.load_input(job.id)
+        ).creative_safety
         self.jobs.put_artifact(
             job.id,
             kind="context_packet",
@@ -668,6 +693,11 @@ class DirectorService:
                 "context_packet_id": packet.id,
                 "packet_sha256": packet.packet_sha256,
                 "task_type": task_type.value,
+                "creative_safety": (
+                    creative_safety.model_dump(mode="json")
+                    if creative_safety is not None
+                    else None
+                ),
             },
         )
         return packet
@@ -874,6 +904,9 @@ class DirectorService:
             raise JobExecutionError(
                 "provider_error", "模型服务未完成总导演任务，可安全重试"
             ) from error
+        creative_safety = DirectorJobInput.model_validate(
+            self.jobs.load_input(job.id)
+        ).creative_safety
         self.jobs.put_artifact(
             job.id,
             chunk_id=chunk.id,
@@ -884,7 +917,14 @@ class DirectorService:
             provider=job.provider,
             provider_profile_id=job.provider_profile_id,
             model=job.model,
-            metadata={"prompt_version": DIRECTOR_PROMPT_VERSION},
+            metadata={
+                "prompt_version": DIRECTOR_PROMPT_VERSION,
+                "creative_safety": (
+                    creative_safety.model_dump(mode="json")
+                    if creative_safety is not None
+                    else None
+                ),
+            },
         )
         metrics = consume_ai_call_metrics(gateway)
         self.jobs.finish_attempt(
@@ -987,6 +1027,7 @@ class DirectorService:
         topic_content_sha256: str | None = None,
     ) -> Job:
         _gateway, status = self._selected_gateway()
+        creative_safety = self.repository.require_creative_safety(project_id)
         input_payload = DirectorJobInput(
             workflow=workflow,
             project_id=project_id,
@@ -994,6 +1035,7 @@ class DirectorService:
             request=request_payload,
             topic_decision_revision=topic_decision_revision,
             topic_content_sha256=topic_content_sha256,
+            creative_safety=creative_safety,
         ).model_dump(mode="json")
         idempotency_key = sha256(
             _canonical_json(
@@ -1102,6 +1144,7 @@ class DirectorService:
 
     def _load_workspace(self, project_id: str) -> Workspace:
         workspace = self.repository.get_workspace(project_id)
+        self.repository.require_creative_safety(project_id)
         if any(
             application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
             and application.originality_status != OriginalityStatus.PASSED
@@ -1116,6 +1159,7 @@ class DirectorService:
         expected_revision: int,
     ) -> tuple[Workspace, Chapter]:
         workspace = self.repository.get_workspace_for_chapter(chapter_id)
+        self.repository.require_creative_safety(workspace.project.id)
         self._ensure_originality_gate(workspace)
         try:
             chapter = next(item for item in workspace.chapters if item.id == chapter_id)
@@ -1152,6 +1196,37 @@ class DirectorService:
         if job.kind != JobKind.REVIEW or job.workflow != workflow.value:
             raise JobNotFoundError(job_id)
         return job
+
+    def _require_job_creative_safety(
+        self,
+        job: Job,
+        task_input: DirectorJobInput,
+        *,
+        for_job: bool = False,
+    ) -> CreativeSafetyProvenance | None:
+        try:
+            current = self.repository.require_creative_safety(
+                job.project_id, task_input.creative_safety
+            )
+        except OriginalityGateBlockedError as error:
+            if not for_job:
+                raise
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "创作安全依赖已变化，请重新预览后提交；模型未调用",
+            ) from error
+        if (
+            current is not None
+            and current.mode == "pattern_adaptation"
+            and task_input.creative_safety is None
+        ):
+            if not for_job:
+                raise OriginalityGateBlockedError("creative_safety_changed")
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "旧任务缺少创作安全快照，请重新预览后提交；模型未调用",
+            )
+        return current
 
     def _current_topic_version(self, project_id: str) -> TopicDecisionVersion:
         version = self.topics.get_confirmed_version(project_id)

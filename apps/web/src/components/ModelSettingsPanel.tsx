@@ -45,6 +45,7 @@ const taskRoutes: Array<{ type: AiTaskType; label: string; detail: string }> = [
   { type: 'research', label: '资料研究', detail: '带原文范围的证据候选归纳' },
   { type: 'comic_season_plan', label: '漫剧季方案', detail: '季纲与逐集大纲候选' },
   { type: 'comic_episode_script', label: '漫剧单集剧本', detail: '场次、动作与对白完整稿' },
+  { type: 'pattern_adaptation', label: '写作模式迁移', detail: '三套整书蓝图候选与结构重构' },
 ]
 
 function profileForm(profile: ModelProfile): ProfileForm {

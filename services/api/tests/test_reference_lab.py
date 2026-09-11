@@ -662,7 +662,7 @@ def test_reference_application_lifecycle_archives_and_reactivates_passed_bluepri
     assert director_unblocked.status_code == 200
     assert legacy_context["applied_reference_patterns"] == []
     assert all(item.kind != ContextItemKind.APPROVED_BLUEPRINT for item in packet.items)
-    assert archive["format_version"] == 14
+    assert archive["format_version"] == 15
     assert archive["tables"]["reference_pattern_applications"][0][
         "lifecycle_state"
     ] == "archived"

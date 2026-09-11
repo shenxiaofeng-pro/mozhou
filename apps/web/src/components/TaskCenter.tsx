@@ -23,6 +23,7 @@ interface TaskCenterProps {
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
+  onOpenWritingPatterns?: () => void
 }
 
 const kindLabels: Record<JobKind, string> = {
@@ -37,6 +38,7 @@ const kindLabels: Record<JobKind, string> = {
   comic_season_plan: '漫剧季方案',
   comic_episode_script: '漫剧单集剧本',
   topic_decision: '选题候选',
+  pattern_adaptation: '写作模式原创迁移',
 }
 
 const stateLabels: Record<JobState, string> = {
@@ -52,6 +54,10 @@ const stateLabels: Record<JobState, string> = {
 const activeStates = new Set<JobState>(['queued', 'running', 'pause_requested'])
 const retryableStates = new Set<JobState>(['failed', 'interrupted', 'cancelled'])
 const craftPatternWorkflows = new Set(['craft_pattern_analysis_v2', 'craft_pattern_fusion_v2'])
+
+function needsFreshPreflight(job: Pick<Job, 'kind' | 'workflow'>): boolean {
+  return craftPatternWorkflows.has(job.workflow) || job.kind === 'pattern_adaptation'
+}
 
 function jobLabel(job: Pick<Job, 'kind' | 'workflow'>): string {
   if (job.workflow === 'craft_pattern_analysis_v2') return '单书写作模式拆解'
@@ -71,6 +77,7 @@ export function TaskCenter({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenWritingPatterns = () => undefined,
 }: TaskCenterProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [selected, setSelected] = useState<JobDetail | null>(null)
@@ -198,12 +205,14 @@ export function TaskCenter({
       replaceJob(await api.retryJob(job.id))
     } catch (caught) {
       if (
-        craftPatternWorkflows.has(job.workflow)
+        needsFreshPreflight(job)
         && caught instanceof ApiError
         && caught.status === 409
       ) {
         setResubmissionJobIds((current) => new Set(current).add(job.id))
-        setError('原预检依据已过期，请回到拆书库重新预检后提交。')
+        setError(job.kind === 'pattern_adaptation'
+          ? '原预检依据已过期，请回到写作配方重新预检后提交。'
+          : '原预检依据已过期，请回到拆书库重新预检后提交。')
       } else {
         setError(caught instanceof Error ? caught.message : '重试任务失败')
       }
@@ -212,9 +221,10 @@ export function TaskCenter({
     }
   }
 
-  function openCraftPreflight() {
+  function openFreshPreflight(job: Job) {
     onClose()
-    onOpenReferenceLibrary()
+    if (job.kind === 'pattern_adaptation') onOpenWritingPatterns()
+    else onOpenReferenceLibrary()
   }
 
   async function viewArtifact(artifactId: string) {
@@ -248,6 +258,9 @@ export function TaskCenter({
         } else {
           onWorkspaceChanged(await api.getProjectSummary(projectId))
         }
+      } else if (job.kind === 'pattern_adaptation') {
+        onClose()
+        onOpenWritingPatterns()
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '读取任务结果失败')
@@ -353,13 +366,13 @@ export function TaskCenter({
                       disabled={busyAction === `cancel:${job.id}`}
                     >停止</button>
                   ) : null}
-                  {retryableStates.has(job.state) && craftPatternWorkflows.has(job.workflow) && (
+                  {retryableStates.has(job.state) && needsFreshPreflight(job) && (
                     job.error_code === 'restored_requires_resubmission'
                     || resubmissionJobIds.has(job.id)
                   ) ? (
                     <button
                       type="button"
-                      onClick={openCraftPreflight}
+                      onClick={() => openFreshPreflight(job)}
                     >重新预检</button>
                   ) : retryableStates.has(job.state) ? (
                     <button
@@ -368,12 +381,12 @@ export function TaskCenter({
                       disabled={busyAction === `retry:${job.id}`}
                     >从断点继续</button>
                   ) : null}
-                  {job.state === 'succeeded' && ['chapter_brief', 'chapter_draft', 'reference_fusion'].includes(job.kind) ? (
+                  {job.state === 'succeeded' && ['chapter_brief', 'chapter_draft', 'reference_fusion', 'pattern_adaptation'].includes(job.kind) ? (
                     <button
                       type="button"
                       onClick={() => { void continueResult(job) }}
                       disabled={busyAction === `result:${job.id}`}
-                    >{craftPatternWorkflows.has(job.workflow) ? '查看模式素材' : '继续采用'}</button>
+                    >{job.kind === 'pattern_adaptation' ? '查看三套候选' : craftPatternWorkflows.has(job.workflow) ? '查看模式素材' : '继续采用'}</button>
                   ) : null}
                 </div>
               </article>

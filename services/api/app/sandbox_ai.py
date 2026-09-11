@@ -13,10 +13,12 @@ from app.ai import (
     AiProviderError,
     consume_ai_call_metrics,
 )
+from app.creative_safety import CreativeSafetyGate, CreativeSafetyProvenance
 from app.jobs import AttemptState, Job, JobKind, JobRepository
 from app.jobs.runtime import JobExecutionContext, JobExecutionError
 from app.providers.models import AiTaskType, ModelProfile
 from app.providers.repository import ModelProfileNotFoundError, ModelProfileRepository
+from app.repository import OriginalityGateBlockedError
 from app.sandbox import NarrativeSandboxService, SandboxAiRoundDraft
 
 SANDBOX_AI_WORKFLOW = "sandbox_ai_round_v1"
@@ -82,6 +84,7 @@ class SandboxAiJobInput(BaseModel):
     snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     prompt_version: str
+    creative_safety: CreativeSafetyProvenance | None = None
 
 
 class SandboxAiService:
@@ -96,6 +99,10 @@ class SandboxAiService:
         self.jobs = jobs
         self.manager = manager
         self.profiles = profiles
+        self.creative_safety_gate: CreativeSafetyGate | None = None
+
+    def set_creative_safety_gate(self, gate: CreativeSafetyGate) -> None:
+        self.creative_safety_gate = gate
 
     def preview(self, run_id: str) -> SandboxAiPreview:
         self._require_originality_gate(run_id)
@@ -157,6 +164,7 @@ class SandboxAiService:
             snapshot_sha256=preview.snapshot_sha256,
             context_sha256=preview.context_sha256,
             prompt_version=SANDBOX_AI_PROMPT_VERSION,
+            creative_safety=self._require_originality_gate(run_id),
         )
         idempotency_key = sha256(
             _canonical_json(
@@ -193,6 +201,11 @@ class SandboxAiService:
                 "round_number": preview.round_number,
                 "state_sha256": preview.state_sha256,
                 "snapshot_sha256": preview.snapshot_sha256,
+                "creative_safety": (
+                    task_input.creative_safety.model_dump(mode="json")
+                    if task_input.creative_safety is not None
+                    else None
+                ),
             },
         )
         return self.jobs.get_job(job.id)
@@ -210,14 +223,28 @@ class SandboxAiService:
             )
             return
         try:
-            self._require_originality_gate(task_input.run_id)
-        except ValueError as error:
-            if str(error) != "originality_gate_blocked":
-                raise
+            current_safety = self._require_originality_gate(
+                task_input.run_id, task_input.creative_safety
+            )
+        except (ValueError, OriginalityGateBlockedError) as error:
+            code = (
+                "originality_gate_blocked"
+                if str(error) == "originality_gate_blocked"
+                else "creative_safety_changed"
+            )
             raise JobExecutionError(
-                "originality_gate_blocked",
-                "参考蓝图尚未通过原创性门禁，未调用模型",
+                code,
+                "创作安全依赖已变化，请重新预览后提交；模型未调用",
             ) from error
+        if (
+            current_safety is not None
+            and current_safety.mode == "pattern_adaptation"
+            and task_input.creative_safety is None
+        ):
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "旧任务缺少创作安全快照，请重新预览后提交；模型未调用",
+            )
         rebuilt = self.sandbox.ai_round_context(task_input.run_id)
         rebuilt_text = _canonical_json(rebuilt)
         if (
@@ -262,6 +289,11 @@ class SandboxAiService:
                         "round_number": task_input.round_number,
                         "prompt_version": task_input.prompt_version,
                         "context_sha256": task_input.context_sha256,
+                        "creative_safety": (
+                            task_input.creative_safety.model_dump(mode="json")
+                            if task_input.creative_safety is not None
+                            else None
+                        ),
                     },
                 )
                 self.jobs.finish_attempt(
@@ -286,6 +318,13 @@ class SandboxAiService:
         else:
             proposal = SandboxAiRoundDraft.model_validate_json(result_artifact.payload)
         context.checkpoint()
+        try:
+            self._require_originality_gate(task_input.run_id, task_input.creative_safety)
+        except (ValueError, OriginalityGateBlockedError) as error:
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "创作安全依赖已变化，未应用沙盘候选",
+            ) from error
         self.sandbox.apply_ai_round(
             task_input.run_id,
             proposal,
@@ -346,13 +385,18 @@ class SandboxAiService:
             raise ValueError("sandbox_run_not_found")
         return str(row["project_id"])
 
-    def _require_originality_gate(self, run_id: str) -> None:
+    def _require_originality_gate(
+        self,
+        run_id: str,
+        expected: CreativeSafetyProvenance | None = None,
+    ) -> CreativeSafetyProvenance | None:
         with self.sandbox.database.connect() as connection:
             row = connection.execute(
                 "SELECT project_id FROM sandbox_runs WHERE id = ?", (run_id,)
             ).fetchone()
             if row is None:
                 raise ValueError("sandbox_run_not_found")
+            project_id = str(row["project_id"])
             blocked = connection.execute(
                 """
                 SELECT 1 FROM reference_pattern_applications
@@ -360,7 +404,10 @@ class SandboxAiService:
                   AND originality_status != 'passed'
                 LIMIT 1
                 """,
-                (row["project_id"],),
+                (project_id,),
             ).fetchone()
         if blocked is not None:
             raise ValueError("originality_gate_blocked")
+        if self.creative_safety_gate is None:
+            return None
+        return self.creative_safety_gate.require_creative_safety(project_id, expected)

@@ -14,6 +14,7 @@ import type {
   GenerationRun,
   Genre,
   Job,
+  PatternOriginalityGateState,
   Project,
   RollingChapterPlan,
   RollingChapterPlanContent,
@@ -140,6 +141,17 @@ export function BookDirectorPanel({
   )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const originalityGateKey = `${project.id}:${snapshot.book_blueprint?.revision ?? 'none'}`
+  const [originalityGateResult, setOriginalityGateResult] = useState<{
+    key: string
+    state: PatternOriginalityGateState | null
+  } | null>(null)
+  const [originalityBusy, setOriginalityBusy] = useState(false)
+  const [originalityError, setOriginalityError] = useState<string | null>(null)
+
+  const originalityGate = originalityGateResult?.key === originalityGateKey
+    ? originalityGateResult.state
+    : null
 
   const activeJobId = activeJob?.id
   const activeJobState = activeJob?.state
@@ -179,6 +191,20 @@ export function BookDirectorPanel({
       if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [activeJobId, activeJobState, activeTask])
+
+  useEffect(() => {
+    let active = true
+    api.getPatternOriginalityGate(project.id)
+      .then((state) => {
+        if (active) setOriginalityGateResult({ key: originalityGateKey, state })
+      })
+      .catch((caught: unknown) => {
+        if (!active) return
+        setOriginalityGateResult({ key: originalityGateKey, state: null })
+        setOriginalityError(caught instanceof Error ? caught.message : '无法读取原创性门禁')
+      })
+    return () => { active = false }
+  }, [originalityGateKey, project.id])
 
   async function refreshWorkspace(nextSnapshot?: DirectorPlanningSnapshot) {
     if (nextSnapshot) setSnapshot(nextSnapshot)
@@ -409,6 +435,43 @@ export function BookDirectorPanel({
     }
   }
 
+  async function runCurrentBlueprintOriginalityCheck() {
+    if (!originalityGate?.adoption
+      || originalityGate.blueprint_revision === null
+      || originalityGate.blueprint_content_sha256 === null
+    ) return
+    setOriginalityBusy(true)
+    setOriginalityError(null)
+    try {
+      const report = await api.runPatternOriginalityCheck(project.id, {
+        expected_blueprint_revision: originalityGate.blueprint_revision,
+        expected_blueprint_content_sha256: originalityGate.blueprint_content_sha256,
+        expected_profile_fingerprint_sha256: originalityGate.adoption.profile_fingerprint_sha256,
+        expected_recipe_content_sha256: originalityGate.adoption.recipe_content_sha256,
+      })
+      setOriginalityGateResult({
+        key: originalityGateKey,
+        state: {
+          ...originalityGate,
+          state: report.status === 'blocked'
+            ? 'blocked'
+            : report.status === 'review_required' ? 'review_required' : report.status === 'passed' ? 'passed' : 'needs_check',
+          reason: report.status,
+          requires_check: report.status !== 'passed',
+          blueprint_id: report.blueprint_id,
+          blueprint_revision: report.blueprint_revision,
+          blueprint_content_sha256: report.blueprint_content_sha256,
+          latest_report: report,
+          report_is_current: true,
+        },
+      })
+    } catch (caught) {
+      setOriginalityError(caught instanceof Error ? caught.message : '无法重新运行原创性检查')
+    } finally {
+      setOriginalityBusy(false)
+    }
+  }
+
   const blueprint = snapshot.book_blueprint
   const hasLockedField = blueprint ? Object.values(blueprint.locks).some(Boolean) : false
 
@@ -505,6 +568,33 @@ export function BookDirectorPanel({
             <button type="button" onClick={() => { void saveBlueprint() }} disabled={busy}>保存蓝图修改</button>
           </details>
 
+          {originalityGate && !['legacy', 'needs_adaptation'].includes(originalityGate.state) ? (
+            <aside className="director-originality-gate" data-state={originalityGate.state} aria-label="实际蓝图原创性门禁">
+              <div>
+                <strong>{originalityGate.state === 'passed'
+                  ? '原创性门禁已通过'
+                  : originalityGate.state === 'review_required'
+                    ? '原创性报告等待作者确认'
+                    : originalityGate.state === 'blocked'
+                      ? '高风险：当前蓝图已阻断'
+                      : originalityGate.state === 'stale'
+                        ? '蓝图已修改，旧报告已过期'
+                        : '蓝图等待原创性检查'}</strong>
+                <span>{originalityGate.state === 'blocked'
+                  ? '先编辑并保存当前实际蓝图；版本变化后再运行检查。'
+                  : originalityGate.state === 'review_required'
+                    ? '请到写作配方页查看完整报告并明确确认。'
+                    : '检查始终绑定当前实际蓝图的版本与内容指纹。'}</span>
+              </div>
+              {['needs_check', 'stale'].includes(originalityGate.state) && originalityGate.adoption ? (
+                <button type="button" disabled={originalityBusy} onClick={() => { void runCurrentBlueprintOriginalityCheck() }}>
+                  {originalityBusy ? '正在检查…' : originalityGate.state === 'stale' ? '按当前蓝图重新检查' : '运行原创性检查'}
+                </button>
+              ) : null}
+            </aside>
+          ) : null}
+          {originalityError ? <p className="ai-coauthor-error" role="alert">{originalityError}</p> : null}
+
           <div className="director-command-row">
             <label>
               本次导演意图（可选）
@@ -541,6 +631,15 @@ export function BookDirectorPanel({
           </div>
         </>
       )}
+
+      {originalityGate?.state === 'needs_adaptation' ? (
+        <aside className="director-originality-gate" data-state="needs_adaptation" aria-label="写作模式原创迁移提示">
+          <div>
+            <strong>当前模式尚未生成原创蓝图候选</strong>
+            <span>请到“写作配方”完成作者意图、三套候选比较与采用；这里不会直接套用参考模式。</span>
+          </div>
+        </aside>
+      ) : null}
 
       {preview ? (
         <article className="director-outbound" aria-label="总导演外发确认">

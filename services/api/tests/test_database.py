@@ -17,6 +17,13 @@ from app.database import (
 from app.jobs import JobKind, JobRepository
 from app.migrations import MIGRATIONS, Migration, v9, v12, v21
 from app.models import CreateProjectRequest, Genre
+from app.providers import (
+    AiTaskType,
+    CreateModelProfileRequest,
+    ModelProfileRepository,
+    ProviderKind,
+    UpdateAiTaskDefaultRequest,
+)
 from app.repository import ProjectRepository
 
 
@@ -104,6 +111,12 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "topic_decision_versions",
         "topic_decisions",
         "volume_plans",
+        "writing_pattern_adaptation_candidate_versions",
+        "writing_pattern_adaptation_candidates",
+        "writing_pattern_adaptation_proposals",
+        "writing_pattern_adoptions",
+        "writing_pattern_originality_findings",
+        "writing_pattern_originality_reports",
         "writing_pattern_profile_versions",
         "writing_pattern_recipe_sources",
         "writing_pattern_recipe_versions",
@@ -142,11 +155,17 @@ def test_database_upgrades_v21_to_latest_without_losing_existing_jobs(tmp_path: 
     database.initialize()
 
     with database.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 26
-        assert connection.execute("SELECT id FROM jobs WHERE id = ?", (job.id,)).fetchone()[0] == job.id
-        assert connection.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'comic_%'"
-        ).fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert (
+            connection.execute("SELECT id FROM jobs WHERE id = ?", (job.id,)).fetchone()[0]
+            == job.id
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'comic_%'"
+            ).fetchone()[0]
+            == 4
+        )
 
 
 def test_database_upgrades_v22_reference_applications_to_active_lifecycle(
@@ -282,7 +301,7 @@ def test_database_upgrades_v23_projects_to_nonblocking_topic_drafts(
         migration_count = connection.execute(
             "SELECT COUNT(*) FROM schema_migrations WHERE version = 24"
         ).fetchone()[0]
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 26
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
     by_project = {row["project_id"]: row for row in rows}
@@ -296,7 +315,7 @@ def test_database_upgrades_v23_projects_to_nonblocking_topic_drafts(
     assert all(row["confirmed_revision"] is None for row in rows)
     assert all(row["onboarding_required"] == 0 for row in rows)
     assert migration_count == 1
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v26-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
 
     assert repository.get_workspace(with_blueprint.project.id).next_action == "continue_writing"
     assert repository.get_workspace(without_blueprint.project.id).next_action == "plan_book"
@@ -351,17 +370,23 @@ def test_database_upgrades_v24_with_append_only_craft_pattern_tables(
             "craft_pattern_job_outputs",
             "project_craft_pattern_assets",
         } <= names
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 26
-        assert connection.execute(
-            "SELECT title FROM projects WHERE id = ?",
-            (workspace.project.id,),
-        ).fetchone()[0] == "v24 原稿"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 25"
-        ).fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert (
+            connection.execute(
+                "SELECT title FROM projects WHERE id = ?",
+                (workspace.project.id,),
+            ).fetchone()[0]
+            == "v24 原稿"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 25"
+            ).fetchone()[0]
+            == 1
+        )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v26-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
 
 
 def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
@@ -387,7 +412,7 @@ def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
             "writing_pattern_recipes",
         ):
             connection.execute(f"DROP TABLE {table}")
-        connection.execute("DELETE FROM schema_migrations WHERE version = 26")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 26")
         connection.execute("PRAGMA user_version=25")
 
     database.initialize()
@@ -407,17 +432,23 @@ def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
             "writing_pattern_profile_versions",
             "project_writing_pattern_profiles",
         } <= names
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 26
-        assert connection.execute(
-            "SELECT title FROM projects WHERE id = ?",
-            (workspace.project.id,),
-        ).fetchone()[0] == "v25 原稿"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = 26"
-        ).fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert (
+            connection.execute(
+                "SELECT title FROM projects WHERE id = ?",
+                (workspace.project.id,),
+            ).fetchone()[0]
+            == "v25 原稿"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 26"
+            ).fetchone()[0]
+            == 1
+        )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v26-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
 
 
 def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -> None:
@@ -481,21 +512,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v26-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (26,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v26-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v28-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v26_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v28_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -551,7 +582,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v26_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (26,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -576,14 +607,16 @@ def test_database_runs_v1_and_v2_fixtures_to_v26_without_losing_data(
         (18, "scene_plot_graph_originality"),
         (19, "ai_narrative_sandbox"),
         (20, "research_agent"),
-            (21, "document_formats_and_author_productivity"),
-            (22, "ai_comic_drama_workbench"),
-            (23, "reference_application_lifecycle"),
-            (24, "topic_decisions"),
-            (25, "craft_pattern_v2"),
-            (26, "writing_pattern_recipes"),
-        ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v26-*.db"))) == 1
+        (21, "document_formats_and_author_productivity"),
+        (22, "ai_comic_drama_workbench"),
+        (23, "reference_application_lifecycle"),
+        (24, "topic_decisions"),
+        (25, "craft_pattern_v2"),
+        (26, "writing_pattern_recipes"),
+        (27, "pattern_adaptation_originality_gate"),
+        (28, "pattern_adaptation_job_routing"),
+    ]
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
 
 
 def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
@@ -630,7 +663,98 @@ def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
     assert was_created is True
     assert created.kind == JobKind.SANDBOX_AI_ROUND
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (26,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        for table in ("generation_runs", "fact_change_sets", "text_change_sets"):
+            columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert "creative_safety_json" in columns
+
+
+def test_v28_adds_dedicated_pattern_routes_without_losing_v27_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "v27-pattern-routing.db"
+    with monkeypatch.context() as migration_patch:
+        migration_patch.setattr(database_module, "MIGRATIONS", MIGRATIONS[:27])
+        Database(database_path).initialize()
+    database = Database(database_path)
+    workspace = ProjectRepository(database).create_project(
+        CreateProjectRequest(
+            title="模式迁移路由升级",
+            genre=Genre.EASTERN_FANTASY,
+            rebirth_year=2000,
+            rebirth_location="架空大陆",
+        )
+    )
+    jobs = JobRepository(database)
+    legacy_job, _ = jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.REVIEW,
+        workflow="chapter_review",
+        idempotency_key="review-before-v28",
+        input_payload={"legacy": True},
+        provider="local",
+        model="rules-v1",
+    )
+    legacy_chunk, _ = jobs.ensure_chunk(
+        legacy_job.id,
+        kind=JobKind.REVIEW,
+        ordinal=0,
+        idempotency_key="review-chunk-before-v28",
+        input_payload={"legacy": True},
+    )
+    profiles = ModelProfileRepository(database)
+    profile = profiles.create_profile(
+        CreateModelProfileRequest(
+            name="模式迁移专线",
+            provider=ProviderKind.OPENAI_COMPATIBLE,
+            base_url="https://models.example.com/v1",
+            model="adaptation-model",
+        )
+    )
+    review_default = profiles.set_task_default(
+        AiTaskType.REVIEW,
+        UpdateAiTaskDefaultRequest(profile_id=profile.id),
+    )
+
+    Database(database_path).initialize()
+
+    migrated_jobs = JobRepository(Database(database_path))
+    assert migrated_jobs.get_job(legacy_job.id).kind == JobKind.REVIEW
+    assert migrated_jobs.list_chunks(legacy_job.id)[0].id == legacy_chunk.id
+    migrated_profiles = ModelProfileRepository(Database(database_path))
+    assert migrated_profiles.get_task_default(AiTaskType.REVIEW) == review_default
+    pattern_default = migrated_profiles.set_task_default(
+        AiTaskType.PATTERN_ADAPTATION,
+        UpdateAiTaskDefaultRequest(profile_id=profile.id),
+    )
+    assert pattern_default.task_type == AiTaskType.PATTERN_ADAPTATION
+    pattern_job, created = migrated_jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.PATTERN_ADAPTATION,
+        workflow="pattern_adaptation",
+        idempotency_key="pattern-after-v28",
+        input_payload={"profile_fingerprint_sha256": "a" * 64},
+        provider="openai_compatible",
+        provider_profile_id=profile.id,
+        model=profile.model,
+    )
+    pattern_chunk, chunk_created = migrated_jobs.ensure_chunk(
+        pattern_job.id,
+        kind=JobKind.PATTERN_ADAPTATION,
+        ordinal=0,
+        idempotency_key="pattern-chunk-after-v28",
+        input_payload={"candidate_count": 3},
+    )
+    assert created is True
+    assert chunk_created is True
+    assert pattern_job.kind == JobKind.PATTERN_ADAPTATION
+    assert pattern_chunk.kind == JobKind.PATTERN_ADAPTATION
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -935,7 +1059,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             is None
         )
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v26-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

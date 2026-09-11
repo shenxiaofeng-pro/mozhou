@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.ai import AiGateway, AiGatewayManager, OpenAiGateway
 from app.chapter_jobs import ChapterJobService
+from app.creative_safety import CreativeSafetyProvenance
 from app.database import Database
 from app.jobs.models import JobKind, JobState
 from app.jobs.repository import JobRepository
@@ -45,6 +46,21 @@ from app.providers import (
 from app.providers.models import ModelCapabilities, ProviderKind
 from app.reference_lab import ReferenceAnalysisInput
 from app.repository import ProjectRepository
+
+
+class MutableChapterSafetyGate:
+    def __init__(self, current: CreativeSafetyProvenance) -> None:
+        self.current = current
+
+    def require_creative_safety(
+        self,
+        project_id: str,
+        expected: CreativeSafetyProvenance | None = None,
+    ) -> CreativeSafetyProvenance:
+        assert project_id == self.current.project_id
+        if expected is not None and expected != self.current:
+            raise ValueError("creative_safety_changed")
+        return self.current
 
 
 class RecoverableChapterGateway:
@@ -610,6 +626,36 @@ def test_draft_artifact_survives_materialization_crash_without_second_model_call
     assert jobs.get_job(job.id).state == JobState.SUCCEEDED
     assert gateway.draft_calls == calls_after_failure
     assert service.get_draft_result(job.id).candidate_content
+
+
+def test_chapter_worker_rejects_changed_creative_safety_before_model_call(
+    tmp_path: Path,
+) -> None:
+    gateway = RecoverableChapterGateway()
+    repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "chapter-safety-drift.db",
+        gateway,
+    )
+    chapter = save_complete_brief(repository, chapter)
+    project_id = repository.get_workspace_for_chapter(chapter.id).project.id
+    first = CreativeSafetyProvenance(
+        project_id=project_id,
+        mode="pattern_adaptation",
+        fingerprint_sha256="a" * 64,
+    )
+    gate = MutableChapterSafetyGate(first)
+    repository.set_creative_safety_gate(gate)
+    job = service.submit_draft(
+        chapter.id,
+        AiDraftRequest(expected_revision=chapter.revision, author_intent=""),
+    )
+    gate.current = first.model_copy(update={"fingerprint_sha256": "b" * 64})
+
+    assert runtime.run_once()
+    failed = jobs.get_job(job.id)
+    assert failed.state == JobState.FAILED
+    assert failed.error_code == "creative_safety_changed"
+    assert gateway.draft_calls == 0
 
 
 def test_queued_job_replays_frozen_context_when_story_data_changes(tmp_path: Path) -> None:

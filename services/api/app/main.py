@@ -246,6 +246,8 @@ from app.models import (
     WorkspaceSearchResult,
     WorkspaceSummary,
 )
+from app.pattern_adaptation.routes import pattern_adaptation_router
+from app.pattern_adaptation.service import PatternAdaptationService
 from app.providers import (
     ActivateModelProfileRequest,
     AiOutboundPreview,
@@ -427,6 +429,25 @@ def create_app(
             database,
             application.state.topic_decision_service,
         )
+        application.state.pattern_adaptation_service = PatternAdaptationService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+            application.state.topic_decision_service,
+        )
+        application.state.repository.set_creative_safety_gate(
+            application.state.pattern_adaptation_service
+        )
+        application.state.review_repository.set_creative_safety_gate(
+            application.state.repository
+        )
+        application.state.director_repository.set_creative_safety_gate(
+            application.state.repository
+        )
+        application.state.sandbox_ai_service.set_creative_safety_gate(
+            application.state.repository
+        )
 
         application.state.review_service = ReviewService(
             application.state.repository,
@@ -442,9 +463,7 @@ def create_app(
             else:
                 if job.workflow == "director_startup":
                     try:
-                        application.state.topic_decision_service.guard_director_startup_job(
-                            job.id
-                        )
+                        application.state.topic_decision_service.guard_director_startup_job(job.id)
                     except TopicDecisionNotConfirmedError as error:
                         raise JobExecutionError(
                             "topic_not_confirmed",
@@ -479,6 +498,7 @@ def create_app(
                     application.state.comic_drama_service.handle_episode_script
                 ),
                 JobKind.TOPIC_DECISION: application.state.topic_decision_service.handle,
+                JobKind.PATTERN_ADAPTATION: (application.state.pattern_adaptation_service.handle),
             },
         )
         if not defer_job_runtime:
@@ -496,6 +516,17 @@ def create_app(
         lifespan=lifespan,
     )
     application.include_router(writing_pattern_router)
+    application.include_router(pattern_adaptation_router)
+
+    @application.exception_handler(OriginalityGateBlockedError)
+    async def creative_safety_gate_error(
+        _request: Request,
+        _error: OriginalityGateBlockedError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "创作依赖已变化，请先完成当前蓝图原创性检查"},
+        )
 
     @application.exception_handler(RequestValidationError)
     async def sanitized_validation_error(
@@ -1785,7 +1816,9 @@ def create_app(
         except StaleTopicDecisionError as error:
             raise HTTPException(status_code=409, detail="AI 选题候选已过期，请重新生成") from error
         except InvalidTopicDecisionChangeError as error:
-            raise HTTPException(status_code=409, detail="AI 选题候选已处理或与字段锁冲突") from error
+            raise HTTPException(
+                status_code=409, detail="AI 选题候选已处理或与字段锁冲突"
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/topic-decision/candidate-rejection",
@@ -2974,8 +3007,7 @@ def create_app(
         )
 
     @application.patch(
-        "/api/projects/{project_id}/reference-pattern-applications/"
-        "{application_id}/lifecycle",
+        "/api/projects/{project_id}/reference-pattern-applications/{application_id}/lifecycle",
         response_model=ReferencePatternApplication,
     )
     def update_reference_application_lifecycle(
@@ -3230,9 +3262,7 @@ def create_app(
         body: AdoptComicSeasonRequest,
     ) -> ComicWorkspace:
         try:
-            return application.state.comic_drama_service.adopt_season(
-                str(comic_project_id), body
-            )
+            return application.state.comic_drama_service.adopt_season(str(comic_project_id), body)
         except ComicDramaNotFoundError as error:
             raise HTTPException(status_code=404, detail="漫剧项目或候选不存在") from error
         except ComicStateConflictError as error:
@@ -3334,9 +3364,7 @@ def create_app(
     @application.get("/api/comic-projects/{comic_project_id}/production-package")
     def get_comic_production_package(comic_project_id: UUID) -> dict[str, object]:
         try:
-            return application.state.comic_drama_service.production_package(
-                str(comic_project_id)
-            )
+            return application.state.comic_drama_service.production_package(str(comic_project_id))
         except ComicDramaNotFoundError as error:
             raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
 
@@ -3567,7 +3595,9 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
         except ValueError as error:
-            raise HTTPException(status_code=400, detail="未来或先验知识的年份不能早于作品起始纪年") from error
+            raise HTTPException(
+                status_code=400, detail="未来或先验知识的年份不能早于作品起始纪年"
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/story-entities",

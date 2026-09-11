@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from app.creative_safety import CreativeSafetyProvenance
 from app.database import Database
 from app.generation import GenerationService
 from app.models import (
@@ -13,7 +14,35 @@ from app.models import (
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
 )
-from app.repository import InvalidChapterStateError, ProjectRepository, StaleRevisionError
+from app.repository import (
+    InvalidChapterStateError,
+    OriginalityGateBlockedError,
+    ProjectRepository,
+    StaleRevisionError,
+)
+
+
+class MutableCreativeSafetyGate:
+    def __init__(self, current: CreativeSafetyProvenance) -> None:
+        self.current = current
+
+    def require_creative_safety(
+        self,
+        project_id: str,
+        expected: CreativeSafetyProvenance | None = None,
+    ) -> CreativeSafetyProvenance:
+        assert project_id == self.current.project_id
+        if expected is not None and expected != self.current:
+            raise ValueError("creative_safety_changed")
+        return self.current
+
+
+def _safety(project_id: str, token: str) -> CreativeSafetyProvenance:
+    return CreativeSafetyProvenance(
+        project_id=project_id,
+        mode="pattern_adaptation",
+        fingerprint_sha256=token * 64,
+    )
 
 
 @pytest.fixture
@@ -48,6 +77,55 @@ def test_fake_generation_persists_recoverable_state_events(
             (run.id,),
         ).fetchall()
     assert [event["state"] for event in events] == ["context_ready", "generating", "drafted"]
+
+
+def test_demo_generation_and_apply_reject_stale_frozen_creative_safety(
+    generation_setup: tuple[Database, ProjectRepository, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _database, repository, chapter_id = generation_setup
+    project_id = repository.get_workspace_for_chapter(chapter_id).project.id
+    gate = MutableCreativeSafetyGate(_safety(project_id, "a"))
+    repository.set_creative_safety_gate(gate)
+    queued = repository.create_generation_run(chapter_id, expected_revision=0)
+
+    calls = 0
+
+    def counted_demo_draft(context: object) -> str:
+        nonlocal calls
+        del context
+        calls += 1
+        return "不应生成"
+
+    monkeypatch.setattr("app.generation.generate_demo_draft", counted_demo_draft)
+    gate.current = _safety(project_id, "b")
+    with pytest.raises(OriginalityGateBlockedError, match="creative_safety_changed"):
+        GenerationService(repository).resume(queued.id)
+    assert calls == 0
+    assert repository.get_generation_run(queued.id).state == GenerationState.CONTEXT_READY
+
+    interrupted = repository.transition_generation(
+        queued.id,
+        GenerationState.CONTEXT_READY,
+        GenerationState.INTERRUPTED,
+        error_message="安全依赖变化",
+    )
+    assert interrupted.state == GenerationState.INTERRUPTED
+
+    gate.current = _safety(project_id, "a")
+    candidate = repository.materialize_generation_run(
+        "frozen-candidate",
+        chapter_id,
+        0,
+        "冻结候选正文",
+        "test",
+        "test",
+        creative_safety=gate.current,
+    )
+    gate.current = _safety(project_id, "b")
+    with pytest.raises(OriginalityGateBlockedError, match="creative_safety_changed"):
+        repository.apply_generation(candidate.id, expected_revision=0)
+    assert repository.get_chapter(chapter_id).content == ""
 
 
 @pytest.mark.parametrize(

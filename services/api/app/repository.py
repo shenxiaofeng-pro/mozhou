@@ -8,6 +8,7 @@ from typing import cast
 from uuid import uuid4
 
 from app.continuity import enrich_serial_control
+from app.creative_safety import CreativeSafetyGate, CreativeSafetyProvenance
 from app.database import Database
 from app.director.repository import DirectorRepository
 from app.fake_model import ChapterContext
@@ -173,6 +174,42 @@ def now_iso() -> str:
 class ProjectRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self._creative_safety_gate: CreativeSafetyGate | None = None
+
+    def set_creative_safety_gate(self, gate: CreativeSafetyGate) -> None:
+        self._creative_safety_gate = gate
+
+    def require_creative_safety(
+        self,
+        project_id: str,
+        expected: CreativeSafetyProvenance | None = None,
+    ) -> CreativeSafetyProvenance | None:
+        if self._creative_safety_gate is None:
+            return None
+        try:
+            return self._creative_safety_gate.require_creative_safety(project_id, expected)
+        except ValueError as error:
+            raise OriginalityGateBlockedError(str(error)) from error
+
+    def _require_frozen_creative_safety(
+        self,
+        project_id: str,
+        frozen_json: str | None,
+    ) -> CreativeSafetyProvenance | None:
+        if self._creative_safety_gate is None:
+            return None
+        try:
+            frozen = (
+                CreativeSafetyProvenance.model_validate_json(frozen_json)
+                if frozen_json is not None
+                else None
+            )
+        except ValueError as error:
+            raise OriginalityGateBlockedError("creative_safety_snapshot_invalid") from error
+        current = self.require_creative_safety(project_id, frozen)
+        if current is not None and current.mode == "pattern_adaptation" and frozen is None:
+            raise OriginalityGateBlockedError("creative_safety_snapshot_missing")
+        return current
 
     def create_project(self, request: CreateProjectRequest) -> Workspace:
         from app.beta import BETA_TEMPLATES
@@ -2415,6 +2452,7 @@ class ProjectRepository:
         change_set_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
                 """
                 SELECT c.*, p.rebirth_year
@@ -2426,6 +2464,7 @@ class ProjectRepository:
             ).fetchone()
             if chapter is None:
                 raise NotFoundError(chapter_id)
+            creative_safety = self.require_creative_safety(str(chapter["project_id"]))
             if chapter["status"] != ChapterStatus.APPROVED.value:
                 raise InvalidChapterStateError(chapter["status"])
             existing = connection.execute(
@@ -2445,14 +2484,20 @@ class ProjectRepository:
                 connection.execute(
                     """
                     INSERT INTO fact_change_sets (
-                        id, chapter_id, chapter_revision, state, revision, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 0, ?, ?)
+                        id, chapter_id, chapter_revision, state, revision,
+                        creative_safety_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     (
                         change_set_id,
                         chapter_id,
                         chapter["revision"],
                         FactChangeSetState.CANDIDATE.value,
+                        (
+                            creative_safety.model_dump_json()
+                            if creative_safety is not None
+                            else None
+                        ),
                         timestamp,
                         timestamp,
                     ),
@@ -2504,6 +2549,7 @@ class ProjectRepository:
         timestamp = now_iso()
         selected_ids = set(request.selected_change_ids)
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             change_set = connection.execute(
                 """
                 SELECT s.*, c.project_id, c.title AS chapter_title,
@@ -2517,6 +2563,9 @@ class ProjectRepository:
             ).fetchone()
             if change_set is None:
                 raise NotFoundError(change_set_id)
+            self._require_frozen_creative_safety(
+                str(change_set["project_id"]), change_set["creative_safety_json"]
+            )
             if change_set["revision"] != request.expected_revision:
                 raise StaleRevisionError(str(change_set["revision"]))
             if change_set["state"] != FactChangeSetState.CANDIDATE.value:
@@ -2933,16 +2982,21 @@ class ProjectRepository:
         expected_revision: int,
         provider: str = "demo",
         model: str = "replay-v1",
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> GenerationRun:
         run_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
-                "SELECT revision, status FROM chapters WHERE id = ?",
+                "SELECT project_id, revision, status FROM chapters WHERE id = ?",
                 (chapter_id,),
             ).fetchone()
             if chapter is None:
                 raise NotFoundError(chapter_id)
+            current_safety = self.require_creative_safety(
+                str(chapter["project_id"]), creative_safety
+            )
             if chapter["revision"] != expected_revision:
                 raise StaleRevisionError(str(chapter["revision"]))
             if chapter["status"] not in {
@@ -2954,8 +3008,9 @@ class ProjectRepository:
                 """
                 INSERT INTO generation_runs (
                     id, chapter_id, state, expected_chapter_revision,
-                    candidate_content, error_message, provider, model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                    candidate_content, error_message, provider, model,
+                    creative_safety_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -2964,6 +3019,11 @@ class ProjectRepository:
                     expected_revision,
                     provider,
                     model,
+                    (
+                        current_safety.model_dump_json()
+                        if current_safety is not None
+                        else None
+                    ),
                     timestamp,
                     timestamp,
                 ),
@@ -2981,6 +3041,24 @@ class ProjectRepository:
             raise NotFoundError(run_id)
         return self._generation_run(row)
 
+    def require_generation_run_creative_safety(
+        self, run_id: str
+    ) -> CreativeSafetyProvenance | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT c.project_id, r.creative_safety_json FROM generation_runs r
+                JOIN chapters c ON c.id = r.chapter_id
+                WHERE r.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(run_id)
+        return self._require_frozen_creative_safety(
+            str(row["project_id"]), row["creative_safety_json"]
+        )
+
     def materialize_generation_run(
         self,
         run_id: str,
@@ -2989,24 +3067,28 @@ class ProjectRepository:
         candidate_content: str,
         provider: str,
         model: str,
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> GenerationRun:
         """Materialize an immutable job artifact as an author-reviewable candidate."""
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if (
-                connection.execute(
-                    "SELECT id FROM chapters WHERE id = ?",
-                    (chapter_id,),
-                ).fetchone()
-                is None
-            ):
+            connection.execute("BEGIN IMMEDIATE")
+            chapter = connection.execute(
+                "SELECT project_id FROM chapters WHERE id = ?",
+                (chapter_id,),
+            ).fetchone()
+            if chapter is None:
                 raise NotFoundError(chapter_id)
+            current_safety = self.require_creative_safety(
+                str(chapter["project_id"]), creative_safety
+            )
             result = connection.execute(
                 """
                 INSERT INTO generation_runs (
                     id, chapter_id, state, expected_chapter_revision,
-                    candidate_content, error_message, provider, model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                    candidate_content, error_message, provider, model,
+                    creative_safety_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING
                 """,
                 (
@@ -3017,6 +3099,11 @@ class ProjectRepository:
                     candidate_content,
                     provider,
                     model,
+                    (
+                        current_safety.model_dump_json()
+                        if current_safety is not None
+                        else None
+                    ),
                     timestamp,
                     timestamp,
                 ),
@@ -3094,6 +3181,21 @@ class ProjectRepository:
     ) -> GenerationRun:
         timestamp = now_iso()
         with self.database.connect() as connection:
+            if next_state == GenerationState.DRAFTED:
+                connection.execute("BEGIN IMMEDIATE")
+                owner = connection.execute(
+                    """
+                    SELECT c.project_id, r.creative_safety_json FROM generation_runs r
+                    JOIN chapters c ON c.id = r.chapter_id
+                    WHERE r.id = ?
+                    """,
+                    (run_id,),
+                ).fetchone()
+                if owner is None:
+                    raise NotFoundError(run_id)
+                self._require_frozen_creative_safety(
+                    str(owner["project_id"]), owner["creative_safety_json"]
+                )
             result = connection.execute(
                 """
                 UPDATE generation_runs
@@ -3141,12 +3243,20 @@ class ProjectRepository:
     def apply_generation(self, run_id: str, expected_revision: int) -> Chapter:
         timestamp = now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             run = connection.execute(
-                "SELECT * FROM generation_runs WHERE id = ?",
+                """
+                SELECT r.*, c.project_id FROM generation_runs r
+                JOIN chapters c ON c.id = r.chapter_id
+                WHERE r.id = ?
+                """,
                 (run_id,),
             ).fetchone()
             if run is None:
                 raise NotFoundError(run_id)
+            self._require_frozen_creative_safety(
+                str(run["project_id"]), run["creative_safety_json"]
+            )
             if run["state"] != GenerationState.DRAFTED.value or run["candidate_content"] is None:
                 raise ValueError("生成任务尚无可采用草稿")
             result = connection.execute(

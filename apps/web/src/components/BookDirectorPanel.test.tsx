@@ -5,12 +5,14 @@ import type {
   DirectorChapterPipelineResult,
   DirectorOutboundPreview,
   Job,
+  PatternOriginalityGateState,
+  PatternOriginalityReport,
   Project,
   WorkspaceSummary,
 } from '@mozhou/contracts'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '../api'
 import { BookDirectorPanel } from './BookDirectorPanel'
@@ -25,6 +27,21 @@ const project: Project = {
   safety_buffer_chapters: 3,
   created_at: '2026-08-11T00:00:00Z',
   updated_at: '2026-08-11T00:00:00Z',
+}
+
+const sha = (value: string) => value.repeat(64)
+
+const legacyOriginalityGate: PatternOriginalityGateState = {
+  project_id: project.id,
+  state: 'legacy',
+  reason: 'legacy_project',
+  requires_check: false,
+  adoption: null,
+  blueprint_id: null,
+  blueprint_revision: null,
+  blueprint_content_sha256: null,
+  latest_report: null,
+  report_is_current: false,
 }
 
 const chapter: Chapter = {
@@ -156,6 +173,10 @@ afterEach(() => {
 })
 
 describe('BookDirectorPanel', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'getPatternOriginalityGate').mockResolvedValue(legacyOriginalityGate)
+  })
+
   it('uses fantasy blueprint labels and exposes all four genres', () => {
     const fantasyProject: Project = {
       ...project,
@@ -355,5 +376,60 @@ describe('BookDirectorPanel', () => {
     expect(adoptBrief).toHaveBeenCalledWith(generated.brief)
     expect(adoptDraft).toHaveBeenCalledWith(generated.draft)
     await waitFor(() => expect(screen.getByText('写前审查：通过，0 条提示')).toBeVisible())
+  })
+
+  it('reruns a stale originality gate against the current edited blueprint', async () => {
+    const currentBlueprint = blueprint({ revision: 7 })
+    const gate: PatternOriginalityGateState = {
+      project_id: project.id,
+      state: 'stale',
+      reason: 'blueprint_changed_after_report',
+      requires_check: true,
+      adoption: {
+        id: 'adoption-1', project_id: project.id, proposal_id: 'proposal-1', candidate_id: 'candidate-1',
+        candidate_version_id: 'candidate-version-1', blueprint_id: currentBlueprint.id, blueprint_revision: 0,
+        blueprint_content_sha256: sha('b'), profile_fingerprint_sha256: sha('f'), recipe_content_sha256: sha('r'),
+        created_at: '2026-09-12T00:00:00Z',
+      },
+      blueprint_id: currentBlueprint.id,
+      blueprint_revision: 7,
+      blueprint_content_sha256: sha('z'),
+      latest_report: null,
+      report_is_current: false,
+    }
+    const report: PatternOriginalityReport = {
+      id: 'report-1', project_id: project.id, adoption_id: 'adoption-1',
+      profile_fingerprint_sha256: sha('f'), recipe_content_sha256: sha('r'),
+      blueprint_id: currentBlueprint.id, blueprint_revision: 7, blueprint_content_sha256: sha('z'),
+      candidate_version_id: 'candidate-version-1', candidate_content_sha256: sha('c'),
+      risk_level: 'low', status: 'passed', score: 12,
+      threshold_version: 'writing-pattern-originality-v1', input_sha256: sha('i'),
+      source_availability: 'source_verified', findings: [], viewed_at: null, acknowledged_at: null,
+      created_at: '2026-09-12T00:00:00Z',
+    }
+    vi.mocked(api.getPatternOriginalityGate).mockResolvedValue(gate)
+    const runCheck = vi.spyOn(api, 'runPatternOriginalityCheck').mockResolvedValue(report)
+    const user = userEvent.setup()
+
+    render(
+      <BookDirectorPanel
+        project={project}
+        workspace={workspace(currentBlueprint)}
+        chapter={chapter}
+        canUseChapter
+        onWorkspaceChanged={vi.fn()}
+        onAdoptBrief={vi.fn()}
+        onDraftGenerated={vi.fn()}
+      />,
+    )
+
+    await user.click(await screen.findByRole('button', { name: '按当前蓝图重新检查' }))
+    expect(runCheck).toHaveBeenCalledWith(project.id, {
+      expected_blueprint_revision: 7,
+      expected_blueprint_content_sha256: sha('z'),
+      expected_profile_fingerprint_sha256: sha('f'),
+      expected_recipe_content_sha256: sha('r'),
+    })
+    expect(await screen.findByText('原创性门禁已通过')).toBeInTheDocument()
   })
 })

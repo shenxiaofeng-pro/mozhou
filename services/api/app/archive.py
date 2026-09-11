@@ -15,6 +15,7 @@ from app.database import CURRENT_SCHEMA_VERSION, Database
 from app.jobs.models import Job, JobArtifact, JobAttempt, JobChunk, JobEvent
 from app.models import (
     BookBlueprint,
+    BookBlueprintContent,
     Chapter,
     ChapterStatus,
     ChapterVersion,
@@ -64,6 +65,7 @@ from app.models import (
     VolumePlanContent,
 )
 from app.originality_guard import LEGAL_NOTICE
+from app.pattern_adaptation.repository import candidate_content_sha256
 from app.repository import NotFoundError
 from app.topic_decisions import topic_subgenre_label
 from app.writing_patterns.archive import (
@@ -73,7 +75,7 @@ from app.writing_patterns.archive import (
 )
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 14
+ARCHIVE_FORMAT_VERSION = 15
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -342,11 +344,13 @@ ARCHIVE_TABLES = (
             "error_message",
             "provider",
             "model",
+            "creative_safety_json",
             "created_at",
             "updated_at",
         ),
         "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
         (("chapter_id", "chapters", False),),
+        ("creative_safety_json",),
     ),
     ArchiveTable(
         "chapter_events",
@@ -792,6 +796,177 @@ ARCHIVE_TABLES = (
         ),
     ),
     ArchiveTable(
+        "writing_pattern_adaptation_proposals",
+        (
+            "id",
+            "job_id",
+            "project_id",
+            "profile_version_id",
+            "profile_fingerprint_sha256",
+            "recipe_version_id",
+            "recipe_content_sha256",
+            "topic_decision_version_id",
+            "topic_revision",
+            "topic_content_sha256",
+            "base_blueprint_id",
+            "base_blueprint_revision",
+            "base_blueprint_content_sha256",
+            "lock_snapshot_json",
+            "lock_snapshot_sha256",
+            "dependency_fingerprint_sha256",
+            "safe_context_sha256",
+            "provider",
+            "provider_profile_id",
+            "provider_profile_revision",
+            "model",
+            "input_cost_microusd_per_million",
+            "output_cost_microusd_per_million",
+            "prompt_version",
+            "estimated_input_tokens",
+            "estimated_output_tokens",
+            "estimated_cost_microusd",
+            "cost_status",
+            "result_state",
+            "stale_reason",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("job_id", "jobs", False),
+            ("project_id", "projects", False),
+            ("profile_version_id", "writing_pattern_profile_versions", False),
+            ("recipe_version_id", "writing_pattern_recipe_versions", False),
+            ("topic_decision_version_id", "topic_decision_versions", False),
+            ("base_blueprint_id", "book_blueprints", True),
+        ),
+        ("lock_snapshot_json",),
+    ),
+    ArchiveTable(
+        "writing_pattern_adaptation_candidates",
+        (
+            "id",
+            "proposal_id",
+            "ordinal",
+            "label",
+            "why_distinct",
+            "distinct_axes_json",
+            "risk_hypotheses_json",
+            "current_revision",
+            "current_content_sha256",
+            "created_at",
+            "updated_at",
+        ),
+        "proposal_id IN (SELECT id FROM writing_pattern_adaptation_proposals WHERE project_id = ?)",
+        (("proposal_id", "writing_pattern_adaptation_proposals", False),),
+        ("distinct_axes_json", "risk_hypotheses_json"),
+    ),
+    ArchiveTable(
+        "writing_pattern_adaptation_candidate_versions",
+        (
+            "id",
+            "candidate_id",
+            "revision",
+            "blueprint_json",
+            "key_scene_sequence_json",
+            "transformation_notes_json",
+            "content_sha256",
+            "changed_fields_json",
+            "source",
+            "created_at",
+        ),
+        "candidate_id IN ("
+        "SELECT c.id FROM writing_pattern_adaptation_candidates c "
+        "JOIN writing_pattern_adaptation_proposals p ON p.id = c.proposal_id "
+        "WHERE p.project_id = ?)",
+        (("candidate_id", "writing_pattern_adaptation_candidates", False),),
+        (
+            "blueprint_json",
+            "key_scene_sequence_json",
+            "transformation_notes_json",
+            "changed_fields_json",
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_adoptions",
+        (
+            "id",
+            "project_id",
+            "proposal_id",
+            "candidate_id",
+            "candidate_version_id",
+            "blueprint_id",
+            "blueprint_revision",
+            "blueprint_content_sha256",
+            "profile_fingerprint_sha256",
+            "recipe_content_sha256",
+            "idempotency_key",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("proposal_id", "writing_pattern_adaptation_proposals", False),
+            ("candidate_id", "writing_pattern_adaptation_candidates", False),
+            (
+                "candidate_version_id",
+                "writing_pattern_adaptation_candidate_versions",
+                False,
+            ),
+            ("blueprint_id", "book_blueprints", False),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_originality_reports",
+        (
+            "id",
+            "project_id",
+            "adoption_id",
+            "profile_fingerprint_sha256",
+            "recipe_content_sha256",
+            "blueprint_id",
+            "blueprint_revision",
+            "blueprint_content_sha256",
+            "candidate_version_id",
+            "candidate_content_sha256",
+            "risk_level",
+            "status",
+            "score",
+            "threshold_version",
+            "input_sha256",
+            "source_availability",
+            "viewed_at",
+            "acknowledged_at",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("adoption_id", "writing_pattern_adoptions", False),
+            ("blueprint_id", "book_blueprints", False),
+            (
+                "candidate_version_id",
+                "writing_pattern_adaptation_candidate_versions",
+                False,
+            ),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_originality_findings",
+        (
+            "id",
+            "report_id",
+            "ordinal",
+            "signal",
+            "score",
+            "summary",
+            "source_fingerprint_sha256",
+            "evidence_sha256",
+        ),
+        "report_id IN (SELECT id FROM writing_pattern_originality_reports WHERE project_id = ?)",
+        (("report_id", "writing_pattern_originality_reports", False),),
+    ),
+    ArchiveTable(
         "comic_projects",
         (
             "id",
@@ -919,11 +1094,13 @@ ARCHIVE_TABLES = (
             "title",
             "state",
             "revision",
+            "creative_safety_json",
             "created_at",
             "updated_at",
         ),
         "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
         (("chapter_id", "chapters", False),),
+        ("creative_safety_json",),
     ),
     ArchiveTable(
         "text_changes",
@@ -984,11 +1161,13 @@ ARCHIVE_TABLES = (
             "chapter_revision",
             "state",
             "revision",
+            "creative_safety_json",
             "created_at",
             "updated_at",
         ),
         "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
         (("chapter_id", "chapters", False),),
+        ("creative_safety_json",),
     ),
     ArchiveTable(
         "fact_changes",
@@ -1466,15 +1645,11 @@ def _craft_asset_content_hash(row: dict[str, Any]) -> str:
         "asset_type": row["asset_type"],
         "source_work_ids": _parse_json(row["source_work_ids_json"]),
         "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
-        "source_asset_version_ids": _parse_json(
-            row["source_asset_version_ids_json"]
-        ),
+        "source_asset_version_ids": _parse_json(row["source_asset_version_ids_json"]),
         "title": material.title,
         "summary": material.summary,
         "author_focus": row["author_focus"],
-        "craft_items": [
-            item.model_dump(mode="json") for item in material.craft_items
-        ],
+        "craft_items": [item.model_dump(mode="json") for item in material.craft_items],
         "provider": row["provider"],
         "model": row["model"],
         "prompt_version": row["prompt_version"],
@@ -1491,9 +1666,7 @@ def _craft_asset_series_id(row: dict[str, Any]) -> str:
                 "asset_type": row["asset_type"],
                 "source_work_ids": _parse_json(row["source_work_ids_json"]),
                 "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
-                "source_asset_version_ids": _parse_json(
-                    row["source_asset_version_ids_json"]
-                ),
+                "source_asset_version_ids": _parse_json(row["source_asset_version_ids_json"]),
             }
         )
     ).hexdigest()
@@ -1532,11 +1705,7 @@ def _validate_craft_pattern_rows(tables: dict[str, Any]) -> None:
             for items in (work_ids, segment_ids, parent_ids)
         ):
             raise InvalidProjectArchiveError("invalid_craft_sources")
-        if (
-            len(work_ids) > 30
-            or len(segment_ids) > 64
-            or len(parent_ids) > 64
-        ):
+        if len(work_ids) > 30 or len(segment_ids) > 64 or len(parent_ids) > 64:
             raise InvalidProjectArchiveError("invalid_craft_sources")
         if any(
             _valid_uuid(item) != item
@@ -1582,8 +1751,7 @@ def _validate_craft_pattern_rows(tables: dict[str, Any]) -> None:
             raise InvalidProjectArchiveError("external_craft_parent")
         parent_values = [assets[parent_id] for parent_id in parent_ids]
         if asset_type == CraftPatternAssetType.BOOK_EVOLUTION and any(
-            CraftPatternAssetType(str(parent[0]["asset_type"]))
-            != CraftPatternAssetType.STAGE
+            CraftPatternAssetType(str(parent[0]["asset_type"])) != CraftPatternAssetType.STAGE
             for parent in parent_values
         ):
             raise InvalidProjectArchiveError("invalid_craft_book_parent")
@@ -1604,24 +1772,20 @@ def _validate_craft_pattern_rows(tables: dict[str, Any]) -> None:
                 if allowed.get(entry.id) != entry:
                     raise InvalidProjectArchiveError("invalid_craft_evidence_reference")
         if asset_type == CraftPatternAssetType.FUSION_MATERIAL:
-            cited_ids = {
-                entry.id for item in material.craft_items for entry in item.evidence
-            }
+            cited_ids = {entry.id for item in material.craft_items for entry in item.evidence}
             for _parent_row, parent_material in parent_values:
                 parent_ids = {
-                    entry.id
-                    for item in parent_material.craft_items
-                    for entry in item.evidence
+                    entry.id for item in parent_material.craft_items for entry in item.evidence
                 }
                 if cited_ids.isdisjoint(parent_ids):
-                    raise InvalidProjectArchiveError(
-                        "invalid_craft_fusion_parent_evidence"
-                    )
+                    raise InvalidProjectArchiveError("invalid_craft_fusion_parent_evidence")
 
     for row in tables["project_craft_pattern_assets"]:
-        if row["lifecycle_state"] not in {"active", "archived"} or not isinstance(
-            row["lifecycle_revision"], int
-        ) or row["lifecycle_revision"] < 0:
+        if (
+            row["lifecycle_state"] not in {"active", "archived"}
+            or not isinstance(row["lifecycle_revision"], int)
+            or row["lifecycle_revision"] < 0
+        ):
             raise InvalidProjectArchiveError("invalid_craft_lifecycle")
     ordinals_by_job: set[tuple[str, int]] = set()
     for row in tables["craft_pattern_job_outputs"]:
@@ -1629,6 +1793,90 @@ def _validate_craft_pattern_rows(tables: dict[str, Any]) -> None:
         if marker in ordinals_by_job or marker[1] < 0:
             raise InvalidProjectArchiveError("invalid_craft_job_output")
         ordinals_by_job.add(marker)
+
+
+def _validate_pattern_adaptation_rows(tables: dict[str, Any]) -> None:
+    proposals = {str(row["id"]): row for row in tables["writing_pattern_adaptation_proposals"]}
+    versions: dict[str, dict[str, Any]] = {}
+    versions_by_candidate: dict[str, dict[int, dict[str, Any]]] = {}
+    for row in tables["writing_pattern_adaptation_candidate_versions"]:
+        blueprint = BookBlueprintContent.model_validate(_parse_json(row["blueprint_json"]))
+        scenes = _parse_json(row["key_scene_sequence_json"])
+        notes = _parse_json(row["transformation_notes_json"])
+        if not isinstance(scenes, list) or not all(isinstance(item, str) for item in scenes):
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        if not isinstance(notes, list) or not all(isinstance(item, str) for item in notes):
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        if not compare_digest(
+            candidate_content_sha256(blueprint, scenes, notes),
+            str(row["content_sha256"]),
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_hash")
+        revision = int(row["revision"])
+        by_revision = versions_by_candidate.setdefault(str(row["candidate_id"]), {})
+        if revision in by_revision:
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        by_revision[revision] = row
+        versions[str(row["id"])] = row
+
+    candidates: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adaptation_candidates"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        current = versions_by_candidate.get(str(row["id"]), {}).get(int(row["current_revision"]))
+        if (
+            proposal is None
+            or current is None
+            or not compare_digest(
+                str(row["current_content_sha256"]), str(current["content_sha256"])
+            )
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adaptation_candidate")
+        candidates[str(row["id"])] = row
+    if set(versions_by_candidate) - set(candidates):
+        raise InvalidProjectArchiveError("orphan_pattern_candidate_version")
+
+    adoptions: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adoptions"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        candidate = candidates.get(str(row["candidate_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        if (
+            proposal is None
+            or candidate is None
+            or version is None
+            or candidate["proposal_id"] != proposal["id"]
+            or version["candidate_id"] != candidate["id"]
+            or proposal["project_id"] != row["project_id"]
+            or proposal["profile_fingerprint_sha256"] != row["profile_fingerprint_sha256"]
+            or proposal["recipe_content_sha256"] != row["recipe_content_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption")
+        adopted_content = _parse_json(version["blueprint_json"])
+        if not isinstance(adopted_content, dict) or not compare_digest(
+            hashlib.sha256(canonical_json(adopted_content)).hexdigest(),
+            str(row["blueprint_content_sha256"]),
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption_hash")
+        adoptions[str(row["id"])] = row
+
+    reports: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_originality_reports"]:
+        adoption = adoptions.get(str(row["adoption_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        if (
+            adoption is None
+            or version is None
+            or adoption["project_id"] != row["project_id"]
+            or adoption["candidate_version_id"] != version["id"]
+            or adoption["profile_fingerprint_sha256"] != row["profile_fingerprint_sha256"]
+            or adoption["recipe_content_sha256"] != row["recipe_content_sha256"]
+            or version["content_sha256"] != row["candidate_content_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_originality_report")
+        reports[str(row["id"])] = row
+    for row in tables["writing_pattern_originality_findings"]:
+        if str(row["report_id"]) not in reports:
+            raise InvalidProjectArchiveError("orphan_pattern_originality_finding")
 
 
 def _validate_business_rows(
@@ -1740,7 +1988,9 @@ def _validate_business_rows(
                 candidates_by_set.get(row["id"], []),
                 key=lambda candidate: candidate.ordinal,
             )
-            if any(candidate_projects[candidate.id] != row["project_id"] for candidate in candidates):
+            if any(
+                candidate_projects[candidate.id] != row["project_id"] for candidate in candidates
+            ):
                 raise InvalidProjectArchiveError("invalid_topic_candidate")
             TopicDecisionCandidateSet.model_validate(
                 {
@@ -2022,6 +2272,7 @@ def _validate_business_rows(
 
         _validate_craft_pattern_rows(tables)
         validate_writing_pattern_tables(tables)
+        _validate_pattern_adaptation_rows(tables)
 
         for row in tables["comic_projects"]:
             source_ids = _parse_json(row["source_chapter_ids_json"])
@@ -2044,9 +2295,7 @@ def _validate_business_rows(
             source_ids = _parse_json(row["source_chapter_ids_json"])
             if not isinstance(content, dict) or not isinstance(source_ids, list):
                 raise InvalidProjectArchiveError("invalid_comic_scene_content")
-            ComicScene.model_validate(
-                {**row, "content": content, "source_chapter_ids": source_ids}
-            )
+            ComicScene.model_validate({**row, "content": content, "source_chapter_ids": source_ids})
 
         for row in tables["review_findings"]:
             ReviewFinding.model_validate({**row, "evidence": _parse_json(row["evidence_json"])})
@@ -2090,15 +2339,135 @@ def _validate_business_rows(
         raise InvalidProjectArchiveError("invalid_business_values") from error
 
 
+def _rebind_pattern_adaptation_rows(tables: dict[str, list[dict[str, Any]]]) -> None:
+    """Rebind immutable lineage and invalidate pre-import execution decisions."""
+    profiles = {str(row["id"]): row for row in tables["writing_pattern_profile_versions"]}
+    recipes = {str(row["id"]): row for row in tables["writing_pattern_recipe_versions"]}
+    topics = {str(row["id"]): row for row in tables["topic_decision_versions"]}
+    jobs = {str(row["id"]): row for row in tables["jobs"]}
+    blueprints = {str(row["id"]): row for row in tables["book_blueprints"]}
+    proposals: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adaptation_proposals"]:
+        profile = profiles.get(str(row["profile_version_id"]))
+        recipe = recipes.get(str(row["recipe_version_id"]))
+        topic = topics.get(str(row["topic_decision_version_id"]))
+        job = jobs.get(str(row["job_id"]))
+        blueprint = (
+            blueprints.get(str(row["base_blueprint_id"]))
+            if row["base_blueprint_id"] is not None
+            else None
+        )
+        if (
+            profile is None
+            or recipe is None
+            or topic is None
+            or job is None
+            or profile["recipe_version_id"] != recipe["id"]
+            or profile["project_id"] != row["project_id"]
+            or topic["project_id"] != row["project_id"]
+            or job["project_id"] != row["project_id"]
+            or (blueprint is not None and blueprint["project_id"] != row["project_id"])
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adaptation_proposal")
+        row["profile_fingerprint_sha256"] = profile["profile_fingerprint_sha256"]
+        row["recipe_content_sha256"] = recipe["content_sha256"]
+        row["result_state"] = "stale"
+        row["stale_reason"] = "restored_requires_resubmission"
+        proposals[str(row["id"])] = row
+
+    versions: dict[str, dict[str, Any]] = {}
+    versions_by_candidate: dict[str, dict[int, dict[str, Any]]] = {}
+    for row in tables["writing_pattern_adaptation_candidate_versions"]:
+        try:
+            candidate_blueprint = BookBlueprintContent.model_validate(
+                _parse_json(row["blueprint_json"])
+            )
+            scenes = _parse_json(row["key_scene_sequence_json"])
+            notes = _parse_json(row["transformation_notes_json"])
+            if not isinstance(scenes, list) or not all(isinstance(item, str) for item in scenes):
+                raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+            if not isinstance(notes, list) or not all(isinstance(item, str) for item in notes):
+                raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+            row["content_sha256"] = candidate_content_sha256(
+                candidate_blueprint, scenes, notes
+            )
+            revision = int(row["revision"])
+        except (TypeError, ValueError, ValidationError) as error:
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version") from error
+        versions[str(row["id"])] = row
+        by_revision = versions_by_candidate.setdefault(str(row["candidate_id"]), {})
+        if revision in by_revision:
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        by_revision[revision] = row
+
+    candidates: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adaptation_candidates"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        current = versions_by_candidate.get(str(row["id"]), {}).get(int(row["current_revision"]))
+        if proposal is None or current is None:
+            raise InvalidProjectArchiveError("invalid_pattern_adaptation_candidate")
+        row["current_content_sha256"] = current["content_sha256"]
+        candidates[str(row["id"])] = row
+    if set(versions_by_candidate) - set(candidates):
+        raise InvalidProjectArchiveError("orphan_pattern_candidate_version")
+
+    adoptions: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adoptions"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        candidate = candidates.get(str(row["candidate_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        blueprint = blueprints.get(str(row["blueprint_id"]))
+        if (
+            proposal is None
+            or candidate is None
+            or version is None
+            or blueprint is None
+            or candidate["proposal_id"] != proposal["id"]
+            or version["candidate_id"] != candidate["id"]
+            or proposal["project_id"] != row["project_id"]
+            or blueprint["project_id"] != row["project_id"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption")
+        adopted_content = _parse_json(version["blueprint_json"])
+        if not isinstance(adopted_content, dict) or not compare_digest(
+            hashlib.sha256(canonical_json(adopted_content)).hexdigest(),
+            str(row["blueprint_content_sha256"]),
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption")
+        row["profile_fingerprint_sha256"] = proposal["profile_fingerprint_sha256"]
+        row["recipe_content_sha256"] = proposal["recipe_content_sha256"]
+        adoptions[str(row["id"])] = row
+
+    reports: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_originality_reports"]:
+        adoption = adoptions.get(str(row["adoption_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        blueprint = blueprints.get(str(row["blueprint_id"]))
+        if (
+            adoption is None
+            or version is None
+            or blueprint is None
+            or adoption["project_id"] != row["project_id"]
+            or adoption["candidate_version_id"] != version["id"]
+            or adoption["blueprint_id"] != blueprint["id"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_originality_report")
+        row["profile_fingerprint_sha256"] = adoption["profile_fingerprint_sha256"]
+        row["recipe_content_sha256"] = adoption["recipe_content_sha256"]
+        row["candidate_content_sha256"] = version["content_sha256"]
+        reports[str(row["id"])] = row
+    for row in tables["writing_pattern_originality_findings"]:
+        if str(row["report_id"]) not in reports:
+            raise InvalidProjectArchiveError("orphan_pattern_originality_finding")
+
+
 def _insert_legacy_topic_decision(
     connection: sqlite3.Connection,
     project: dict[str, Any],
     blueprints: list[dict[str, Any]],
 ) -> None:
     blueprint = blueprints[0] if blueprints else None
-    blueprint_content = (
-        _parse_json(blueprint["content_json"]) if blueprint is not None else {}
-    )
+    blueprint_content = _parse_json(blueprint["content_json"]) if blueprint is not None else {}
     if not isinstance(blueprint_content, dict):
         raise InvalidProjectArchiveError("invalid_legacy_topic_blueprint")
 
@@ -2208,10 +2577,14 @@ class ProjectArchiveService:
                 if table.name == "craft_pattern_assets":
                     for row in table_rows:
                         source_job_id = row["source_job_id"]
-                        if source_job_id is not None and connection.execute(
-                            "SELECT 1 FROM jobs WHERE id = ? AND project_id = ?",
-                            (source_job_id, project_id),
-                        ).fetchone() is None:
+                        if (
+                            source_job_id is not None
+                            and connection.execute(
+                                "SELECT 1 FROM jobs WHERE id = ? AND project_id = ?",
+                                (source_job_id, project_id),
+                            ).fetchone()
+                            is None
+                        ):
                             # The immutable asset is global; a reused asset may
                             # have been produced by a different project's job.
                             row["source_job_id"] = None
@@ -2242,9 +2615,7 @@ class ProjectArchiveService:
             raise ProjectArchiveTooLargeError("archive_too_large")
         parsed_archive = _parse_json(raw_archive)
         source_archive_version = (
-            parsed_archive.get("format_version")
-            if isinstance(parsed_archive, dict)
-            else None
+            parsed_archive.get("format_version") if isinstance(parsed_archive, dict) else None
         )
         archive = self._validate_archive(parsed_archive)
         assert isinstance(source_archive_version, int)
@@ -2256,9 +2627,7 @@ class ProjectArchiveService:
         ids_by_table: dict[str, set[str]] = {}
         id_map: dict[str, str] = {}
         reused_craft_asset_ids: set[str] = set()
-        has_raw_reference_assets = bool(
-            tables["reference_works"] or tables["reference_segments"]
-        )
+        has_raw_reference_assets = bool(tables["reference_works"] or tables["reference_segments"])
         with self.database.connect() as lookup:
             for table in ARCHIVE_TABLES:
                 rows = tables[table.name]
@@ -2271,10 +2640,7 @@ class ProjectArchiveService:
                         raise InvalidProjectArchiveError("duplicate_or_noncanonical_uuid")
                     table_ids.add(old_id)
                     existing_id: str | None = None
-                    if (
-                        table.name == "craft_pattern_assets"
-                        and not has_raw_reference_assets
-                    ):
+                    if table.name == "craft_pattern_assets" and not has_raw_reference_assets:
                         existing = lookup.execute(
                             "SELECT id FROM craft_pattern_assets WHERE content_sha256 = ?",
                             (row["content_sha256"],),
@@ -2346,14 +2712,15 @@ class ProjectArchiveService:
                         raise InvalidProjectArchiveError("external_comic_version_target")
                     row["target_id"] = id_map[old_target_id]
                     old_snapshot_hash = row["source_snapshot_sha256"]
-                    if isinstance(old_snapshot_hash, str) and old_snapshot_hash in comic_source_hash_map:
+                    if (
+                        isinstance(old_snapshot_hash, str)
+                        and old_snapshot_hash in comic_source_hash_map
+                    ):
                         row["source_snapshot_sha256"] = comic_source_hash_map[old_snapshot_hash]
                     content_json = row["content_json"]
                     if not isinstance(content_json, str):
                         raise InvalidProjectArchiveError("invalid_comic_version_content")
-                    row["content_sha256"] = hashlib.sha256(
-                        content_json.encode("utf-8")
-                    ).hexdigest()
+                    row["content_sha256"] = hashlib.sha256(content_json.encode("utf-8")).hexdigest()
                 if table.name == "comic_projects":
                     old_snapshot_hash = row["source_snapshot_sha256"]
                     snapshot_json = row["source_snapshot_json"]
@@ -2391,8 +2758,7 @@ class ProjectArchiveService:
                     row["completed_at"] = imported_at
                 if (
                     table.name == "jobs"
-                    and row["workflow"]
-                    in {"craft_pattern_analysis_v2", "craft_pattern_fusion_v2"}
+                    and row["workflow"] in {"craft_pattern_analysis_v2", "craft_pattern_fusion_v2"}
                     and row["state"] != "succeeded"
                 ):
                     # Imported craft jobs are historical records. Retrying must
@@ -2435,13 +2801,9 @@ class ProjectArchiveService:
                         f"{evidence.get('evidence_sha256')}"
                     )
                     new_evidence_id = str(uuid5(NAMESPACE_URL, identity))
-                    previous = evidence_id_map.setdefault(
-                        old_evidence_id, new_evidence_id
-                    )
+                    previous = evidence_id_map.setdefault(old_evidence_id, new_evidence_id)
                     if previous != new_evidence_id:
-                        raise InvalidProjectArchiveError(
-                            "inconsistent_craft_evidence_identity"
-                        )
+                        raise InvalidProjectArchiveError("inconsistent_craft_evidence_identity")
         for row in remapped["craft_pattern_assets"]:
             craft_items = _parse_json(row["craft_items_json"])
             row["craft_items_json"] = json.dumps(
@@ -2479,12 +2841,8 @@ class ProjectArchiveService:
         _validate_craft_pattern_rows(
             {
                 "craft_pattern_assets": validation_assets,
-                "project_craft_pattern_assets": remapped[
-                    "project_craft_pattern_assets"
-                ],
-                "craft_pattern_job_outputs": remapped[
-                    "craft_pattern_job_outputs"
-                ],
+                "project_craft_pattern_assets": remapped["project_craft_pattern_assets"],
+                "craft_pattern_job_outputs": remapped["craft_pattern_job_outputs"],
             }
         )
         try:
@@ -2492,6 +2850,7 @@ class ProjectArchiveService:
                 remapped,
                 craft_asset_rows=validation_assets,
             )
+            _rebind_pattern_adaptation_rows(remapped)
             validate_writing_pattern_tables(
                 remapped,
                 craft_asset_rows=validation_assets,
@@ -2662,6 +3021,7 @@ class ProjectArchiveService:
             12,
             13,
             14,
+            15,
         }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
@@ -2707,6 +3067,8 @@ class ProjectArchiveService:
             value = self._upgrade_v12_archive(value)
         if value["format_version"] == 13:
             value = self._upgrade_v13_archive(value)
+        if value["format_version"] == 14:
+            value = self._upgrade_v14_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -3139,9 +3501,7 @@ class ProjectArchiveService:
         if not isinstance(application_rows, list):
             raise InvalidProjectArchiveError("invalid_tables")
         application_table = next(
-            table
-            for table in ARCHIVE_TABLES
-            if table.name == "reference_pattern_applications"
+            table for table in ARCHIVE_TABLES if table.name == "reference_pattern_applications"
         )
         legacy_columns = set(application_table.columns) - {
             "lifecycle_state",
@@ -3217,6 +3577,39 @@ class ProjectArchiveService:
         upgraded_tables["project_writing_pattern_profiles"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = 14
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v14_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        for table_name in (
+            "generation_runs",
+            "fact_change_sets",
+            "text_change_sets",
+        ):
+            rows = upgraded_tables.get(table_name, [])
+            if isinstance(rows, list):
+                upgraded_tables[table_name] = [
+                    {**row, "creative_safety_json": row.get("creative_safety_json")}
+                    if isinstance(row, dict)
+                    else row
+                    for row in rows
+                ]
+        upgraded_tables["writing_pattern_adaptation_proposals"] = []
+        upgraded_tables["writing_pattern_adaptation_candidates"] = []
+        upgraded_tables["writing_pattern_adaptation_candidate_versions"] = []
+        upgraded_tables["writing_pattern_adoptions"] = []
+        upgraded_tables["writing_pattern_originality_reports"] = []
+        upgraded_tables["writing_pattern_originality_findings"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 15
         unsigned = dict(upgraded)
         unsigned.pop("checksum_sha256", None)
         upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()

@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.migrations import MIGRATIONS
+from app.pattern_adaptation.schema import PATTERN_ADAPTATION_SCHEMA_SQL
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1].version
 
@@ -64,6 +65,9 @@ CREATE TABLE IF NOT EXISTS generation_runs (
     error_message TEXT,
     provider TEXT NOT NULL DEFAULT 'demo',
     model TEXT NOT NULL DEFAULT 'replay-v1',
+    creative_safety_json TEXT CHECK(
+        creative_safety_json IS NULL OR json_valid(creative_safety_json)
+    ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -118,6 +122,9 @@ CREATE TABLE IF NOT EXISTS fact_change_sets (
     chapter_revision INTEGER NOT NULL CHECK(chapter_revision >= 0),
     state TEXT NOT NULL CHECK(state IN ('candidate', 'applied', 'rejected')),
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    creative_safety_json TEXT CHECK(
+        creative_safety_json IS NULL OR json_valid(creative_safety_json)
+    ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(chapter_id, chapter_revision)
@@ -786,6 +793,9 @@ CREATE TABLE IF NOT EXISTS text_change_sets (
     title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
     state TEXT NOT NULL CHECK(state IN ('candidate', 'applied', 'rejected')),
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    creative_safety_json TEXT CHECK(
+        creative_safety_json IS NULL OR json_valid(creative_safety_json)
+    ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -1049,7 +1059,7 @@ CREATE TABLE IF NOT EXISTS context_directives (
 
 CREATE INDEX IF NOT EXISTS idx_context_directives_chapter
 ON context_directives(chapter_id, source_kind, source_id);
-"""
+""" + PATTERN_ADAPTATION_SCHEMA_SQL
 
 
 class DatabaseIntegrityError(RuntimeError):

@@ -22,6 +22,7 @@ from app.context import (
     ContextTaskType,
     InvalidContextPacketError,
 )
+from app.creative_safety import CreativeSafetyProvenance
 from app.jobs.models import AttemptState, ChunkState, Job, JobKind
 from app.jobs.repository import JobRepository
 from app.jobs.runtime import JobCancellationRequested, JobExecutionContext, JobExecutionError
@@ -107,6 +108,7 @@ class ChapterJobInput(BaseModel):
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     context_compiler_version: str = Field(min_length=1, max_length=80)
     prompt_version: str
+    creative_safety: CreativeSafetyProvenance | None = None
 
 
 def _canonical_json(value: object) -> str:
@@ -191,6 +193,7 @@ class ChapterJobService:
             request.expected_revision,
             require_brief=kind == JobKind.CHAPTER_DRAFT,
         )
+        creative_safety = self.repository.require_creative_safety(chapter.project_id)
         packet = self._resolve_context_packet(kind, workspace, chapter, request)
         input_payload = ChapterJobInput(
             chapter_id=chapter_id,
@@ -200,6 +203,7 @@ class ChapterJobService:
             context_sha256=packet.packet_sha256,
             context_compiler_version=packet.compiler_version,
             prompt_version=CHAPTER_JOB_PROMPT_VERSION,
+            creative_safety=creative_safety,
         ).model_dump(mode="json")
         idempotency_key = sha256(_canonical_json({
             **input_payload,
@@ -220,7 +224,7 @@ class ChapterJobService:
             progress_total=1,
             estimated_calls=1,
         )
-        self._ensure_context_artifact(job.id, packet)
+        self._ensure_context_artifact(job.id, packet, creative_safety)
         artifact_key = "brief" if kind == JobKind.CHAPTER_BRIEF else "draft"
         self.jobs.ensure_chunk(
             job.id,
@@ -247,6 +251,7 @@ class ChapterJobService:
             request.expected_revision,
             require_brief=kind == JobKind.CHAPTER_DRAFT,
         )
+        self.repository.require_creative_safety(chapter.project_id)
         packet = self._compile_context_packet(kind, workspace, chapter, request)
         packet = self.contexts.put_packet(packet)
         profile = self._task_profile(kind)
@@ -384,6 +389,24 @@ class ChapterJobService:
         if job.kind != expected_kind:
             raise JobExecutionError("invalid_job_kind", "章节任务类型无效")
         task_input = ChapterJobInput.model_validate(self.jobs.load_input(job.id))
+        try:
+            current_safety = self.repository.require_creative_safety(
+                job.project_id, task_input.creative_safety
+            )
+        except OriginalityGateBlockedError as error:
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "创作安全依赖已变化，请重新预览后提交；模型未调用",
+            ) from error
+        if (
+            current_safety is not None
+            and current_safety.mode == "pattern_adaptation"
+            and task_input.creative_safety is None
+        ):
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "旧任务缺少创作安全快照，请重新预览后提交；模型未调用",
+            )
         gateway = self.manager.gateway_for(job.provider_profile_id)
         status = gateway.status()
         if (
@@ -427,7 +450,7 @@ class ChapterJobService:
             )
 
         artifact_key = "brief" if expected_kind == JobKind.CHAPTER_BRIEF else "draft"
-        self._ensure_context_artifact(job.id, packet)
+        self._ensure_context_artifact(job.id, packet, task_input.creative_safety)
         planned_chunk, _created = self.jobs.ensure_chunk(
             job.id,
             kind=expected_kind,
@@ -590,7 +613,12 @@ class ChapterJobService:
                     "任务冻结的上下文产物无法解析，未调用模型",
                 ) from error
 
-    def _ensure_context_artifact(self, job_id: str, packet: ContextPacket) -> None:
+    def _ensure_context_artifact(
+        self,
+        job_id: str,
+        packet: ContextPacket,
+        creative_safety: CreativeSafetyProvenance | None,
+    ) -> None:
         self.jobs.put_artifact(
             job_id,
             kind="context_packet",
@@ -604,6 +632,11 @@ class ChapterJobService:
                 "packet_sha256": packet.packet_sha256,
                 "used_tokens": packet.used_tokens,
                 "token_budget": packet.token_budget,
+                "creative_safety": (
+                    creative_safety.model_dump(mode="json")
+                    if creative_safety is not None
+                    else None
+                ),
             },
         )
 
@@ -707,6 +740,15 @@ class ChapterJobService:
         run_id = artifact.metadata.get("generation_run_id")
         if not isinstance(run_id, str):
             raise JobExecutionError("invalid_artifact", "正文候选采用标识无效")
+        if task_input.creative_safety is None:
+            return self.repository.materialize_generation_run(
+                run_id,
+                task_input.chapter_id,
+                task_input.expected_revision,
+                candidate,
+                job.provider,
+                job.model,
+            )
         return self.repository.materialize_generation_run(
             run_id,
             task_input.chapter_id,
@@ -714,6 +756,7 @@ class ChapterJobService:
             candidate,
             job.provider,
             job.model,
+            creative_safety=task_input.creative_safety,
         )
 
     def _load_chapter(

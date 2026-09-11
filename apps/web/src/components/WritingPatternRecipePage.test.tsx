@@ -290,6 +290,18 @@ describe('WritingPatternRecipePage', () => {
     vi.spyOn(api, 'reuseWritingPatternRecipe').mockResolvedValue(activeProfile)
     vi.spyOn(api, 'updateWritingPatternRecipeLifecycle').mockResolvedValue(recipeSeries)
     vi.spyOn(api, 'updateWritingPatternProfileLifecycle').mockResolvedValue(activeProfile)
+    vi.spyOn(api, 'getPatternOriginalityGate').mockResolvedValue({
+      project_id: projectId,
+      state: 'needs_adaptation',
+      reason: 'adaptation_not_adopted',
+      requires_check: true,
+      adoption: null,
+      blueprint_id: null,
+      blueprint_revision: null,
+      blueprint_content_sha256: null,
+      latest_report: null,
+      report_is_current: false,
+    })
   })
 
   afterEach(() => {

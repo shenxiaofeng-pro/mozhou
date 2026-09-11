@@ -320,6 +320,7 @@ def test_director_candidates_locks_expansion_and_pipeline_never_overwrite_manusc
         assert len(snapshot["volume_plans"]) == 1
         assert len(snapshot["rolling_chapter_plans"]) == 3
         blueprint = snapshot["book_blueprint"]
+        assert blueprint["revision"] == expansion_request["expected_revision"]
         assert blueprint["plan_stale"] is False
         assert blueprint["locks"]["rebirth_year"] is True
         assert blueprint["locks"]["ending_direction"] is True

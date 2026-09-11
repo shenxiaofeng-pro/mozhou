@@ -267,6 +267,7 @@ export function App() {
           workspace={workspace}
           onBack={() => setActiveView('writing')}
           onOpenTopicDecision={() => setActiveView('topic-decision')}
+          onWorkspaceChanged={handleWorkspaceChanged}
         />
       </Suspense>
     ) : activeView === 'reference-library'
@@ -319,6 +320,7 @@ export function App() {
         onChapterChanged={handleChapterChanged}
         onWorkspaceChanged={handleWorkspaceChanged}
         onOpenReferenceLibrary={() => setActiveView('reference-library')}
+        onOpenWritingPatterns={() => setActiveView('writing-patterns')}
       />
     </>
   )

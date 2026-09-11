@@ -20,6 +20,7 @@ export type JobKind =
   | 'comic_season_plan'
   | 'comic_episode_script'
   | 'topic_decision'
+  | 'pattern_adaptation'
 
 export type JobState =
   | 'queued'
@@ -1491,6 +1492,7 @@ export type AiTaskType =
   | 'research'
   | 'comic_season_plan'
   | 'comic_episode_script'
+  | 'pattern_adaptation'
 
 export type ResearchCategory = 'historical_event' | 'local_system' | 'industry_rule' | 'price_technology' | 'controversy'
 export type ResearchMode = 'local' | 'ai'
@@ -2291,6 +2293,227 @@ export interface WritingPatternProfileVersion extends WritingPatternProfileSumma
 export interface UpdateWritingPatternLifecycleInput {
   state: WritingPatternLifecycleState
   expected_lifecycle_revision: number
+}
+
+export type PatternDistinctAxis =
+  | 'core_conflict'
+  | 'character_relationships'
+  | 'resource_progression'
+  | 'scene_organization'
+  | 'ending'
+
+export type PatternAdaptationResultState = 'pending' | 'available' | 'stale' | 'invalid'
+
+export type PatternAdaptationCostStatus = 'free' | 'known' | 'unavailable'
+
+export type PatternAdaptationCandidateSource = 'model' | 'author_edit'
+
+export interface PatternAdaptationPreflightInput {
+  profile_version_id: string
+  expected_profile_fingerprint_sha256: string
+  expected_topic_revision: number
+  expected_topic_content_sha256: string
+  expected_base_blueprint_revision: number | null
+  expected_base_blueprint_content_sha256: string | null
+  author_intent: string
+  provider_profile_id: string | null
+}
+
+export interface SubmitPatternAdaptationInput extends PatternAdaptationPreflightInput {
+  expected_preview_sha256: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface PatternAdaptationPreflight {
+  profile_version_id: string
+  profile_fingerprint_sha256: string
+  recipe_version_id: string
+  recipe_content_sha256: string
+  source_availability: WritingPatternSafetyBasis
+  topic_decision_version_id: string
+  topic_revision: number
+  topic_content_sha256: string
+  base_blueprint_id: string | null
+  base_blueprint_revision: number | null
+  base_blueprint_content_sha256: string | null
+  dependency_fingerprint_sha256: string
+  safe_context_sha256: string
+  lock_snapshot_sha256: string
+  provider: string
+  provider_profile_id: string | null
+  provider_profile_name: string
+  provider_profile_revision: number | null
+  model: string
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_calls: 1
+  estimated_cost_microusd: number | null
+  cost_status: PatternAdaptationCostStatus
+  data_types: string[]
+  content_scope: string
+  locked_fields: BookBlueprintField[]
+  relationship_mode: 'rebuild_by_default'
+  preview_sha256: string
+}
+
+export interface PatternAdaptationCandidateVersion {
+  id: string
+  candidate_id: string
+  revision: number
+  blueprint: BookBlueprintContent
+  key_scene_sequence: string[]
+  transformation_notes: string[]
+  content_sha256: string
+  changed_fields: BookBlueprintField[]
+  source: PatternAdaptationCandidateSource
+  created_at: string
+}
+
+export interface PatternAdaptationCandidate {
+  id: string
+  proposal_id: string
+  ordinal: number
+  label: string
+  why_distinct: string
+  distinct_axes: PatternDistinctAxis[]
+  risk_hypotheses: string[]
+  current_version: PatternAdaptationCandidateVersion
+  created_at: string
+  updated_at: string
+}
+
+export interface PatternAdaptationProposal {
+  id: string
+  job_id: string
+  project_id: string
+  profile_version_id: string
+  profile_fingerprint_sha256: string
+  recipe_version_id: string
+  recipe_content_sha256: string
+  topic_decision_version_id: string
+  topic_revision: number
+  topic_content_sha256: string
+  base_blueprint_id: string | null
+  base_blueprint_revision: number | null
+  base_blueprint_content_sha256: string | null
+  dependency_fingerprint_sha256: string
+  safe_context_sha256: string
+  lock_snapshot_sha256: string
+  provider: string
+  provider_profile_id: string | null
+  provider_profile_revision: number | null
+  model: string
+  input_cost_microusd_per_million: number | null
+  output_cost_microusd_per_million: number | null
+  result_state: PatternAdaptationResultState
+  stale_reason: string | null
+  candidates: PatternAdaptationCandidate[]
+  created_at: string
+  updated_at: string
+}
+
+export interface EditPatternAdaptationCandidateInput {
+  blueprint: BookBlueprintContent
+  key_scene_sequence: string[]
+  transformation_notes: string[]
+  changed_fields: BookBlueprintField[]
+  expected_revision: number
+  expected_content_sha256: string
+}
+
+export interface AdoptPatternAdaptationCandidateInput {
+  expected_candidate_revision: number
+  expected_candidate_content_sha256: string
+  expected_profile_fingerprint_sha256: string
+  expected_recipe_content_sha256: string
+  expected_topic_revision: number
+  expected_topic_content_sha256: string
+  expected_base_blueprint_revision: number | null
+  expected_base_blueprint_content_sha256: string | null
+  idempotency_key: string
+}
+
+export interface PatternAdaptationAdoption {
+  id: string
+  project_id: string
+  proposal_id: string
+  candidate_id: string
+  candidate_version_id: string
+  blueprint_id: string
+  blueprint_revision: number
+  blueprint_content_sha256: string
+  profile_fingerprint_sha256: string
+  recipe_content_sha256: string
+  created_at: string
+}
+
+export interface AdoptPatternAdaptationResult {
+  adoption: PatternAdaptationAdoption
+  blueprint: BookBlueprint
+  originality_status: 'needs_check'
+}
+
+export interface RunPatternOriginalityCheckInput {
+  expected_blueprint_revision: number
+  expected_blueprint_content_sha256: string
+  expected_profile_fingerprint_sha256: string
+  expected_recipe_content_sha256: string
+}
+
+export interface PatternOriginalityFinding {
+  id: string
+  ordinal: number
+  signal: string
+  score: number
+  summary: string
+  source_fingerprint_sha256: string
+  evidence_sha256: string
+}
+
+export interface PatternOriginalityReport {
+  id: string
+  project_id: string
+  adoption_id: string
+  profile_fingerprint_sha256: string
+  recipe_content_sha256: string
+  blueprint_id: string
+  blueprint_revision: number
+  blueprint_content_sha256: string
+  candidate_version_id: string
+  candidate_content_sha256: string
+  risk_level: OriginalityRiskLevel
+  status: OriginalityStatus
+  score: number
+  threshold_version: string
+  input_sha256: string
+  source_availability: WritingPatternSafetyBasis
+  findings: PatternOriginalityFinding[]
+  viewed_at: string | null
+  acknowledged_at: string | null
+  created_at: string
+}
+
+export type PatternOriginalityGateStatus =
+  | 'legacy'
+  | 'needs_adaptation'
+  | 'needs_check'
+  | 'review_required'
+  | 'blocked'
+  | 'passed'
+  | 'stale'
+
+export interface PatternOriginalityGateState {
+  project_id: string
+  state: PatternOriginalityGateStatus
+  reason: string | null
+  requires_check: boolean
+  adoption: PatternAdaptationAdoption | null
+  blueprint_id: string | null
+  blueprint_revision: number | null
+  blueprint_content_sha256: string | null
+  latest_report: PatternOriginalityReport | null
+  report_is_current: boolean
 }
 
 export interface ReferenceDimensionSynthesis {

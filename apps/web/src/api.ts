@@ -5,6 +5,8 @@ import type {
   AiStatus,
   AiTaskDefault,
   AiTaskType,
+  AdoptPatternAdaptationCandidateInput,
+  AdoptPatternAdaptationResult,
   AcknowledgeOriginalityReportInput,
   ApplyFactChangeSetInput,
   ApplyDirectorProposalInput,
@@ -70,10 +72,17 @@ import type {
   JobDetail,
   KnowledgeReviewAction,
   ModelProfile,
+  EditPatternAdaptationCandidateInput,
   ManuscriptExport,
   ManuscriptImportPreview,
   MoveDirectoryNodeInput,
   OriginalityReport,
+  PatternAdaptationCandidate,
+  PatternAdaptationPreflight,
+  PatternAdaptationPreflightInput,
+  PatternAdaptationProposal,
+  PatternOriginalityGateState,
+  PatternOriginalityReport,
   Project,
   ProjectArchive,
   ReferenceWork,
@@ -167,6 +176,8 @@ import type {
   PreviewWritingPatternRecipeVersionInput,
   PreviewWritingPatternReuseInput,
   ReuseWritingPatternRecipeInput,
+  RunPatternOriginalityCheckInput,
+  SubmitPatternAdaptationInput,
   UpdateWritingPatternLifecycleInput,
   WritingPatternLifecycleState,
   WritingPatternProfilePreview,
@@ -1461,6 +1472,71 @@ export const api = {
     return request<WritingPatternProfileVersion>(
       `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles/${encodeURIComponent(profileVersionId)}/lifecycle`,
       { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewPatternAdaptation(projectId: string, input: PatternAdaptationPreflightInput) {
+    return request<PatternAdaptationPreflight>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptations/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startPatternAdaptation(projectId: string, input: SubmitPatternAdaptationInput) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptations`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getPatternAdaptationResult(projectId: string, jobId: string) {
+    return request<PatternAdaptationProposal>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptation-jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  editPatternAdaptationCandidate(
+    projectId: string,
+    candidateId: string,
+    input: EditPatternAdaptationCandidateInput,
+  ) {
+    return request<PatternAdaptationCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptation-candidates/${encodeURIComponent(candidateId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  adoptPatternAdaptationCandidate(
+    projectId: string,
+    candidateId: string,
+    input: AdoptPatternAdaptationCandidateInput,
+  ) {
+    return request<AdoptPatternAdaptationResult>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptation-candidates/${encodeURIComponent(candidateId)}/adopt`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  runPatternOriginalityCheck(projectId: string, input: RunPatternOriginalityCheckInput) {
+    return request<PatternOriginalityReport>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-originality-checks`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getPatternOriginalityGate(projectId: string) {
+    return request<PatternOriginalityGateState>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-originality-gate`,
+    )
+  },
+  getPatternOriginalityReport(reportId: string) {
+    return request<PatternOriginalityReport>(
+      `/api/pattern-originality-reports/${encodeURIComponent(reportId)}`,
+    )
+  },
+  viewPatternOriginalityReport(reportId: string) {
+    return request<PatternOriginalityReport>(
+      `/api/pattern-originality-reports/${encodeURIComponent(reportId)}/views`,
+      { method: 'POST' },
+    )
+  },
+  acknowledgePatternOriginalityReport(reportId: string) {
+    return request<PatternOriginalityReport>(
+      `/api/pattern-originality-reports/${encodeURIComponent(reportId)}/acknowledgements`,
+      { method: 'POST' },
     )
   },
   applyReferencePattern(projectId: string, cardId: string, input: ApplyReferencePatternInput) {

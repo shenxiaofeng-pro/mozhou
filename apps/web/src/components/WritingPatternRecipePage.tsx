@@ -24,11 +24,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api } from '../api'
 import { CraftPatternAssetCard } from './CraftPatternAssetCard'
 import { craftDimensionLabels } from './craftPatternLabels'
+import { PatternAdaptationWorkbench } from './PatternAdaptationWorkbench'
 
 interface WritingPatternRecipePageProps {
   workspace: WorkspaceSummary
   onBack: () => void
   onOpenTopicDecision?: () => void
+  onWorkspaceChanged?: (workspace: WorkspaceSummary) => void
 }
 
 interface RecipeVersionBase {
@@ -227,6 +229,7 @@ export function WritingPatternRecipePage({
   workspace,
   onBack,
   onOpenTopicDecision = () => undefined,
+  onWorkspaceChanged,
 }: WritingPatternRecipePageProps) {
   const [assets, setAssets] = useState<CraftPatternAssetSummary[] | null>(null)
   const [assetDetails, setAssetDetails] = useState<Record<string, CraftPatternAsset>>({})
@@ -932,6 +935,11 @@ export function WritingPatternRecipePage({
           </article>
         ) : null}
       </section>
+      <PatternAdaptationWorkbench
+        workspace={workspace}
+        profile={profileDetail}
+        onWorkspaceChanged={onWorkspaceChanged}
+      />
     </main>
   )
 }

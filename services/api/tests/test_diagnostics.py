@@ -38,7 +38,7 @@ def test_diagnostic_summary_and_bundle_exclude_private_author_data(tmp_path: Pat
         bundle = client.post("/api/diagnostics/bundle")
 
     assert summary.status_code == 200
-    assert summary.json()["schema_version"] == 26
+    assert summary.json()["schema_version"] == 28
     assert summary.json()["counts"]["projects"] == 1
     assert {item["status"] for item in summary.json()["checks"]} == {"ok"}
     assert bundle.status_code == 200

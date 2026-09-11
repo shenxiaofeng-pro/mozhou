@@ -13,6 +13,7 @@ class GenerationService:
 
     def resume(self, run_id: str) -> GenerationRun:
         run = self.repository.get_generation_run(run_id)
+        self.repository.require_generation_run_creative_safety(run_id)
         if run.provider != "demo":
             return run
         if run.state == GenerationState.CONTEXT_READY:

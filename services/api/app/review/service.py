@@ -12,6 +12,7 @@ from app.ai import (
     consume_ai_call_metrics,
 )
 from app.context.compiler import estimate_tokens
+from app.creative_safety import CreativeSafetyProvenance
 from app.jobs.models import AttemptState, ChunkState, Job, JobAttempt, JobChunk, JobKind
 from app.jobs.repository import JobRepository
 from app.jobs.runtime import JobExecutionContext, JobExecutionError
@@ -36,7 +37,12 @@ from app.providers import (
     ModelProfileRepository,
     ProviderCallMetrics,
 )
-from app.repository import NotFoundError, ProjectRepository, StaleRevisionError
+from app.repository import (
+    NotFoundError,
+    OriginalityGateBlockedError,
+    ProjectRepository,
+    StaleRevisionError,
+)
 from app.review.repository import ReviewRepository
 from app.review.rules import (
     EXTERNAL_REVIEW_DIMENSIONS,
@@ -73,6 +79,7 @@ class ReviewJobInput(BaseModel):
     dimensions: list[ReviewDimension] = Field(min_length=1, max_length=7)
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     prompt_version: str
+    creative_safety: CreativeSafetyProvenance | None = None
 
 
 class ReviewDimensionArtifact(BaseModel):
@@ -173,6 +180,7 @@ class ReviewService:
             request.expected_revision,
             request.window_size,
         )
+        creative_safety = self.repository.require_creative_safety(workspace.project.id)
         if preview.context_sha256 != sha256(context_text.encode("utf-8")).hexdigest():
             raise StaleRevisionError(str(target.revision))
         if request.parent_job_id is not None:
@@ -190,6 +198,7 @@ class ReviewService:
             dimensions=request.dimensions,
             context_sha256=preview.context_sha256,
             prompt_version=REVIEW_PROMPT_VERSION,
+            creative_safety=creative_safety,
         )
         input_payload = task_input.model_dump(mode="json")
         idempotency_key = sha256(
@@ -224,6 +233,24 @@ class ReviewService:
         if job.kind != JobKind.REVIEW or job.workflow != REVIEW_WORKFLOW:
             raise JobExecutionError("invalid_workflow", "章节审校任务类型无效")
         task_input = ReviewJobInput.model_validate(self.jobs.load_input(job.id))
+        try:
+            current_safety = self.repository.require_creative_safety(
+                job.project_id, task_input.creative_safety
+            )
+        except OriginalityGateBlockedError as error:
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "创作安全依赖已变化，请重新预览后提交；模型未调用",
+            ) from error
+        if (
+            current_safety is not None
+            and current_safety.mode == "pattern_adaptation"
+            and task_input.creative_safety is None
+        ):
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "旧任务缺少创作安全快照，请重新预览后提交；模型未调用",
+            )
         workspace, target, review_window, rebuilt_context = self._snapshot(
             task_input.chapter_id,
             task_input.chapter_revision,
@@ -451,6 +478,7 @@ class ReviewService:
         window_size: int,
     ) -> tuple[Workspace, Chapter, list[Chapter], str]:
         workspace = self.repository.get_workspace_for_chapter(chapter_id)
+        self.repository.require_creative_safety(workspace.project.id)
         try:
             target = next(chapter for chapter in workspace.chapters if chapter.id == chapter_id)
         except StopIteration as error:
@@ -578,6 +606,11 @@ class ReviewService:
             metadata={
                 "chapter_id": task_input.chapter_id,
                 "chapter_revision": task_input.chapter_revision,
+                "creative_safety": (
+                    task_input.creative_safety.model_dump(mode="json")
+                    if task_input.creative_safety is not None
+                    else None
+                ),
                 "window_size": task_input.window_size,
                 "context_sha256": task_input.context_sha256,
             },

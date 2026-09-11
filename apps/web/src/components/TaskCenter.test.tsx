@@ -46,6 +46,16 @@ function failedCraftJob(errorCode: string): Job {
   }
 }
 
+function adaptationJob(): Job {
+  return {
+    ...craftJob('craft_pattern_analysis_v2'),
+    id: 'pattern-adaptation-job',
+    kind: 'pattern_adaptation',
+    workflow: 'pattern_adaptation',
+    current_step: '3 套原创迁移方案已生成',
+  }
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -138,5 +148,35 @@ describe('TaskCenter craft pattern jobs', () => {
     await user.click(await screen.findByRole('button', { name: '从断点继续' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('原预检依据已过期')
     expect(screen.getByRole('button', { name: '重新预检' })).toBeVisible()
+  })
+
+  it('returns a completed writing-pattern migration job to its three isolated candidates', async () => {
+    const job = adaptationJob()
+    vi.spyOn(api, 'listJobs').mockResolvedValue([job])
+    vi.spyOn(api, 'getJob').mockResolvedValue({
+      ...job,
+      chunks: [], attempts: [], artifacts: [], events: [],
+    } satisfies JobDetail)
+    const onClose = vi.fn()
+    const onOpenWritingPatterns = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <TaskCenter
+        projectId="project-1"
+        chapters={[]}
+        open
+        onClose={onClose}
+        onChapterChanged={vi.fn()}
+        onWorkspaceChanged={vi.fn()}
+        onOpenReferenceLibrary={vi.fn()}
+        onOpenWritingPatterns={onOpenWritingPatterns}
+      />,
+    )
+
+    expect(await screen.findByText('写作模式原创迁移')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '查看三套候选' }))
+    await waitFor(() => expect(onOpenWritingPatterns).toHaveBeenCalledTimes(1))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

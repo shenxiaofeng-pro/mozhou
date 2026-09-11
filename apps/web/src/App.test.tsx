@@ -1074,6 +1074,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
     await user.click(await screen.findByRole('button', { name: '打开模型线路台' }))
     const route = await screen.findByLabelText('章纲设计模型线路')
+    expect(screen.getByLabelText('写作模式迁移模型线路')).toBeInTheDocument()
     await user.selectOptions(route, profile.id)
 
     expect(setDefault).toHaveBeenCalledWith('chapter_brief', {

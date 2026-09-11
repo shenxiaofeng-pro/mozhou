@@ -579,7 +579,7 @@ def test_v13_archive_restores_asset_parent_closure_without_raw_text(
     repository.purge_reference_work(work_id)
     archive_service = ProjectArchiveService(repository.database)
     archive = archive_service.export_project(project_id)
-    assert archive["format_version"] == 14
+    assert archive["format_version"] == 15
     assert archive["tables"]["reference_works"] == []
     assert len(archive["tables"]["craft_pattern_assets"]) == 2
 
@@ -1085,7 +1085,7 @@ def test_analysis_materializes_book_with_more_than_thirty_stage_parents(
     book = next(asset for asset in assets if asset.asset_type == CraftPatternAssetType.BOOK_EVOLUTION)
     assert len(book.source_asset_version_ids) == 31
     archive = ProjectArchiveService(repository.database).export_project(project_id)
-    assert archive["format_version"] == 14
+    assert archive["format_version"] == 15
     assert len(archive["tables"]["craft_pattern_assets"]) == 32
 
 
