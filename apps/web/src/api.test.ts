@@ -96,3 +96,67 @@ it('updates a reference application lifecycle with its independent revision', as
     }),
   )
 })
+
+it('starts topic candidates only after forwarding the explicit external-processing confirmation', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ id: 'job-1', kind: 'topic_decision' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', request)
+
+  await api.startTopicDecisionCandidateJob('project id', {
+    expected_revision: 4,
+    author_intent: '更强调开篇兑现',
+    confirm_external_processing: true,
+    max_estimated_cost_microusd: 12_345,
+  })
+
+  expect(request).toHaveBeenCalledWith(
+    'http://127.0.0.1:8765/api/projects/project%20id/topic-decision/candidate-jobs',
+    expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        expected_revision: 4,
+        author_intent: '更强调开篇兑现',
+        confirm_external_processing: true,
+        max_estimated_cost_microusd: 12_345,
+      }),
+    }),
+  )
+})
+
+it('sends only the author-selected topic fields when adopting a candidate', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ id: 'topic-1', revision: 5 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', request)
+
+  await api.selectTopicDecisionCandidate('project/id', {
+    job_id: 'job-1',
+    candidate_id: 'candidate-2',
+    selected_fields: ['premise', 'core_desire'],
+    expected_revision: 4,
+  })
+
+  expect(request).toHaveBeenCalledWith(
+    'http://127.0.0.1:8765/api/projects/project%2Fid/topic-decision/candidate-selection',
+    expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        job_id: 'job-1',
+        candidate_id: 'candidate-2',
+        selected_fields: ['premise', 'core_desire'],
+        expected_revision: 4,
+      }),
+    }),
+  )
+})

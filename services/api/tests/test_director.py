@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,7 @@ class DirectorGateway:
         self.field_calls = 0
         self.brief_calls = 0
         self.draft_calls = 0
+        self.startup_contexts: list[dict[str, object]] = []
 
     def status(self) -> AiStatus:
         return AiStatus(
@@ -60,6 +62,7 @@ class DirectorGateway:
     def propose_director_startup(self, context_text: str) -> DirectorStartupDraftSet:
         self.startup_calls += 1
         payload = json.loads(context_text)
+        self.startup_contexts.append(payload)
         genre, year, location = self._blueprint_context(context_text)
         candidates = []
         for ordinal in range(1, int(payload["candidate_count"]) + 1):
@@ -182,7 +185,17 @@ class DirectorGateway:
         return "厂门口的雨落得很密。林川盯着父亲手里的订单，没有立刻说出自己重生的秘密。" * 20
 
 
-def _project_payload(genre: str = "urban_rebirth") -> dict[str, object]:
+def _project_payload(
+    genre: str = "urban_rebirth",
+    *,
+    topic_seed: str = "",
+) -> dict[str, object]:
+    template_ids = {
+        "historical_rebirth": "historical-rebirth",
+        "urban_rebirth": "urban-rebirth",
+        "eastern_fantasy": "eastern-fantasy",
+        "western_fantasy": "western-fantasy",
+    }
     return {
         "title": "回到九八年的南平",
         "genre": genre,
@@ -190,11 +203,25 @@ def _project_payload(genre: str = "urban_rebirth") -> dict[str, object]:
         "rebirth_location": "福建南平",
         "chapter_target_words": 3000,
         "safety_buffer_chapters": 3,
+        "template_id": template_ids[genre],
+        "topic_seed": topic_seed,
     }
 
 
 def _run_one(client: TestClient) -> None:
     assert client.app.state.job_runtime.run_once() is True
+
+
+def _confirm_topic(client: TestClient, workspace: dict[str, object]) -> dict[str, object]:
+    project = workspace["project"]
+    topic = workspace["topic_decision"]
+    assert isinstance(project, dict) and isinstance(topic, dict)
+    response = client.post(
+        f"/api/projects/{project['id']}/topic-decision/confirm",
+        json={"expected_revision": topic["revision"]},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def test_director_candidates_locks_expansion_and_pipeline_never_overwrite_manuscript(
@@ -210,10 +237,12 @@ def test_director_candidates_locks_expansion_and_pipeline_never_overwrite_manusc
         workspace = client.post("/api/projects", json=_project_payload()).json()
         project_id = workspace["project"]["id"]
         chapter_id = workspace["chapters"][0]["id"]
+        confirmed_topic = _confirm_topic(client, workspace)
         startup_request = {
             "idea": "1998 年南平，一个失败商人重生后先救父亲的竹木厂",
             "reality_anchor": "以本地竹木产业和真实订单链为锚",
             "candidate_count": 3,
+            "expected_topic_revision": confirmed_topic["revision"],
         }
         preview = client.post(
             f"/api/projects/{project_id}/director/startup-preview",
@@ -416,9 +445,12 @@ def test_startup_cases_return_three_distinct_editable_candidates(
             defer_job_runtime=True,
         )
     ) as client:
-        project_id = client.post("/api/projects", json=_project_payload(genre)).json()["project"][
-            "id"
-        ]
+        workspace = client.post(
+            "/api/projects",
+            json=_project_payload(genre, topic_seed=idea),
+        ).json()
+        project_id = workspace["project"]["id"]
+        confirmed_topic = _confirm_topic(client, workspace)
         submitted = client.post(
             f"/api/projects/{project_id}/director/startup-jobs",
             json={
@@ -426,6 +458,7 @@ def test_startup_cases_return_three_distinct_editable_candidates(
                 "reality_anchor": "作者提供的现实锚点",
                 "candidate_count": 3,
                 "confirm_external_processing": True,
+                "expected_topic_revision": confirmed_topic["revision"],
             },
         ).json()
         _run_one(client)
@@ -434,6 +467,196 @@ def test_startup_cases_return_three_distinct_editable_candidates(
         ]
         assert len({item["blueprint"]["core_selling_points"][0] for item in candidates}) == 3
         assert all(item["blueprint"]["genre"] == genre for item in candidates)
+
+
+def test_startup_uses_only_confirmed_topic_snapshot_and_excludes_rejection_metadata(
+    tmp_path: Path,
+) -> None:
+    gateway = DirectorGateway()
+    with TestClient(
+        create_app(
+            tmp_path / "director-confirmed-topic.db",
+            AiGatewayManager(gateway),
+            defer_job_runtime=True,
+        )
+    ) as client:
+        workspace = client.post(
+            "/api/projects",
+            json=_project_payload(
+                topic_seed="林川回到九八年，从挽救父亲的竹木厂开始改变家乡。"
+            ),
+        ).json()
+        project_id = workspace["project"]["id"]
+        draft = workspace["topic_decision"]
+        updated = client.patch(
+            f"/api/projects/{project_id}/topic-decision",
+            json={
+                "content": draft["content"],
+                "changed_fields": [],
+                "lock_updates": {"core_desire": True},
+                "rejection_reason_updates": {"premise": "私密拒绝理由：不写投机起家"},
+                "expected_revision": draft["revision"],
+            },
+        ).json()
+        confirmed = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": updated["revision"]},
+        ).json()
+
+        submitted = client.post(
+            f"/api/projects/{project_id}/director/startup-jobs",
+            json={
+                "idea": "未确认的请求内创意，不得进入模型上下文",
+                "reality_anchor": "未确认的请求内现实锚点",
+                "candidate_count": 3,
+                "confirm_external_processing": True,
+                "expected_topic_revision": confirmed["revision"],
+            },
+        )
+        assert submitted.status_code == 202, submitted.text
+        _run_one(client)
+        result = client.get(
+            f"/api/jobs/{submitted.json()['id']}/director-startup-result"
+        ).json()
+
+    assert gateway.startup_calls == 1
+    context = gateway.startup_contexts[0]
+    topic_context = context["topic_decision"]
+    assert isinstance(topic_context, dict)
+    assert context["idea"] == confirmed["content"]["premise"]
+    assert context["reality_anchor"] == confirmed["content"]["reality_anchor"]
+    assert context["first_ten_chapter_goal"] == confirmed["content"][
+        "first_ten_chapter_goal"
+    ]
+    assert topic_context["revision"] == confirmed["revision"]
+    assert topic_context["locked_fields"] == ["core_desire"]
+    serialized = json.dumps(context, ensure_ascii=False)
+    assert "未确认的请求内创意" not in serialized
+    assert "未确认的请求内现实锚点" not in serialized
+    assert "私密拒绝理由" not in serialized
+    assert result["idea"] == confirmed["content"]["premise"]
+
+
+def test_unconfirmed_or_changed_topic_blocks_startup_before_model_call(tmp_path: Path) -> None:
+    gateway = DirectorGateway()
+    with TestClient(
+        create_app(
+            tmp_path / "director-topic-gate.db",
+            AiGatewayManager(gateway),
+            defer_job_runtime=True,
+        )
+    ) as client:
+        workspace = client.post("/api/projects", json=_project_payload()).json()
+        project_id = workspace["project"]["id"]
+        request = {
+            "idea": "应由已确认选题取代",
+            "candidate_count": 3,
+            "expected_topic_revision": 0,
+        }
+        unconfirmed = client.post(
+            f"/api/projects/{project_id}/director/startup-preview",
+            json=request,
+        )
+        assert unconfirmed.status_code == 409
+        assert unconfirmed.json()["detail"] == "请先确认当前选题"
+        confirmed = _confirm_topic(client, workspace)
+        stale_submit = client.post(
+            f"/api/projects/{project_id}/director/startup-jobs",
+            json={**request, "confirm_external_processing": True},
+        )
+        assert stale_submit.status_code == 409
+        assert stale_submit.json()["detail"] == "选题已更新，请重新生成开书方向"
+        submitted = client.post(
+            f"/api/projects/{project_id}/director/startup-jobs",
+            json={
+                **request,
+                "expected_topic_revision": confirmed["revision"],
+                "confirm_external_processing": True,
+            },
+        )
+        assert submitted.status_code == 202, submitted.text
+        next_content = {
+            **confirmed["content"],
+            "premise": "作者已改变选题，旧开书任务必须作废。",
+        }
+        changed = client.patch(
+            f"/api/projects/{project_id}/topic-decision",
+            json={
+                "content": next_content,
+                "changed_fields": ["premise"],
+                "lock_updates": {},
+                "rejection_reason_updates": {},
+                "expected_revision": confirmed["revision"],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        _run_one(client)
+        job = client.get(f"/api/jobs/{submitted.json()['id']}").json()
+
+    assert job["state"] == "failed"
+    assert job["error_code"] in {"topic_changed", "topic_not_confirmed"}
+    assert gateway.startup_calls == 0
+
+
+def test_legacy_startup_uses_only_request_and_expires_after_first_topic_confirmation(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "director-legacy-topic.db"
+    gateway = DirectorGateway()
+    with TestClient(
+        create_app(
+            database_path,
+            AiGatewayManager(gateway),
+            defer_job_runtime=True,
+        )
+    ) as client:
+        workspace = client.post(
+            "/api/projects",
+            json=_project_payload(topic_seed="未确认草稿私密命题，绝不外发"),
+        ).json()
+        project_id = workspace["project"]["id"]
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE topic_decisions SET onboarding_required = 0 WHERE project_id = ?",
+                (project_id,),
+            )
+        submitted = client.post(
+            f"/api/projects/{project_id}/director/startup-jobs",
+            json={
+                "idea": "旧作品当次开书创意",
+                "reality_anchor": "旧作品当次现实锚点",
+                "candidate_count": 3,
+                "confirm_external_processing": True,
+                "expected_topic_revision": None,
+            },
+        )
+        assert submitted.status_code == 202, submitted.text
+        _run_one(client)
+        result_before_confirmation = client.get(
+            f"/api/jobs/{submitted.json()['id']}/director-startup-result"
+        )
+        confirmed = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": 0},
+        )
+        result_after_confirmation = client.get(
+            f"/api/jobs/{submitted.json()['id']}/director-startup-result"
+        )
+
+    assert result_before_confirmation.status_code == 200
+    assert result_before_confirmation.json()["idea"] == "旧作品当次开书创意"
+    assert confirmed.status_code == 200, confirmed.text
+    assert result_after_confirmation.status_code == 409
+    assert gateway.startup_calls == 1
+    context = gateway.startup_contexts[0]
+    assert context["topic_source"] == "legacy_request"
+    assert context["idea"] == "旧作品当次开书创意"
+    assert context["reality_anchor"] == "旧作品当次现实锚点"
+    assert "topic_decision" not in context
+    assert "未确认草稿私密命题" not in json.dumps(
+        context,
+        ensure_ascii=False,
+    )
 
 
 def test_director_cost_limit_blocks_before_provider_call(tmp_path: Path) -> None:
@@ -463,10 +686,13 @@ def test_director_cost_limit_blocks_before_provider_call(tmp_path: Path) -> None
             defer_job_runtime=True,
         )
     ) as client:
-        project_id = client.post("/api/projects", json=_project_payload()).json()["project"]["id"]
+        workspace = client.post("/api/projects", json=_project_payload()).json()
+        project_id = workspace["project"]["id"]
+        confirmed_topic = _confirm_topic(client, workspace)
         request = {
             "idea": "回到九八年救下一家工厂",
             "candidate_count": 3,
+            "expected_topic_revision": confirmed_topic["revision"],
         }
         preview = client.post(
             f"/api/projects/{project_id}/director/startup-preview",

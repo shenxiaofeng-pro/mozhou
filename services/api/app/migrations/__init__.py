@@ -26,6 +26,7 @@ from app.migrations import (
     v21,
     v22,
     v23,
+    v24,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -78,6 +79,7 @@ MIGRATIONS = (
         name="reference_application_lifecycle",
         upgrade=v23.upgrade,
     ),
+    Migration(version=24, name="topic_decisions", upgrade=v24.upgrade),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

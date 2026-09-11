@@ -491,6 +491,8 @@ def _create_pattern_fixture(
             "genre": "urban_rebirth",
             "rebirth_year": 1998,
             "rebirth_location": "福建南平",
+            "template_id": "urban-rebirth",
+            "topic_seed": f"{title}：主角重生后改写家庭与产业命运。",
         },
     ).json()
     project_id = workspace["project"]["id"]
@@ -596,9 +598,17 @@ def test_reference_application_lifecycle_archives_and_reactivates_passed_bluepri
             f"/api/chapters/{chapter_id}/ai-brief-preview",
             json={"expected_revision": 0, "author_intent": "先保住家人的生计"},
         )
+        confirmed_topic = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": workspace["topic_decision"]["revision"]},
+        ).json()
         director_unblocked = client.post(
             f"/api/projects/{project_id}/director/startup-preview",
-            json={"idea": "回到九八年改写家庭命运", "candidate_count": 3},
+            json={
+                "idea": "回到九八年改写家庭命运",
+                "candidate_count": 3,
+                "expected_topic_revision": confirmed_topic["revision"],
+            },
         )
         archived_workspace = Workspace.model_validate(
             client.get(f"/api/projects/{project_id}").json()
@@ -643,7 +653,7 @@ def test_reference_application_lifecycle_archives_and_reactivates_passed_bluepri
     assert director_unblocked.status_code == 200
     assert legacy_context["applied_reference_patterns"] == []
     assert all(item.kind != ContextItemKind.APPROVED_BLUEPRINT for item in packet.items)
-    assert archive["format_version"] == 11
+    assert archive["format_version"] == 12
     assert archive["tables"]["reference_pattern_applications"][0][
         "lifecycle_state"
     ] == "archived"

@@ -18,6 +18,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
   const [title, setTitle] = useState('')
   const [rebirthYear, setRebirthYear] = useState(1998)
   const [rebirthLocation, setRebirthLocation] = useState('福建南平')
+  const [topicSeed, setTopicSeed] = useState('')
   const [templates, setTemplates] = useState<BetaTemplate[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<BetaTemplate | null>(null)
   const [isCreating, setIsCreating] = useState(false)
@@ -43,6 +44,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
     setTitle(template.suggested_title)
     setRebirthYear(template.rebirth_year)
     setRebirthLocation(template.rebirth_location)
+    setTopicSeed(template.idea_prompt)
     setSelectedTemplate(template)
   }
 
@@ -51,6 +53,7 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
     setGenre(nextGenre)
     setRebirthYear(defaults.storyYear)
     setRebirthLocation(defaults.storyLocation)
+    setTopicSeed('')
     setSelectedTemplate(null)
   }
 
@@ -64,6 +67,8 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
       rebirth_location: String(form.get('rebirthLocation') ?? ''),
       chapter_target_words: Number(form.get('chapterTargetWords')),
       safety_buffer_chapters: Number(form.get('safetyBufferChapters')),
+      template_id: selectedTemplate?.id ?? null,
+      topic_seed: String(form.get('topicSeed') ?? '').trim(),
     }
     setIsCreating(true)
     setError(null)
@@ -162,6 +167,18 @@ export function CreateProjectForm({ onCreated, onImported, onCancel }: CreatePro
             placeholder={genreDefaults[genre].titlePlaceholder}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
+          />
+        </label>
+
+        <label>
+          一句话选题（可稍后完善）
+          <textarea
+            name="topicSeed"
+            maxLength={3000}
+            rows={3}
+            placeholder="例：回到 1998 年的南平，从救下一家小厂开始改变家庭命运。"
+            value={topicSeed}
+            onChange={(event) => setTopicSeed(event.target.value)}
           />
         </label>
 

@@ -430,6 +430,85 @@ CREATE TABLE IF NOT EXISTS book_blueprints (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS topic_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    locks_json TEXT NOT NULL CHECK(json_valid(locks_json)),
+    field_versions_json TEXT NOT NULL CHECK(json_valid(field_versions_json)),
+    rejection_reasons_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(rejection_reasons_json)),
+    source_template_id TEXT CHECK(source_template_id IS NULL OR length(source_template_id) BETWEEN 1 AND 80),
+    source_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+    source_candidate_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_candidate_ids_json)),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    confirmed_revision INTEGER CHECK(confirmed_revision IS NULL OR confirmed_revision >= 0),
+    plan_stale INTEGER NOT NULL DEFAULT 0 CHECK(plan_stale IN (0, 1)),
+    onboarding_required INTEGER NOT NULL DEFAULT 1 CHECK(onboarding_required IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(confirmed_revision IS NULL OR confirmed_revision <= revision)
+);
+
+CREATE TABLE IF NOT EXISTS topic_decision_versions (
+    id TEXT PRIMARY KEY,
+    topic_decision_id TEXT NOT NULL REFERENCES topic_decisions(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    locks_json TEXT NOT NULL CHECK(json_valid(locks_json)),
+    field_versions_json TEXT NOT NULL CHECK(json_valid(field_versions_json)),
+    rejection_reasons_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(rejection_reasons_json)),
+    source_template_id TEXT CHECK(source_template_id IS NULL OR length(source_template_id) BETWEEN 1 AND 80),
+    source_job_id TEXT,
+    source_candidate_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_candidate_ids_json)),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, revision),
+    UNIQUE(topic_decision_id, revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_decision_versions_decision_revision
+ON topic_decision_versions(topic_decision_id, revision DESC);
+
+CREATE TABLE IF NOT EXISTS topic_decision_candidate_sets (
+    id TEXT PRIMARY KEY,
+    topic_decision_id TEXT NOT NULL REFERENCES topic_decisions(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+    based_on_revision INTEGER NOT NULL CHECK(based_on_revision >= 0),
+    target_field TEXT CHECK(target_field IS NULL OR target_field IN (
+        'target_platform', 'target_audience', 'subgenre', 'premise', 'core_desire',
+        'long_term_promise', 'first_three_chapter_promise', 'constraints',
+        'forbidden_elements', 'reference_purpose', 'reality_anchor',
+        'first_ten_chapter_goal'
+    )),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_candidate_sets_project_created
+ON topic_decision_candidate_sets(project_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS topic_decision_candidates (
+    id TEXT PRIMARY KEY,
+    candidate_set_id TEXT NOT NULL REFERENCES topic_decision_candidate_sets(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 3),
+    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 80),
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    changed_fields_json TEXT NOT NULL CHECK(json_valid(changed_fields_json)),
+    rationale TEXT NOT NULL CHECK(length(rationale) BETWEEN 1 AND 800),
+    risks_json TEXT NOT NULL CHECK(json_valid(risks_json)),
+    state TEXT NOT NULL DEFAULT 'candidate' CHECK(state IN ('candidate', 'selected', 'rejected')),
+    rejection_reason TEXT CHECK(rejection_reason IS NULL OR length(rejection_reason) BETWEEN 1 AND 1000),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(candidate_set_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_candidates_set_ordinal
+ON topic_decision_candidates(candidate_set_id, ordinal);
+
 CREATE TABLE IF NOT EXISTS volume_plans (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

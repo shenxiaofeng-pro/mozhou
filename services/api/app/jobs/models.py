@@ -14,6 +14,7 @@ class JobKind(StrEnum):
     RESEARCH_EXTRACTION = "research_extraction"
     COMIC_SEASON_PLAN = "comic_season_plan"
     COMIC_EPISODE_SCRIPT = "comic_episode_script"
+    TOPIC_DECISION = "topic_decision"
 
 
 class JobState(StrEnum):

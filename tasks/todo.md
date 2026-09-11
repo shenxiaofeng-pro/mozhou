@@ -5,7 +5,7 @@
 - [x] M28 稿件安全与参考模式恢复能力
   - Acceptance：旧候选绝不覆盖新稿；失败参考应用可停用，AI 可恢复。
   - Verify：专项 API/Web/迁移/归档测试与完整 `pnpm run verify`。
-- [ ] M29 AI-first 人工选题台
+- [x] M29 AI-first 人工选题台
   - Acceptance：选题可持久化、比较、锁定和确认；新项目默认进入选题任务。
   - Verify：TopicDecision API/Prompt/Web/浏览器测试。
 - [ ] M30 长篇拆解与写作模式 v2

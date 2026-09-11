@@ -19,6 +19,7 @@ export type JobKind =
   | 'research_extraction'
   | 'comic_season_plan'
   | 'comic_episode_script'
+  | 'topic_decision'
 
 export type JobState =
   | 'queued'
@@ -97,6 +98,31 @@ export type BookBlueprintField =
   | 'resource_growth'
   | 'relationship_design'
 
+export type TopicDecisionField =
+  | 'target_platform'
+  | 'target_audience'
+  | 'subgenre'
+  | 'premise'
+  | 'core_desire'
+  | 'long_term_promise'
+  | 'first_three_chapter_promise'
+  | 'constraints'
+  | 'forbidden_elements'
+  | 'reference_purpose'
+  | 'reality_anchor'
+  | 'first_ten_chapter_goal'
+
+export type TopicDecisionStatus = 'draft' | 'confirmed' | 'pending_reconfirmation'
+
+export type ProjectNextAction =
+  | 'confirm_topic'
+  | 'review_topic_changes'
+  | 'plan_book'
+  | 'review_downstream_plans'
+  | 'continue_writing'
+
+export type TopicDecisionCandidateState = 'candidate' | 'selected' | 'rejected'
+
 export type DirectorWorkflow =
   | 'director_startup'
   | 'director_expansion'
@@ -151,6 +177,8 @@ export interface CreateProjectInput {
   rebirth_location: string
   chapter_target_words: number
   safety_buffer_chapters: number
+  template_id: string | null
+  topic_seed: string
 }
 
 export interface Project {
@@ -163,6 +191,112 @@ export interface Project {
   safety_buffer_chapters: number
   created_at: string
   updated_at: string
+}
+
+export interface TopicDecisionContent {
+  target_platform: string
+  target_audience: string
+  subgenre: string
+  premise: string
+  core_desire: string
+  long_term_promise: string
+  first_three_chapter_promise: string
+  constraints: string[]
+  forbidden_elements: string[]
+  reference_purpose: string
+  reality_anchor: string
+  first_ten_chapter_goal: string
+}
+
+export interface TopicDecision {
+  id: string
+  project_id: string
+  content: TopicDecisionContent
+  status: TopicDecisionStatus
+  locks: Record<TopicDecisionField, boolean>
+  field_versions: Record<TopicDecisionField, number>
+  rejection_reasons: Partial<Record<TopicDecisionField, string>>
+  source_template_id: string | null
+  source_job_id: string | null
+  source_candidate_ids: string[]
+  revision: number
+  confirmed_revision: number | null
+  plan_stale: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UpdateTopicDecisionInput {
+  content: TopicDecisionContent
+  changed_fields: TopicDecisionField[]
+  lock_updates: Partial<Record<TopicDecisionField, boolean>>
+  rejection_reason_updates: Partial<Record<TopicDecisionField, string | null>>
+  expected_revision: number
+}
+
+export interface ConfirmTopicDecisionInput {
+  expected_revision: number
+}
+
+export interface TopicDecisionCandidateRequest {
+  expected_revision: number
+  author_intent: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface TopicDecisionRegenerationRequest extends TopicDecisionCandidateRequest {
+  target_field: TopicDecisionField
+}
+
+export interface TopicDecisionOutboundPreview {
+  mode: 'full' | 'field_regeneration'
+  target_field: TopicDecisionField | null
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  data_types: string[]
+  content_scope: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_calls: number
+  estimated_cost_microusd: number | null
+}
+
+export interface TopicDecisionCandidate {
+  id: string
+  ordinal: number
+  label: string
+  content: TopicDecisionContent
+  changed_fields: TopicDecisionField[]
+  rationale: string
+  risks: string[]
+  state: TopicDecisionCandidateState
+  rejection_reason: string | null
+}
+
+export interface TopicDecisionCandidateSet {
+  job_id: string
+  project_id: string
+  based_on_revision: number
+  target_field: TopicDecisionField | null
+  candidates: TopicDecisionCandidate[]
+}
+
+export interface SelectTopicDecisionCandidateInput {
+  job_id: string
+  candidate_id: string
+  selected_fields: TopicDecisionField[]
+  expected_revision: number
+}
+
+export interface RejectTopicDecisionCandidateInput {
+  job_id: string
+  candidate_id: string
+  reason: string
+  expected_revision: number
 }
 
 export interface DiagnosticCheck {
@@ -1636,6 +1770,8 @@ export interface AiChapterBriefProposal {
 export interface Workspace {
   project: Project
   chapters: Chapter[]
+  topic_decision: TopicDecision | null
+  next_action: ProjectNextAction
   manuscript_volumes?: ManuscriptVolume[]
   manuscript_scenes?: ManuscriptScene[]
   book_blueprint: BookBlueprint | null

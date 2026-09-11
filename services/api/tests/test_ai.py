@@ -128,6 +128,12 @@ def test_ai_instruction_contract_covers_four_genres_and_world_rule_review() -> N
     assert "eastern_fantasy" in combined
     assert "western_fantasy" in combined
     assert "非重生" in combined
+    assert "input.topic_source" in DIRECTOR_STARTUP_INSTRUCTIONS
+    assert "legacy_request" in DIRECTOR_STARTUP_INSTRUCTIONS
+    assert "不得使用未确认选题" in DIRECTOR_STARTUP_INSTRUCTIONS
+    assert "locked_fields" in DIRECTOR_STARTUP_INSTRUCTIONS
+    assert "first_three_chapter_promise" in DIRECTOR_STARTUP_INSTRUCTIONS
+    assert "first_ten_chapter_goal" in DIRECTOR_STARTUP_INSTRUCTIONS
     world_review = REVIEW_INSTRUCTIONS[ReviewDimension.REBIRTH_LOGIC]
     assert "修炼体系" in world_review
     assert "魔法规则" in world_review

@@ -22,11 +22,12 @@ from app.models import (
     ReferenceApplicationLifecycleState,
     StoryThreadStatus,
     TimelineLayer,
+    TopicDecisionStatus,
     Workspace,
     is_rebirth_genre,
 )
 
-CONTEXT_COMPILER_VERSION = "rule-compiler-v2"
+CONTEXT_COMPILER_VERSION = "rule-compiler-v3"
 
 TIER_ORDER = (
     ContextTier.HARD_CONSTRAINT,
@@ -360,6 +361,40 @@ class ContextCompiler:
                 ),
             )
         )
+
+        topic = workspace.topic_decision
+        if (
+            topic is not None
+            and topic.status == TopicDecisionStatus.CONFIRMED
+            and topic.confirmed_revision == topic.revision
+        ):
+            topic_content = topic.content.model_dump(mode="json")
+            content_sha256 = _sha256(_canonical_json(topic_content))
+            candidates.append(
+                self._candidate(
+                    item_id=f"hard:topic-decision:{topic.id}:v{topic.revision}",
+                    kind=ContextItemKind.PROJECT_ANCHOR,
+                    tier=ContextTier.HARD_CONSTRAINT,
+                    label=f"已确认选题 v{topic.revision}",
+                    content=_canonical_json(
+                        {
+                            "revision": topic.revision,
+                            "content_sha256": content_sha256,
+                            "content": topic_content,
+                            "locked_fields": sorted(
+                                field.value for field, locked in topic.locks.items() if locked
+                            ),
+                        }
+                    ),
+                    priority=9_985,
+                    required=True,
+                    reason="只有作者已确认的当前选题才能约束本章写作",
+                    source_kind="topic_decision",
+                    source_id=topic.id,
+                    source_label=f"选题确认版 v{topic.revision}",
+                    updated_at=topic.updated_at,
+                )
+            )
 
         if workspace.book_blueprint is not None:
             book_blueprint = workspace.book_blueprint

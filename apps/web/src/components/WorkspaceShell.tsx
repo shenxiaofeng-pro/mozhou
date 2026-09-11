@@ -21,6 +21,7 @@ interface WorkspaceShellProps {
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
+  onOpenTopicDecision?: () => void
   onOpenResearch?: () => void
   onOpenComicDrama?: () => void
   onOpenTaskCenter: () => void
@@ -59,6 +60,7 @@ export function WorkspaceShell({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenTopicDecision = () => undefined,
   onOpenResearch = () => undefined,
   onOpenComicDrama = () => undefined,
   onOpenTaskCenter,
@@ -131,6 +133,7 @@ export function WorkspaceShell({
       onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={onWorkspaceChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
+      onOpenTopicDecision={onOpenTopicDecision}
       onOpenResearch={onOpenResearch}
       onOpenComicDrama={onOpenComicDrama}
       onOpenTaskCenter={onOpenTaskCenter}
@@ -151,6 +154,7 @@ function ActiveChapterWorkspace({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenTopicDecision = () => undefined,
   onOpenResearch = () => undefined,
   onOpenComicDrama = () => undefined,
   onOpenTaskCenter,
@@ -364,6 +368,17 @@ function ActiveChapterWorkspace({
               ? `已有 ${workspace.timeline_events.filter((event) => event.layer === 'original').length} 条${rebirthStory ? '原始' : '世界底稿'}事件`
               : `${rebirthStory ? '原始时间线' : '世界底稿'}尚未建立`}
           </span>
+          {workspace.topic_decision ? (
+            <button
+              className="topic-decision-entry"
+              type="button"
+              disabled={isNavigating}
+              onClick={() => { void navigateAfterSave(onOpenTopicDecision) }}
+            >
+              <strong>{workspace.topic_decision.status === 'confirmed' ? '查看选题单' : '补充并确认选题'}</strong>
+              <small>{workspace.topic_decision.status === 'pending_reconfirmation' ? '内容已改，等待复核' : '不会打断当前正文'}</small>
+            </button>
+          ) : null}
         </section>
         <nav aria-label="章节目录">
           <div className="tree-section-title">

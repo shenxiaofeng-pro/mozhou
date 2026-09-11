@@ -218,6 +218,46 @@ class BookBlueprintField(StrEnum):
     RELATIONSHIP_DESIGN = "relationship_design"
 
 
+class TopicDecisionField(StrEnum):
+    TARGET_PLATFORM = "target_platform"
+    TARGET_AUDIENCE = "target_audience"
+    SUBGENRE = "subgenre"
+    PREMISE = "premise"
+    CORE_DESIRE = "core_desire"
+    LONG_TERM_PROMISE = "long_term_promise"
+    FIRST_THREE_CHAPTER_PROMISE = "first_three_chapter_promise"
+    CONSTRAINTS = "constraints"
+    FORBIDDEN_ELEMENTS = "forbidden_elements"
+    REFERENCE_PURPOSE = "reference_purpose"
+    REALITY_ANCHOR = "reality_anchor"
+    FIRST_TEN_CHAPTER_GOAL = "first_ten_chapter_goal"
+
+
+class TopicDecisionStatus(StrEnum):
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+    PENDING_RECONFIRMATION = "pending_reconfirmation"
+
+
+class ProjectNextAction(StrEnum):
+    CONFIRM_TOPIC = "confirm_topic"
+    REVIEW_TOPIC_CHANGES = "review_topic_changes"
+    PLAN_BOOK = "plan_book"
+    REVIEW_DOWNSTREAM_PLANS = "review_downstream_plans"
+    CONTINUE_WRITING = "continue_writing"
+
+
+class TopicDecisionCandidateState(StrEnum):
+    CANDIDATE = "candidate"
+    SELECTED = "selected"
+    REJECTED = "rejected"
+
+
+class TopicDecisionCandidateMode(StrEnum):
+    FULL = "full"
+    FIELD_REGENERATION = "field_regeneration"
+
+
 class DirectorWorkflow(StrEnum):
     STARTUP = "director_startup"
     EXPANSION = "director_expansion"
@@ -300,6 +340,50 @@ class AiProvider(StrEnum):
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
+class TopicDecisionContent(BaseModel):
+    """Author-facing topic fields; drafts may be incomplete, confirmation may not."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    target_platform: str = Field(max_length=120)
+    target_audience: str = Field(max_length=500)
+    subgenre: str = Field(max_length=120)
+    premise: str = Field(max_length=3000)
+    core_desire: str = Field(max_length=1200)
+    long_term_promise: str = Field(max_length=1500)
+    first_three_chapter_promise: str = Field(max_length=1500)
+    constraints: list[str] = Field(max_length=20)
+    forbidden_elements: list[str] = Field(max_length=20)
+    reference_purpose: str = Field(max_length=1200)
+    reality_anchor: str = Field(max_length=1500)
+    first_ten_chapter_goal: str = Field(max_length=1500)
+
+    @field_validator(
+        "target_platform",
+        "target_audience",
+        "subgenre",
+        "premise",
+        "core_desire",
+        "long_term_promise",
+        "first_three_chapter_promise",
+        "reference_purpose",
+        "reality_anchor",
+        "first_ten_chapter_goal",
+    )
+    @classmethod
+    def reject_topic_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("选题内容不能包含空字节")
+        return value
+
+    @field_validator("constraints", "forbidden_elements")
+    @classmethod
+    def validate_topic_lists(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 500 or "\x00" in item for item in value):
+            raise ValueError("选题限制项格式无效")
+        return value
+
+
 class CreateProjectRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -309,6 +393,15 @@ class CreateProjectRequest(BaseModel):
     rebirth_location: str = Field(min_length=1, max_length=100)
     chapter_target_words: int = Field(default=3000, ge=500, le=20000)
     safety_buffer_chapters: int = Field(default=3, ge=0, le=100)
+    template_id: str | None = Field(default=None, min_length=1, max_length=80)
+    topic_seed: str = Field(default="", max_length=3000)
+
+    @field_validator("title", "rebirth_location", "template_id", "topic_seed")
+    @classmethod
+    def reject_project_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("项目输入不能包含空字节")
+        return value
 
 
 class Project(BaseModel):
@@ -321,6 +414,205 @@ class Project(BaseModel):
     safety_buffer_chapters: int
     created_at: str
     updated_at: str
+
+
+class TopicDecision(BaseModel):
+    id: str
+    project_id: str
+    content: TopicDecisionContent
+    status: TopicDecisionStatus
+    locks: dict[TopicDecisionField, bool]
+    field_versions: dict[TopicDecisionField, int]
+    rejection_reasons: dict[TopicDecisionField, str] = Field(default_factory=dict)
+    source_template_id: str | None = None
+    source_job_id: str | None = None
+    source_candidate_ids: list[str] = Field(default_factory=list)
+    revision: int = Field(ge=0)
+    confirmed_revision: int | None = Field(default=None, ge=0)
+    plan_stale: bool = False
+    created_at: str
+    updated_at: str
+
+    @model_validator(mode="after")
+    def require_complete_topic_field_state(self) -> TopicDecision:
+        expected = set(TopicDecisionField)
+        if set(self.locks) != expected or set(self.field_versions) != expected:
+            raise ValueError("选题字段状态不完整")
+        if any(version < 1 for version in self.field_versions.values()):
+            raise ValueError("选题字段版本无效")
+        if not set(self.rejection_reasons) <= expected:
+            raise ValueError("选题拒绝原因字段无效")
+        expected_status = (
+            TopicDecisionStatus.DRAFT
+            if self.confirmed_revision is None
+            else TopicDecisionStatus.CONFIRMED
+            if self.confirmed_revision == self.revision
+            else TopicDecisionStatus.PENDING_RECONFIRMATION
+        )
+        if self.status != expected_status:
+            raise ValueError("选题确认状态与版本不匹配")
+        return self
+
+
+class TopicDecisionVersion(BaseModel):
+    id: str
+    topic_decision_id: str
+    project_id: str
+    revision: int = Field(gt=0)
+    content: TopicDecisionContent
+    locks: dict[TopicDecisionField, bool]
+    field_versions: dict[TopicDecisionField, int]
+    rejection_reasons: dict[TopicDecisionField, str] = Field(default_factory=dict)
+    source_template_id: str | None = None
+    source_job_id: str | None = None
+    source_candidate_ids: list[str] = Field(default_factory=list)
+    content_sha256: str = Field(min_length=64, max_length=64)
+    created_at: str
+
+
+class UpdateTopicDecisionRequest(BaseModel):
+    content: TopicDecisionContent
+    changed_fields: list[TopicDecisionField] = Field(default_factory=list, max_length=12)
+    lock_updates: dict[TopicDecisionField, bool] = Field(default_factory=dict)
+    rejection_reason_updates: dict[TopicDecisionField, str | None] = Field(
+        default_factory=dict
+    )
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("rejection_reason_updates")
+    @classmethod
+    def validate_rejection_reason_updates(
+        cls,
+        value: dict[TopicDecisionField, str | None],
+    ) -> dict[TopicDecisionField, str | None]:
+        if any(
+            reason is not None
+            and (not reason.strip() or len(reason) > 1000 or "\x00" in reason)
+            for reason in value.values()
+        ):
+            raise ValueError("选题拒绝原因格式无效")
+        return value
+
+    @model_validator(mode="after")
+    def require_topic_update(self) -> UpdateTopicDecisionRequest:
+        if len(set(self.changed_fields)) != len(self.changed_fields):
+            raise ValueError("选题变更字段不能重复")
+        if not self.changed_fields and not self.lock_updates and not self.rejection_reason_updates:
+            raise ValueError("选题没有声明任何变更")
+        return self
+
+
+class ConfirmTopicDecisionRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+
+
+class TopicDecisionCandidateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    expected_revision: int = Field(ge=0)
+    author_intent: str = Field(default="", max_length=1000)
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+    @field_validator("author_intent")
+    @classmethod
+    def reject_topic_intent_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("选题作者意图不能包含空字节")
+        return value
+
+
+class TopicDecisionRegenerationRequest(TopicDecisionCandidateRequest):
+    target_field: TopicDecisionField
+
+
+class TopicDecisionOutboundPreview(BaseModel):
+    mode: TopicDecisionCandidateMode
+    target_field: TopicDecisionField | None = None
+    profile_id: str | None
+    profile_name: str
+    provider: str
+    model: str
+    data_types: list[str]
+    content_scope: str
+    character_count: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_calls: int = Field(ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+
+class TopicDecisionCandidateDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    label: str = Field(min_length=1, max_length=80)
+    content: TopicDecisionContent
+    why_distinct: str = Field(min_length=1, max_length=800)
+    risks: list[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("risks")
+    @classmethod
+    def validate_topic_risks(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 300 or "\x00" in item for item in value):
+            raise ValueError("选题风险提示格式无效")
+        return value
+
+
+class TopicDecisionCandidateDraftSet(BaseModel):
+    candidates: list[TopicDecisionCandidateDraft] = Field(min_length=3, max_length=3)
+
+
+class TopicDecisionCandidate(BaseModel):
+    id: str
+    ordinal: int = Field(ge=1, le=3)
+    label: str
+    content: TopicDecisionContent
+    changed_fields: list[TopicDecisionField]
+    rationale: str
+    risks: list[str]
+    state: TopicDecisionCandidateState
+    rejection_reason: str | None = None
+
+
+class TopicDecisionCandidateSet(BaseModel):
+    job_id: str
+    project_id: str
+    based_on_revision: int = Field(ge=0)
+    target_field: TopicDecisionField | None = None
+    candidates: list[TopicDecisionCandidate] = Field(min_length=3, max_length=3)
+
+
+class SelectTopicDecisionCandidateRequest(BaseModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_id: str = Field(min_length=36, max_length=36)
+    selected_fields: list[TopicDecisionField] = Field(min_length=1, max_length=12)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("selected_fields")
+    @classmethod
+    def validate_selected_topic_fields(
+        cls,
+        value: list[TopicDecisionField],
+    ) -> list[TopicDecisionField]:
+        if len(set(value)) != len(value):
+            raise ValueError("选择的选题字段不能重复")
+        return value
+
+
+class RejectTopicDecisionCandidateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_id: str = Field(min_length=36, max_length=36)
+    reason: str = Field(min_length=1, max_length=1000)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("reason")
+    @classmethod
+    def reject_candidate_reason_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("候选拒绝原因不能包含空字节")
+        return value
 
 
 class BookBlueprintContent(BaseModel):
@@ -432,6 +724,7 @@ class DirectorStartupRequest(BaseModel):
     candidate_count: int = Field(default=3, ge=2, le=3)
     confirm_external_processing: bool = False
     max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    expected_topic_revision: int | None = Field(default=None, ge=0)
 
     @field_validator("idea", "reality_anchor")
     @classmethod
@@ -1811,6 +2104,8 @@ class AcknowledgeOriginalityReportRequest(BaseModel):
 class Workspace(BaseModel):
     project: Project
     chapters: list[Chapter]
+    topic_decision: TopicDecision | None = None
+    next_action: ProjectNextAction = ProjectNextAction.CONTINUE_WRITING
     manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
     manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
@@ -1833,6 +2128,8 @@ class Workspace(BaseModel):
 class WorkspaceSummary(BaseModel):
     project: Project
     chapters: list[ChapterSummary]
+    topic_decision: TopicDecision | None = None
+    next_action: ProjectNextAction = ProjectNextAction.CONTINUE_WRITING
     manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
     manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None

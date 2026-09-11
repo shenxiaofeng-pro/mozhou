@@ -6,6 +6,8 @@ import type {
   JobKind,
   ModelProfile,
   ReferenceBlueprintState,
+  TopicDecision,
+  TopicDecisionField,
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
@@ -44,6 +46,8 @@ const workspace: Workspace = {
     revision: 0,
     updated_at: '2026-08-08T00:00:00Z',
   }],
+  topic_decision: null,
+  next_action: 'continue_writing',
   book_blueprint: null,
   volume_plans: [],
   rolling_chapter_plans: [],
@@ -59,6 +63,62 @@ const workspace: Workspace = {
   reference_pattern_applications: [],
   continuity_issues: [],
   resume_card: null,
+}
+
+const topicFields: TopicDecisionField[] = [
+  'target_platform',
+  'target_audience',
+  'subgenre',
+  'premise',
+  'core_desire',
+  'long_term_promise',
+  'first_three_chapter_promise',
+  'constraints',
+  'forbidden_elements',
+  'reference_purpose',
+  'reality_anchor',
+  'first_ten_chapter_goal',
+]
+
+function topicDecision(overrides: Partial<TopicDecision> = {}): TopicDecision {
+  return {
+    id: 'topic-decision-1',
+    project_id: workspace.project.id,
+    content: {
+      target_platform: '番茄小说',
+      target_audience: '喜欢实业升级与家庭情感的读者',
+      subgenre: '都市重生·实业创业',
+      premise: '失意工程师回到 1998 年南平，从停产纸厂开始改命。',
+      core_desire: '挽回家庭，也让技术真正改变故乡。',
+      long_term_promise: '每卷完成一次产业升级。',
+      first_three_chapter_promise: '停产名单、救厂小胜、债务危机。',
+      constraints: ['产业细节有依据'],
+      forbidden_elements: ['不写无代价系统'],
+      reference_purpose: '只参考资源循环和章末钩子。',
+      reality_anchor: '1998 年闽北纸业与交通资料。',
+      first_ten_chapter_goal: '保住第一条产线。',
+    },
+    status: 'draft',
+    locks: Object.fromEntries(topicFields.map((field) => [field, false])) as Record<TopicDecisionField, boolean>,
+    field_versions: Object.fromEntries(topicFields.map((field) => [field, 1])) as Record<TopicDecisionField, number>,
+    rejection_reasons: {},
+    source_template_id: null,
+    source_job_id: null,
+    source_candidate_ids: [],
+    revision: 1,
+    confirmed_revision: null,
+    plan_stale: false,
+    created_at: '2026-09-11T00:00:00Z',
+    updated_at: '2026-09-11T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function withTopic(
+  decision = topicDecision(),
+  nextAction: Workspace['next_action'] = 'confirm_topic',
+): Workspace {
+  return { ...workspace, topic_decision: decision, next_action: nextAction }
 }
 
 function summarizeWorkspace(source: Workspace): WorkspaceSummary {
@@ -197,6 +257,66 @@ afterEach(() => {
 })
 
 describe('App', () => {
+  it('opens a newly created project in the author topic meeting when the server asks for topic confirmation', async () => {
+    const projectWithTopic = withTopic()
+    vi.spyOn(api, 'createProject').mockResolvedValue(projectWithTopic)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), projectWithTopic.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    expect(await screen.findByRole('heading', { name: '你定方向，AI 提方案' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '先写你的选题判断' })).toBeVisible()
+    expect(screen.queryByLabelText('章节正文')).not.toBeInTheDocument()
+  })
+
+  it('restores the topic meeting from server next_action when reopening a project', async () => {
+    const projectWithTopic = withTopic()
+    vi.mocked(api.listProjects).mockResolvedValue([projectWithTopic.project])
+    vi.mocked(api.getProjectSummary).mockResolvedValue(summarizeWorkspace(projectWithTopic))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: `打开《${projectWithTopic.project.title}》` }))
+
+    expect(await screen.findByRole('heading', { name: '你定方向，AI 提方案' })).toBeVisible()
+  })
+
+  it('moves into the existing writing workspace only after explicit topic confirmation', async () => {
+    const projectWithTopic = withTopic()
+    const confirmedTopic = topicDecision({ status: 'confirmed', confirmed_revision: 1 })
+    const confirmedWorkspace = withTopic(confirmedTopic, 'plan_book')
+    vi.spyOn(api, 'createProject').mockResolvedValue(projectWithTopic)
+    const confirm = vi.spyOn(api, 'confirmTopicDecision').mockResolvedValue(confirmedTopic)
+    vi.mocked(api.getProjectSummary).mockResolvedValue(summarizeWorkspace(confirmedWorkspace))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), projectWithTopic.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+    await user.click(await screen.findByRole('button', { name: '确认选题，进入全书规划' }))
+
+    expect(confirm).toHaveBeenCalledWith(projectWithTopic.project.id, { expected_revision: 1 })
+    expect(await screen.findByLabelText('章节正文')).toBeVisible()
+  })
+
+  it('keeps a legacy project in writing and offers topic completion as a non-blocking entry', async () => {
+    const legacyWorkspace = withTopic(topicDecision(), 'continue_writing')
+    vi.spyOn(api, 'createProject').mockResolvedValue(legacyWorkspace)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), legacyWorkspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    expect(await screen.findByLabelText('章节正文')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /补充并确认选题/ }))
+    expect(await screen.findByRole('heading', { name: '你定方向，AI 提方案' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '返回创作台' }))
+    expect(await screen.findByLabelText('章节正文')).toBeVisible()
+  })
+
   it('opens the AI comic drama workbench from the writing header', async () => {
     vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
     const user = userEvent.setup()

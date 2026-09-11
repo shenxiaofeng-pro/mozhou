@@ -1,5 +1,5 @@
 import type { Chapter, ChapterSummary, Project, Workspace, WorkspaceSummary } from '@mozhou/contracts'
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
 import { api } from './api'
 import { CreateProjectForm } from './components/CreateProjectForm'
@@ -15,6 +15,19 @@ import { clearActiveProjectId, loadActiveProjectId, saveActiveProjectId } from '
 interface LoadedProject {
   workspace: WorkspaceSummary
   initialChapter: Chapter
+}
+
+const TopicDecisionWorkbench = lazy(async () => {
+  const module = await import('./components/TopicDecisionWorkbench')
+  return { default: module.TopicDecisionWorkbench }
+})
+
+type ActiveView = 'topic-decision' | 'writing' | 'reference-library' | 'research' | 'comic-drama'
+
+function startingView(workspace: WorkspaceSummary): ActiveView {
+  return workspace.next_action === 'confirm_topic' || workspace.next_action === 'review_topic_changes'
+    ? 'topic-decision'
+    : 'writing'
 }
 
 function summarizeChapter({ content, ...chapter }: Chapter): ChapterSummary {
@@ -57,7 +70,7 @@ export function App() {
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null)
-  const [activeView, setActiveView] = useState<'writing' | 'reference-library' | 'research' | 'comic-drama'>('writing')
+  const [activeView, setActiveView] = useState<ActiveView>('writing')
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false)
   const [isGlobalLibraryOpen, setIsGlobalLibraryOpen] = useState(false)
 
@@ -78,6 +91,7 @@ export function App() {
       if (workspaceResult.status === 'fulfilled') {
         setWorkspace(workspaceResult.value?.workspace ?? null)
         setInitialChapter(workspaceResult.value?.initialChapter ?? null)
+        if (workspaceResult.value) setActiveView(startingView(workspaceResult.value.workspace))
       } else {
         clearActiveProjectId()
         setInitialChapter(null)
@@ -101,7 +115,7 @@ export function App() {
     setLoadError(null)
     setLibraryNotice(null)
     setIsCreatingProject(false)
-    setActiveView('writing')
+    setActiveView(startingView(summarizeWorkspace(created)))
     setIsTaskCenterOpen(false)
   }, [])
 
@@ -126,7 +140,7 @@ export function App() {
         loaded.workspace.project,
         ...current.filter((project) => project.id !== projectId),
       ])
-      setActiveView('writing')
+      setActiveView(startingView(loaded.workspace))
       setIsTaskCenterOpen(false)
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : '无法打开作品')
@@ -230,7 +244,18 @@ export function App() {
     )
   }
 
-  const activePage = activeView === 'reference-library'
+  const activePage = activeView === 'topic-decision'
+    ? (
+      <Suspense fallback={<main className="loading-shell" aria-live="polite"><p>正在展开选题单…</p></main>}>
+        <TopicDecisionWorkbench
+          workspace={workspace}
+          onWorkspaceChanged={handleWorkspaceChanged}
+          onContinue={() => setActiveView('writing')}
+          onClose={handleClose}
+          onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
+        />
+      </Suspense>
+    ) : activeView === 'reference-library'
     ? (
       <ReferenceLibraryPage
         workspace={workspace}
@@ -258,6 +283,7 @@ export function App() {
         initialChapter={initialChapter}
         onChapterChanged={handleChapterChanged}
         onWorkspaceChanged={handleWorkspaceChanged}
+        onOpenTopicDecision={() => setActiveView('topic-decision')}
         onOpenReferenceLibrary={() => setActiveView('reference-library')}
         onOpenResearch={() => setActiveView('research')}
         onOpenComicDrama={() => setActiveView('comic-drama')}

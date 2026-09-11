@@ -83,6 +83,8 @@ function workspace(bookBlueprint: BookBlueprint | null = null): WorkspaceSummary
   return {
     project,
     chapters: [{ ...chapter, has_content: false, content_characters: 0 }],
+    topic_decision: null,
+    next_action: 'continue_writing',
     book_blueprint: bookBlueprint,
     volume_plans: [],
     rolling_chapter_plans: [],

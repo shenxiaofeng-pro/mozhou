@@ -38,6 +38,10 @@ ARCHIVE_TABLES = {
     "job_attempts",
     "job_artifacts",
     "job_events",
+    "topic_decisions",
+    "topic_decision_versions",
+    "topic_decision_candidate_sets",
+    "topic_decision_candidates",
     "comic_projects",
     "comic_episodes",
     "comic_versions",
@@ -115,7 +119,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 11
+    assert archive["format_version"] == 12
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -124,6 +128,222 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert archive["tables"]["reference_segments"][0]["id"] == reference["segments"][0]["id"]
     checksum = archive.pop("checksum_sha256")
     assert checksum == hashlib.sha256(canonical_json(archive)).hexdigest()
+
+
+def test_round_trip_preserves_confirmed_topic_versions_and_rejected_candidates(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "topic-archive.db"
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "回到九八年的南平",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+                "template_id": "urban-rebirth",
+                "topic_seed": "失败商人回到竹木厂违约前夜，先救下父亲。",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        confirmed = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": 0},
+        ).json()
+        jobs: JobRepository = client.app.state.job_repository
+        source_job, _created = jobs.create_job(
+            project_id=project_id,
+            kind=JobKind.TOPIC_DECISION,
+            workflow="topic_candidates",
+            idempotency_key="archive-topic-candidates",
+            input_payload={"based_on_revision": confirmed["revision"]},
+            provider="openai",
+            model="topic-test-v1",
+        )
+        candidate_set_id = str(uuid4())
+        candidate_ids = [str(uuid4()) for _ in range(3)]
+        timestamp = confirmed["updated_at"]
+        with sqlite3.connect(database_path) as connection:
+            topic_id = connection.execute(
+                "SELECT id FROM topic_decisions WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO topic_decision_candidate_sets (
+                    id, topic_decision_id, project_id, source_job_id,
+                    based_on_revision, target_field, created_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    candidate_set_id,
+                    topic_id,
+                    project_id,
+                    source_job.id,
+                    confirmed["revision"],
+                    timestamp,
+                ),
+            )
+            for ordinal, candidate_id in enumerate(candidate_ids, start=1):
+                content = {
+                    **confirmed["content"],
+                    "premise": f"候选 {ordinal}：以不同的原创冲突发动机开局。",
+                }
+                state = "rejected" if ordinal == 1 else "candidate"
+                rejection_reason = "与作者期望的家庭主线不符" if ordinal == 1 else None
+                decided_at = timestamp if ordinal == 1 else None
+                connection.execute(
+                    """
+                    INSERT INTO topic_decision_candidates (
+                        id, candidate_set_id, project_id, ordinal, label,
+                        content_json, changed_fields_json, rationale, risks_json,
+                        state, rejection_reason, created_at, updated_at, decided_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, '["premise"]', ?, '[]', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        candidate_id,
+                        candidate_set_id,
+                        project_id,
+                        ordinal,
+                        f"方向 {ordinal}",
+                        json.dumps(
+                            content,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        f"第 {ordinal} 种原创因果路径",
+                        state,
+                        rejection_reason,
+                        timestamp,
+                        timestamp,
+                        decided_at,
+                    ),
+                )
+        archive = client.get(f"/api/projects/{project_id}/export").json()
+        restored_response = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+        restored_project_id = restored_response.json()["project"]["id"]
+        with sqlite3.connect(database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            restored_versions = connection.execute(
+                """
+                SELECT v.revision, v.content_sha256
+                FROM topic_decision_versions v
+                WHERE v.project_id = ?
+                """,
+                (restored_project_id,),
+            ).fetchall()
+            restored_candidates = connection.execute(
+                """
+                SELECT ordinal, state, rejection_reason
+                FROM topic_decision_candidates
+                WHERE project_id = ?
+                ORDER BY ordinal
+                """,
+                (restored_project_id,),
+            ).fetchall()
+
+    assert archive["format_version"] == 12
+    assert len(archive["tables"]["topic_decisions"]) == 1
+    assert len(archive["tables"]["topic_decision_versions"]) == 1
+    assert len(archive["tables"]["topic_decision_candidate_sets"]) == 1
+    assert len(archive["tables"]["topic_decision_candidates"]) == 3
+    assert restored_response.status_code == 201, restored_response.text
+    assert restored_response.json()["topic_decision"]["status"] == "confirmed"
+    assert [(row["revision"], len(row["content_sha256"])) for row in restored_versions] == [
+        (1, 64)
+    ]
+    assert [tuple(row) for row in restored_candidates] == [
+        (1, "rejected", "与作者期望的家庭主线不符"),
+        (2, "candidate", None),
+        (3, "candidate", None),
+    ]
+
+
+def test_import_v11_creates_legacy_unconfirmed_topic_without_forcing_onboarding(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "v11-topic-archive.db")) as client:
+        original = client.post(
+            "/api/projects",
+            json={
+                "title": "旧版本地作品",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        archive = client.get(f"/api/projects/{original['project']['id']}/export").json()
+        archive["format_version"] = 11
+        for table in (
+            "topic_decisions",
+            "topic_decision_versions",
+            "topic_decision_candidate_sets",
+            "topic_decision_candidates",
+        ):
+            archive["tables"].pop(table)
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
+    restored_workspace = restored.json()
+    assert restored_workspace["topic_decision"]["status"] == "draft"
+    assert restored_workspace["topic_decision"]["confirmed_revision"] is None
+    assert restored_workspace["topic_decision"]["content"]["subgenre"] == "都市重生"
+    assert restored_workspace["next_action"] == "plan_book"
+
+
+def test_import_rejects_tampered_confirmed_topic_snapshot(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "tampered-topic-archive.db")) as client:
+        original = client.post(
+            "/api/projects",
+            json={
+                "title": "选题快照完整性",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+                "template_id": "urban-rebirth",
+            },
+        ).json()
+        project_id = original["project"]["id"]
+        client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": 0},
+        )
+        archive = client.get(f"/api/projects/{project_id}/export").json()
+        version = archive["tables"]["topic_decision_versions"][0]
+        content = json.loads(version["content_json"])
+        content["premise"] = "篡改后企图绕过确认快照的选题"
+        version["content_json"] = json.dumps(
+            content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+
+        response = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "项目归档无效或已损坏"}
 
 
 def test_import_v10_defaults_reference_application_lifecycle_to_active(
@@ -428,7 +648,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 11
+    assert archive["format_version"] == 12
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()

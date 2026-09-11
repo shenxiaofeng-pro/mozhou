@@ -117,6 +117,8 @@ function workspaceWith(...applications: ReferencePatternApplication[]): Workspac
       updated_at: '2026-09-11T00:00:00Z',
     },
     chapters: [],
+    topic_decision: null,
+    next_action: 'continue_writing',
     book_blueprint: null,
     volume_plans: [],
     rolling_chapter_plans: [],

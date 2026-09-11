@@ -49,6 +49,7 @@ describe('CreateProjectForm closed beta templates', () => {
     expect(screen.getByLabelText('作品名')).toHaveValue('烽火归途')
     expect(screen.getByLabelText('重生年份')).toHaveValue(1937)
     expect(screen.getByLabelText('重生地点')).toHaveValue('福建南平')
+    expect(screen.getByLabelText('一句话选题（可稍后完善）')).toHaveValue(template.idea_prompt)
     expect(screen.getByText('建立生存压力并兑现一次小胜。')).toBeVisible()
     await user.clear(screen.getByLabelText('作品名'))
     await user.type(screen.getByLabelText('作品名'), '南平烽火')
@@ -61,6 +62,8 @@ describe('CreateProjectForm closed beta templates', () => {
       rebirth_location: '福建南平',
       chapter_target_words: 3000,
       safety_buffer_chapters: 3,
+      template_id: template.id,
+      topic_seed: template.idea_prompt,
     })
     expect(onCreated).toHaveBeenCalledWith(created)
   })
@@ -86,6 +89,8 @@ describe('CreateProjectForm closed beta templates', () => {
       genre: 'eastern_fantasy',
       rebirth_year: 728,
       rebirth_location: '九州·云泽',
+      template_id: null,
+      topic_seed: '',
     }))
   })
 })

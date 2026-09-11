@@ -35,6 +35,7 @@ const kindLabels: Record<JobKind, string> = {
   research_extraction: '资料研究',
   comic_season_plan: '漫剧季方案',
   comic_episode_script: '漫剧单集剧本',
+  topic_decision: '选题候选',
 }
 
 const stateLabels: Record<JobState, string> = {

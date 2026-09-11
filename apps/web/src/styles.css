@@ -2790,6 +2790,33 @@ textarea:focus-visible {
   font-size: 0.68rem;
 }
 
+.project-card .topic-decision-entry {
+  display: grid;
+  gap: .18rem;
+  margin-top: .4rem;
+  padding: .55rem .6rem;
+  border: 1px solid #8c9a96;
+  color: #193033;
+  background: #ece7dc;
+  text-align: left;
+}
+
+.project-card .topic-decision-entry:hover,
+.project-card .topic-decision-entry:focus-visible {
+  border-color: var(--rust);
+  background: #f5e6d7;
+}
+
+.project-card .topic-decision-entry strong {
+  font-family: inherit;
+  font-size: .78rem;
+}
+
+.project-card .topic-decision-entry small {
+  color: #60716d;
+  font-size: .75rem;
+}
+
 .story-tree nav {
   flex: 1;
   min-height: 0;
@@ -8680,4 +8707,933 @@ textarea:focus-visible {
   .comic-inspector > section { border-right: 0; border-bottom: 1px solid #abb5b0; }
   .comic-approval-bar { align-items: stretch; flex-wrap: wrap; }
   .comic-approval-bar span { flex-basis: 100%; }
+}
+
+/* Editorial topic-decision workbench */
+.topic-workbench {
+  min-height: 100vh;
+  color: #193033;
+  background:
+    linear-gradient(rgb(245 242 233 / 94%), rgb(245 242 233 / 94%)),
+    repeating-linear-gradient(90deg, transparent 0 3rem, #cbd1cc 3rem calc(3rem + 1px));
+}
+
+.topic-workbench-bar {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: flex;
+  min-height: 4.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: .75rem clamp(1rem, 3vw, 2.25rem);
+  border-bottom: 4px solid #a85732;
+  color: #f8f3e6;
+  background: #193033;
+}
+
+.topic-workbench-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .75rem;
+}
+
+.topic-workbench-brand > span {
+  display: grid;
+  width: 2.6rem;
+  height: 2.6rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid #d4a67d;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.2rem;
+}
+
+.topic-workbench-brand > div {
+  display: grid;
+  min-width: 0;
+  gap: .12rem;
+}
+
+.topic-workbench-brand small {
+  color: #dfa174;
+  font-size: .75rem;
+  font-weight: 850;
+  letter-spacing: .13em;
+}
+
+.topic-workbench-brand strong {
+  overflow: hidden;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.05rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topic-workbench-actions {
+  display: flex;
+  flex: none;
+  gap: .5rem;
+}
+
+.topic-workbench-actions button,
+.topic-workbench-missing button {
+  padding: .55rem .75rem;
+  border: 1px solid #788c8a;
+  color: #f8f3e6;
+  background: transparent;
+  font-size: .78rem;
+  font-weight: 750;
+}
+
+.topic-workbench-actions button:hover,
+.topic-workbench-actions button:focus-visible {
+  border-color: #dfa174;
+  background: #284548;
+}
+
+.topic-workbench-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(23rem, .62fr);
+  gap: clamp(1.5rem, 4vw, 4rem);
+  max-width: 96rem;
+  margin: 0 auto;
+  padding: clamp(2rem, 5vw, 4.5rem) clamp(1rem, 3vw, 2.25rem) 2rem;
+  border-bottom: 1px solid #aeb8b4;
+}
+
+.topic-workbench-hero p,
+.topic-stage > header small,
+.topic-outbound-preview header small,
+.topic-job-status header small {
+  margin: 0;
+  color: #985033;
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+.topic-workbench-hero h1 {
+  max-width: 11em;
+  margin: .35rem 0 .6rem;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: clamp(2.1rem, 5vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -.035em;
+  line-height: 1.05;
+}
+
+.topic-workbench-hero > div > span {
+  color: #536762;
+  font-size: .92rem;
+  line-height: 1.75;
+}
+
+.topic-workbench-hero dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-self: end;
+  margin: 0;
+  border: 1px solid #a8b2ad;
+  background: #ebece5;
+}
+
+.topic-workbench-hero dl > div {
+  min-width: 0;
+  padding: .85rem;
+  border-right: 1px solid #bdc4bf;
+}
+
+.topic-workbench-hero dl > div:last-child {
+  border-right: 0;
+}
+
+.topic-workbench-hero dt {
+  color: #62726f;
+  font-size: .75rem;
+  font-weight: 750;
+}
+
+.topic-workbench-hero dd {
+  margin: .25rem 0 0;
+  color: #193033;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.topic-workbench-layout {
+  display: grid;
+  grid-template-columns: 15.5rem minmax(0, 1fr);
+  max-width: 96rem;
+  min-height: calc(100vh - 18rem);
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 3vw, 2.25rem) 5rem;
+}
+
+.topic-stage-rail {
+  position: sticky;
+  top: 4.5rem;
+  align-self: start;
+  max-height: calc(100vh - 4.5rem);
+  padding: 2rem 1.25rem 2rem 0;
+}
+
+.topic-stage-rail > p {
+  margin: 0 0 .75rem;
+  color: #657571;
+  font-size: .75rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+
+.topic-stage-rail ol {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  background: #b7c0bb;
+  list-style: none;
+}
+
+.topic-stage-rail li {
+  background: #e8eae4;
+}
+
+.topic-stage-rail li[data-complete="true"] {
+  box-shadow: inset 4px 0 #55786d;
+}
+
+.topic-stage-rail a {
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: .12rem .55rem;
+  padding: .8rem .7rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.topic-stage-rail a:hover,
+.topic-stage-rail a:focus-visible {
+  background: #fffdf7;
+}
+
+.topic-stage-rail a > span {
+  grid-row: span 2;
+  color: #a85732;
+  font-size: .8rem;
+  font-weight: 900;
+}
+
+.topic-stage-rail a strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: .93rem;
+}
+
+.topic-stage-rail a small {
+  color: #61716d;
+  font-size: .75rem;
+  line-height: 1.4;
+}
+
+.topic-stage-rail blockquote {
+  margin: 1rem 0 0;
+  padding: .8rem;
+  border-left: 3px solid #a85732;
+  color: #5e6f6a;
+  background: #ede8df;
+  font-size: .75rem;
+  line-height: 1.65;
+}
+
+.topic-workbench-content {
+  min-width: 0;
+  padding: 2rem 0 0 1.5rem;
+  border-left: 1px solid #aeb8b4;
+}
+
+.topic-status {
+  position: sticky;
+  z-index: 10;
+  top: 5.25rem;
+  margin: 0 0 .85rem;
+  padding: .7rem .85rem;
+  border-left: 4px solid #55786d;
+  background: #f8f6ef;
+  box-shadow: 0 8px 22px rgb(27 48 49 / 12%);
+  font-size: .82rem;
+}
+
+.topic-status-error {
+  border-left-color: #a14235;
+  color: #7c3027;
+}
+
+.topic-stage {
+  scroll-margin-top: 5.5rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid #aeb8b4;
+  border-top: 4px solid #193033;
+  background: #fbf9f2;
+  box-shadow: 6px 6px 0 rgb(188 194 188 / 52%);
+}
+
+.topic-stage > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid #c0c7c2;
+  background: #eceee8;
+}
+
+.topic-stage > header h2 {
+  margin: .18rem 0 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: clamp(1.25rem, 2.3vw, 1.75rem);
+}
+
+.topic-stage > header > span {
+  flex: none;
+  padding: .28rem .5rem;
+  border: 1px solid #9ba8a3;
+  color: #536762;
+  background: #f9f7f0;
+  font-size: .75rem;
+  font-weight: 750;
+}
+
+.topic-stage-intro {
+  margin: 0;
+  padding: .85rem 1.15rem;
+  border-bottom: 1px solid #d0d5d0;
+  color: #536762;
+  font-size: .82rem;
+  line-height: 1.65;
+}
+
+.topic-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 1px 0 0;
+  background: #cbd1cc;
+}
+
+.topic-field {
+  display: grid;
+  align-content: start;
+  gap: .45rem;
+  min-width: 0;
+  padding: .95rem;
+  border-left: 4px solid transparent;
+  background: #fbf9f2;
+}
+
+.topic-field[data-locked="true"] {
+  border-left-color: #a85732;
+  background: #fffaf0;
+}
+
+.topic-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.topic-field > span strong {
+  font-size: .84rem;
+}
+
+.topic-field > span button {
+  flex: none;
+  padding: .25rem .48rem;
+  border: 1px solid #8e9d98;
+  color: #536762;
+  background: transparent;
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.topic-field > span button[aria-pressed="true"] {
+  border-color: #a85732;
+  color: #8c432b;
+  background: #f2dfcc;
+}
+
+.topic-field textarea,
+.topic-author-intent textarea,
+.topic-candidate-reject textarea {
+  width: 100%;
+  min-width: 0;
+  padding: .65rem .7rem;
+  border: 1px solid #8f9d99;
+  border-radius: 0;
+  color: #193033;
+  background: #fffefa;
+  font: inherit;
+  font-size: .86rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.topic-field textarea:read-only {
+  color: #52615e;
+  background: #f1eee5;
+}
+
+.topic-field > small {
+  color: #6b7874;
+  font-size: .75rem;
+  line-height: 1.5;
+}
+
+.topic-stage > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .85rem 1.15rem;
+  border-top: 1px solid #bcc5c0;
+  background: #e5e9e3;
+}
+
+.topic-stage > footer span,
+.topic-stage > footer p {
+  margin: 0;
+  color: #536762;
+  font-size: .78rem;
+  line-height: 1.55;
+}
+
+.topic-stage button,
+.topic-stage select {
+  min-height: 2.35rem;
+  padding: .5rem .7rem;
+  border: 1px solid #496661;
+  border-radius: 0;
+  color: #193033;
+  background: #fdfbf5;
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 750;
+}
+
+.topic-stage button:hover:not(:disabled),
+.topic-stage button:focus-visible:not(:disabled) {
+  border-color: #a85732;
+  background: #f0e5d8;
+}
+
+.topic-stage button:disabled,
+.topic-stage select:disabled {
+  border-color: #b7c0bc;
+  color: #7b8783;
+  background: #e7eae5;
+}
+
+.topic-author-intent {
+  display: grid;
+  gap: .4rem;
+  margin: 1rem 1.15rem .75rem;
+  color: #405a55;
+  font-size: .82rem;
+  font-weight: 800;
+}
+
+.topic-ai-setup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1rem 1.15rem .75rem;
+  padding: .8rem;
+  border-left: 4px solid #a85732;
+  background: #eee7dd;
+}
+
+.topic-ai-setup strong,
+.topic-ai-setup p {
+  margin: 0;
+}
+
+.topic-ai-setup p {
+  margin-top: .2rem;
+  color: #586a66;
+  font-size: .78rem;
+  line-height: 1.5;
+}
+
+.topic-ai-actions {
+  display: grid;
+  grid-template-columns: auto minmax(13rem, 1fr) auto;
+  align-items: end;
+  gap: .6rem;
+  margin: .75rem 1.15rem 1rem;
+}
+
+.topic-ai-actions label {
+  display: grid;
+  gap: .3rem;
+  color: #536762;
+  font-size: .75rem;
+  font-weight: 750;
+}
+
+.topic-inline-warning {
+  margin: .75rem 1.15rem;
+  padding: .7rem .8rem;
+  border-left: 4px solid #a85732;
+  color: #7c3e2c;
+  background: #fff1e2;
+  font-size: .8rem;
+  line-height: 1.55;
+}
+
+.topic-outbound-preview,
+.topic-job-status {
+  display: grid;
+  gap: .8rem;
+  margin: 1rem 1.15rem 1.15rem;
+  padding: 1rem;
+  border-left: 5px solid #a85732;
+  background: #eee7dd;
+}
+
+.topic-outbound-preview > header,
+.topic-job-status > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.topic-outbound-preview h3,
+.topic-job-status h3 {
+  margin: .2rem 0 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.15rem;
+}
+
+.topic-outbound-preview > header > strong,
+.topic-job-status > header > strong {
+  color: #8e442b;
+  font-size: 1rem;
+}
+
+.topic-outbound-preview dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: #c2c8c2;
+}
+
+.topic-outbound-preview dl > div {
+  padding: .65rem;
+  background: #f9f7f0;
+}
+
+.topic-outbound-preview dt {
+  color: #65736f;
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.topic-outbound-preview dd {
+  margin: .2rem 0 0;
+  font-size: .8rem;
+  line-height: 1.5;
+}
+
+.topic-external-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  padding: .7rem;
+  border: 1px solid #b1b9b3;
+  background: #fffdf7;
+  font-size: .8rem;
+  line-height: 1.55;
+}
+
+.topic-external-confirmation input {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  margin-top: .15rem;
+}
+
+.topic-outbound-preview > button,
+.topic-job-status > div button:first-child,
+.topic-candidate-apply,
+.topic-continue-action {
+  justify-self: start;
+  color: #fff !important;
+  background: #193033 !important;
+}
+
+.topic-job-status progress {
+  width: 100%;
+  accent-color: #a85732;
+}
+
+.topic-job-status p {
+  margin: 0;
+  color: #536762;
+  font-size: .78rem;
+}
+
+.topic-job-status > div {
+  display: flex;
+  gap: .5rem;
+}
+
+.topic-empty-candidates {
+  display: grid;
+  justify-items: start;
+  margin: 1rem 1.15rem 1.15rem;
+  padding: 1.5rem;
+  border: 1px dashed #8f9d99;
+  background: #eceee8;
+}
+
+.topic-empty-candidates p {
+  margin: .4rem 0 0;
+  color: #5a6b67;
+  font-size: .82rem;
+  line-height: 1.6;
+}
+
+.topic-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .7rem;
+  padding: 1rem 1.15rem 1.15rem;
+}
+
+.topic-candidate-card {
+  display: grid;
+  align-content: start;
+  gap: .7rem;
+  min-width: 0;
+  padding: .85rem;
+  border: 1px solid #aeb8b4;
+  border-top: 4px solid #55786d;
+  background: #fffdf7;
+}
+
+.topic-candidate-card[data-state="rejected"] {
+  border-top-color: #9b6b59;
+  background: #f1eee8;
+}
+
+.topic-candidate-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.topic-candidate-card header small {
+  color: #a85732;
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+
+.topic-candidate-card h3 {
+  margin: .2rem 0 0;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.05rem;
+}
+
+.topic-candidate-card > header > span {
+  padding: .2rem .35rem;
+  color: #526762;
+  background: #e3e9e4;
+  font-size: .75rem;
+  font-weight: 800;
+}
+
+.topic-candidate-rationale {
+  margin: 0;
+  color: #536762;
+  font-size: .78rem;
+  line-height: 1.6;
+}
+
+.topic-candidate-fields {
+  display: grid;
+  gap: 1px;
+  background: #cbd1cc;
+}
+
+.topic-candidate-fields > label {
+  display: grid;
+  gap: .42rem;
+  min-width: 0;
+  padding: .65rem;
+  background: #f4f3ed;
+}
+
+.topic-candidate-fields > label[data-locked="true"] {
+  box-shadow: inset 3px 0 #a85732;
+}
+
+.topic-candidate-fields label > span {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: .42rem;
+}
+
+.topic-candidate-fields input {
+  width: 1rem;
+  height: 1rem;
+}
+
+.topic-candidate-fields strong {
+  font-size: .78rem;
+}
+
+.topic-candidate-fields em {
+  color: #8e442b;
+  font-size: .75rem;
+  font-style: normal;
+}
+
+.topic-candidate-fields output {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #4f625e;
+  font-size: .78rem;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.topic-candidate-card details {
+  font-size: .76rem;
+}
+
+.topic-candidate-card details summary {
+  cursor: pointer;
+  color: #8e442b;
+  font-weight: 750;
+}
+
+.topic-candidate-card details ul {
+  margin: .5rem 0 0;
+  padding-left: 1.1rem;
+  color: #596b66;
+  line-height: 1.55;
+}
+
+.topic-candidate-reject {
+  display: grid;
+  gap: .45rem;
+  padding-top: .7rem;
+  border-top: 1px solid #c9cfca;
+}
+
+.topic-candidate-reject label {
+  display: grid;
+  gap: .3rem;
+  color: #5a6b67;
+  font-size: .75rem;
+  font-weight: 750;
+}
+
+.topic-candidate-reject button {
+  justify-self: start;
+  border-color: #9a6958;
+  color: #754333;
+}
+
+.topic-confirm-stage {
+  border-top-color: #a85732;
+}
+
+.topic-confirm-summary {
+  margin: 1rem 1.15rem;
+  border: 1px solid #acb6b1;
+  background: #fffdf7;
+}
+
+.topic-confirm-summary > p {
+  margin: 0;
+  padding: 1rem;
+  border-bottom: 1px solid #c6ccc7;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.18rem;
+  line-height: 1.6;
+}
+
+.topic-confirm-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: #cbd1cc;
+}
+
+.topic-confirm-summary dl > div {
+  padding: .75rem;
+  background: #f0f1eb;
+}
+
+.topic-confirm-summary dt {
+  color: #687772;
+  font-size: .75rem;
+  font-weight: 850;
+}
+
+.topic-confirm-summary dd {
+  margin: .25rem 0 0;
+  font-size: .8rem;
+  line-height: 1.55;
+}
+
+.topic-confirm-action {
+  min-height: 2.8rem !important;
+  padding: .7rem 1rem !important;
+  border: 2px solid #a85732 !important;
+  color: #fff !important;
+  background: #a85732 !important;
+  box-shadow: 4px 4px 0 #193033;
+  font-size: .86rem !important;
+  letter-spacing: .03em;
+}
+
+.topic-workbench-missing {
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.topic-workbench-missing > div {
+  max-width: 34rem;
+  padding: 2rem;
+  border-top: 5px solid #a85732;
+  background: #193033;
+  color: #f8f3e6;
+  box-shadow: 8px 8px 0 #b8c0ba;
+}
+
+.topic-workbench-missing > div > span {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border: 1px solid #dfa174;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 1.3rem;
+}
+
+.topic-workbench-missing h1 {
+  font-family: "Songti SC", "STSong", serif;
+}
+
+.topic-workbench-missing p {
+  color: #c7d1cc;
+  line-height: 1.7;
+}
+
+@media (max-width: 1040px) {
+  .topic-workbench-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-workbench-hero dl {
+    max-width: 42rem;
+  }
+
+  .topic-workbench-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-stage-rail {
+    position: static;
+    max-height: none;
+    padding: 1rem 0 0;
+  }
+
+  .topic-stage-rail ol {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .topic-stage-rail blockquote,
+  .topic-stage-rail > p {
+    display: none;
+  }
+
+  .topic-workbench-content {
+    padding: 1rem 0 0;
+    border-left: 0;
+  }
+
+  .topic-candidate-grid {
+    gap: .55rem;
+  }
+}
+
+@media (max-width: 800px) {
+  .topic-workbench-bar,
+  .topic-ai-setup,
+  .topic-stage > header,
+  .topic-stage > footer,
+  .topic-outbound-preview > header,
+  .topic-job-status > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .topic-workbench-actions {
+    justify-content: flex-start;
+  }
+
+  .topic-workbench-hero {
+    padding-top: 2rem;
+  }
+
+  .topic-workbench-hero dl,
+  .topic-confirm-summary dl,
+  .topic-field-grid,
+  .topic-outbound-preview dl {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-workbench-hero dl > div {
+    border-right: 0;
+    border-bottom: 1px solid #bdc4bf;
+  }
+
+  .topic-workbench-hero dl > div:last-child {
+    border-bottom: 0;
+  }
+
+  .topic-stage-rail {
+    overflow-x: auto;
+  }
+
+  .topic-stage-rail ol {
+    min-width: 42rem;
+  }
+
+  .topic-ai-actions,
+  .topic-candidate-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-ai-actions button,
+  .topic-ai-actions label {
+    width: 100%;
+  }
+
+  .topic-status {
+    top: 7.4rem;
+  }
 }

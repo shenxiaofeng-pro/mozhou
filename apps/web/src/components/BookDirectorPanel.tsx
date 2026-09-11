@@ -118,8 +118,8 @@ export function BookDirectorPanel({
     rolling_chapter_plans: workspace.rolling_chapter_plans,
   }
   const [snapshot, setSnapshot] = useState(initialSnapshot)
-  const [idea, setIdea] = useState('')
-  const [realityAnchor, setRealityAnchor] = useState('')
+  const [idea, setIdea] = useState(workspace.topic_decision?.content.premise ?? '')
+  const [realityAnchor, setRealityAnchor] = useState(workspace.topic_decision?.content.reality_anchor ?? '')
   const [authorIntent, setAuthorIntent] = useState('')
   const [startupResult, setStartupResult] = useState<DirectorStartupProposalSet | null>(null)
   const [expansionResult, setExpansionResult] = useState<DirectorExpansionProposal | null>(null)

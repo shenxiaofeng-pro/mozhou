@@ -103,6 +103,7 @@ from app.jobs import (
     Job,
     JobArtifactContent,
     JobDetail,
+    JobExecutionError,
     JobKind,
     JobNotFoundError,
     JobRepository,
@@ -135,6 +136,7 @@ from app.models import (
     ComicWorkspace,
     ConfigureAiRequest,
     ConfirmManuscriptImportRequest,
+    ConfirmTopicDecisionRequest,
     CreateChapterRequest,
     CreateComicProjectRequest,
     CreateDirectoryNodeRequest,
@@ -182,6 +184,7 @@ from app.models import (
     ReferenceWorkImpactResponse,
     RejectFactChangeSetRequest,
     RejectTextChangeSetRequest,
+    RejectTopicDecisionCandidateRequest,
     RenameDirectoryNodeRequest,
     ReviewChapterRequest,
     ReviewFinding,
@@ -192,6 +195,7 @@ from app.models import (
     RollingChapterPlan,
     SceneOriginalityCheck,
     SelectDirectorCandidateRequest,
+    SelectTopicDecisionCandidateRequest,
     SerialDashboard,
     SetSerialDailyGoalRequest,
     SetSourceCardConfirmationRequest,
@@ -204,6 +208,12 @@ from app.models import (
     StoryThread,
     TextChangeSet,
     TimelineEvent,
+    TopicDecision,
+    TopicDecisionCandidate,
+    TopicDecisionCandidateRequest,
+    TopicDecisionCandidateSet,
+    TopicDecisionOutboundPreview,
+    TopicDecisionRegenerationRequest,
     TransitionChapterRequest,
     TransitionStoryThreadRequest,
     UpdateBookBlueprintRequest,
@@ -213,6 +223,7 @@ from app.models import (
     UpdateReferenceBlueprintRequest,
     UpdateRollingChapterPlanRequest,
     UpdateStoryEntityRequest,
+    UpdateTopicDecisionRequest,
     UpdateVolumePlanRequest,
     VolumePlan,
     Workspace,
@@ -298,6 +309,14 @@ from app.sandbox_ai import (
     SandboxAiService,
     SubmitSandboxAiRoundRequest,
 )
+from app.topic_decisions import (
+    InvalidTopicDecisionChangeError,
+    InvalidTopicTemplateError,
+    StaleTopicDecisionError,
+    TopicDecisionNotConfirmedError,
+    TopicDecisionNotFoundError,
+    TopicDecisionService,
+)
 
 
 def create_app(
@@ -374,6 +393,12 @@ def create_app(
             application.state.model_profiles,
             application.state.context_repository,
         )
+        application.state.topic_decision_service = TopicDecisionService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
 
         application.state.review_service = ReviewService(
             application.state.repository,
@@ -387,6 +412,21 @@ def create_app(
             if job.workflow == REVIEW_WORKFLOW:
                 application.state.review_service.handle(context, job)
             else:
+                if job.workflow == "director_startup":
+                    try:
+                        application.state.topic_decision_service.guard_director_startup_job(
+                            job.id
+                        )
+                    except TopicDecisionNotConfirmedError as error:
+                        raise JobExecutionError(
+                            "topic_not_confirmed",
+                            "请先确认当前选题",
+                        ) from error
+                    except StaleTopicDecisionError as error:
+                        raise JobExecutionError(
+                            "topic_changed",
+                            "选题已更新，请重新生成开书方向",
+                        ) from error
                 application.state.director_service.handle(context, job)
 
         application.state.job_runtime = JobRuntime(
@@ -404,6 +444,7 @@ def create_app(
                 JobKind.COMIC_EPISODE_SCRIPT: (
                     application.state.comic_drama_service.handle_episode_script
                 ),
+                JobKind.TOPIC_DECISION: application.state.topic_decision_service.handle,
             },
         )
         if not defer_job_runtime:
@@ -1513,7 +1554,208 @@ def create_app(
         body: CreateProjectRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> Workspace:
-        return repository.create_project(body)
+        try:
+            return repository.create_project(body)
+        except InvalidTopicTemplateError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="起航模板不存在或与题材不匹配",
+            ) from error
+
+    @application.get(
+        "/api/projects/{project_id}/topic-decision",
+        response_model=TopicDecision,
+    )
+    def get_topic_decision(
+        project_id: UUID,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.get_decision(str(project_id))
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/topic-decision",
+        response_model=TopicDecision,
+    )
+    def update_topic_decision(
+        project_id: UUID,
+        body: UpdateTopicDecisionRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.update_decision(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题变更与字段锁或声明范围冲突",
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/confirm",
+        response_model=TopicDecision,
+    )
+    def confirm_topic_decision(
+        project_id: UUID,
+        body: ConfirmTopicDecisionRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.confirm_decision(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="请先补齐关键选题字段，已确认版本不能重复确认",
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidates-preview",
+        response_model=TopicDecisionOutboundPreview,
+    )
+    def preview_topic_candidates(
+        project_id: UUID,
+        body: TopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionOutboundPreview:
+        try:
+            return service.preview_candidates(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidate-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_topic_candidates(
+        project_id: UUID,
+        body: TopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_candidates(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="请先确认外发范围和费用上限") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/regeneration-preview",
+        response_model=TopicDecisionOutboundPreview,
+    )
+    def preview_topic_field_regeneration(
+        project_id: UUID,
+        body: TopicDecisionRegenerationRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionOutboundPreview:
+        try:
+            return service.preview_field_regeneration(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="目标选题字段已锁定") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/regeneration-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_topic_field_regeneration(
+        project_id: UUID,
+        body: TopicDecisionRegenerationRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_field_regeneration(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="目标字段已锁定，或尚未确认外发和费用范围",
+            ) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/topic-decision-candidates",
+        response_model=TopicDecisionCandidateSet,
+    )
+    def get_topic_candidates(
+        job_id: UUID,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionCandidateSet:
+        try:
+            return service.get_candidate_set(str(job_id))
+        except (JobNotFoundError, TopicDecisionNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="AI 选题任务不存在") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="AI 选题任务尚无可用候选") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidate-selection",
+        response_model=TopicDecision,
+    )
+    def select_topic_candidate(
+        project_id: UUID,
+        body: SelectTopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.select_candidate(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="AI 选题候选不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已过期，请重新生成") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已处理或与字段锁冲突") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidate-rejection",
+        response_model=TopicDecisionCandidate,
+    )
+    def reject_topic_candidate(
+        project_id: UUID,
+        body: RejectTopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionCandidate:
+        try:
+            return service.reject_candidate(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="AI 选题候选不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已过期，请重新生成") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已处理") from error
 
     @application.get(
         "/api/projects/{project_id}/director",
@@ -1571,15 +1813,24 @@ def create_app(
         project_id: UUID,
         body: DirectorStartupRequest,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
     ) -> DirectorOutboundPreview:
         try:
-            return service.preview_startup(str(project_id), body)
-        except NotFoundError as error:
+            bound_body = topics.bind_director_startup_request(str(project_id), body)
+            return service.preview_startup(str(project_id), bound_body)
+        except (NotFoundError, TopicDecisionNotFoundError) as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         except OriginalityGateBlockedError as error:
             raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/director/startup-jobs",
@@ -1590,18 +1841,27 @@ def create_app(
         project_id: UUID,
         body: DirectorStartupRequest,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
         jobs: Annotated[JobRepository, Depends(get_job_repository)],
     ) -> Job:
         try:
-            job = service.submit_startup(str(project_id), body)
+            bound_body = topics.bind_director_startup_request(str(project_id), body)
+            job = service.submit_startup(str(project_id), bound_body)
             get_job_runtime_from_repository(application, jobs).wake()
             return job
-        except NotFoundError as error:
+        except (NotFoundError, TopicDecisionNotFoundError) as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         except OriginalityGateBlockedError as error:
             raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail="请确认外发范围和费用上限") from error
 
@@ -1612,11 +1872,20 @@ def create_app(
     def get_director_startup_result(
         job_id: UUID,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
     ) -> DirectorStartupProposalSet:
         try:
+            topics.guard_director_startup_job(str(job_id))
             return service.get_startup_result(str(job_id))
         except JobNotFoundError as error:
             raise HTTPException(status_code=404, detail="开书任务不存在") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail="开书任务尚无可用候选") from error
 
@@ -1628,15 +1897,31 @@ def create_app(
         project_id: UUID,
         body: SelectDirectorCandidateRequest,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
     ) -> BookBlueprint:
         try:
+            topics.guard_director_startup_job(
+                body.job_id,
+                expected_project_id=str(project_id),
+            )
             return service.select_startup_candidate(str(project_id), body)
-        except (DirectorNotFoundError, JobNotFoundError) as error:
+        except (
+            DirectorNotFoundError,
+            JobNotFoundError,
+            TopicDecisionNotFoundError,
+        ) as error:
             raise HTTPException(status_code=404, detail="开书候选不存在") from error
         except StaleDirectorRevisionError as error:
             raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
         except InvalidDirectorChangeError as error:
             raise HTTPException(status_code=409, detail="已经选择过开书方向") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/director/expansion-preview",
@@ -3553,6 +3838,11 @@ def get_director_repository(request: Request) -> DirectorRepository:
 
 def get_director_service(request: Request) -> DirectorService:
     service: DirectorService = request.app.state.director_service
+    return service
+
+
+def get_topic_decision_service(request: Request) -> TopicDecisionService:
+    service: TopicDecisionService = request.app.state.topic_decision_service
     return service
 
 

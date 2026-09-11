@@ -27,6 +27,7 @@ from app.models import (
     FutureKnowledge,
     GenerationRun,
     GenerationState,
+    Genre,
     ManuscriptScene,
     ManuscriptVolume,
     OriginalityReport,
@@ -50,14 +51,22 @@ from app.models import (
     TextChange,
     TextChangeSet,
     TimelineEvent,
+    TopicDecision,
+    TopicDecisionCandidate,
+    TopicDecisionCandidateSet,
+    TopicDecisionContent,
+    TopicDecisionField,
+    TopicDecisionStatus,
+    TopicDecisionVersion,
     VolumePlan,
     VolumePlanContent,
 )
 from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
+from app.topic_decisions import topic_subgenre_label
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 11
+ARCHIVE_FORMAT_VERSION = 12
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -470,6 +479,99 @@ ARCHIVE_TABLES = (
         "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
         (("job_id", "jobs", False),),
         ("detail_json",),
+    ),
+    ArchiveTable(
+        "topic_decisions",
+        (
+            "id",
+            "project_id",
+            "content_json",
+            "locks_json",
+            "field_versions_json",
+            "rejection_reasons_json",
+            "source_template_id",
+            "source_job_id",
+            "source_candidate_ids_json",
+            "revision",
+            "confirmed_revision",
+            "plan_stale",
+            "onboarding_required",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", True),
+        ),
+        ("source_candidate_ids_json",),
+    ),
+    ArchiveTable(
+        "topic_decision_versions",
+        (
+            "id",
+            "topic_decision_id",
+            "project_id",
+            "revision",
+            "content_json",
+            "locks_json",
+            "field_versions_json",
+            "rejection_reasons_json",
+            "source_template_id",
+            "source_job_id",
+            "source_candidate_ids_json",
+            "content_sha256",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("topic_decision_id", "topic_decisions", False),
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", True),
+        ),
+        ("source_candidate_ids_json",),
+    ),
+    ArchiveTable(
+        "topic_decision_candidate_sets",
+        (
+            "id",
+            "topic_decision_id",
+            "project_id",
+            "source_job_id",
+            "based_on_revision",
+            "target_field",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("topic_decision_id", "topic_decisions", False),
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", False),
+        ),
+    ),
+    ArchiveTable(
+        "topic_decision_candidates",
+        (
+            "id",
+            "candidate_set_id",
+            "project_id",
+            "ordinal",
+            "label",
+            "content_json",
+            "changed_fields_json",
+            "rationale",
+            "risks_json",
+            "state",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+            "decided_at",
+        ),
+        "project_id = ?",
+        (
+            ("candidate_set_id", "topic_decision_candidate_sets", False),
+            ("project_id", "projects", False),
+        ),
     ),
     ArchiveTable(
         "comic_projects",
@@ -1149,6 +1251,117 @@ def _validate_business_rows(
                     "plan_stale": bool(row["plan_stale"]),
                 }
             )
+        if len(tables["topic_decisions"]) > 1:
+            raise InvalidProjectArchiveError("invalid_topic_decision_count")
+        topic_decisions_by_id: dict[str, TopicDecision] = {}
+        for row in tables["topic_decisions"]:
+            if row["onboarding_required"] not in {0, 1}:
+                raise InvalidProjectArchiveError("invalid_topic_onboarding_state")
+            confirmed_revision = row["confirmed_revision"]
+            status = (
+                TopicDecisionStatus.DRAFT
+                if confirmed_revision is None
+                else TopicDecisionStatus.CONFIRMED
+                if confirmed_revision == row["revision"]
+                else TopicDecisionStatus.PENDING_RECONFIRMATION
+            )
+            topic = TopicDecision.model_validate(
+                {
+                    **row,
+                    "content": _parse_json(row["content_json"]),
+                    "status": status,
+                    "locks": _parse_json(row["locks_json"]),
+                    "field_versions": _parse_json(row["field_versions_json"]),
+                    "rejection_reasons": _parse_json(row["rejection_reasons_json"]),
+                    "source_candidate_ids": _parse_json(row["source_candidate_ids_json"]),
+                    "plan_stale": bool(row["plan_stale"]),
+                }
+            )
+            topic_decisions_by_id[topic.id] = topic
+
+        topic_versions_by_revision: dict[int, TopicDecisionVersion] = {}
+        for row in tables["topic_decision_versions"]:
+            content = _parse_json(row["content_json"])
+            topic_version = TopicDecisionVersion.model_validate(
+                {
+                    **row,
+                    "content": content,
+                    "locks": _parse_json(row["locks_json"]),
+                    "field_versions": _parse_json(row["field_versions_json"]),
+                    "rejection_reasons": _parse_json(row["rejection_reasons_json"]),
+                    "source_candidate_ids": _parse_json(row["source_candidate_ids_json"]),
+                }
+            )
+            if (
+                set(topic_version.locks) != set(TopicDecisionField)
+                or set(topic_version.field_versions) != set(TopicDecisionField)
+                or any(value < 1 for value in topic_version.field_versions.values())
+            ):
+                raise InvalidProjectArchiveError("invalid_topic_version_field_state")
+            decision = topic_decisions_by_id.get(topic_version.topic_decision_id)
+            if (
+                decision is None
+                or decision.project_id != topic_version.project_id
+                or topic_version.revision > decision.revision
+                or topic_version.revision in topic_versions_by_revision
+            ):
+                raise InvalidProjectArchiveError("invalid_topic_version")
+            expected_hash = hashlib.sha256(canonical_json(content)).hexdigest()
+            if not compare_digest(expected_hash, topic_version.content_sha256):
+                raise InvalidProjectArchiveError("invalid_topic_version_hash")
+            topic_versions_by_revision[topic_version.revision] = topic_version
+        if topic_decisions_by_id:
+            topic = next(iter(topic_decisions_by_id.values()))
+            if (
+                topic.confirmed_revision is not None
+                and topic.confirmed_revision not in topic_versions_by_revision
+            ):
+                raise InvalidProjectArchiveError("missing_confirmed_topic_version")
+
+        candidates_by_set: dict[str, list[TopicDecisionCandidate]] = {}
+        candidate_projects: dict[str, str] = {}
+        for row in tables["topic_decision_candidates"]:
+            candidate = TopicDecisionCandidate.model_validate(
+                {
+                    **row,
+                    "content": _parse_json(row["content_json"]),
+                    "changed_fields": _parse_json(row["changed_fields_json"]),
+                    "risks": _parse_json(row["risks_json"]),
+                }
+            )
+            candidates_by_set.setdefault(row["candidate_set_id"], []).append(candidate)
+            candidate_projects[candidate.id] = row["project_id"]
+        seen_candidate_sets: set[str] = set()
+        for row in tables["topic_decision_candidate_sets"]:
+            decision = topic_decisions_by_id.get(row["topic_decision_id"])
+            if decision is None or decision.project_id != row["project_id"]:
+                raise InvalidProjectArchiveError("invalid_topic_candidate_set")
+            candidates = sorted(
+                candidates_by_set.get(row["id"], []),
+                key=lambda candidate: candidate.ordinal,
+            )
+            if any(candidate_projects[candidate.id] != row["project_id"] for candidate in candidates):
+                raise InvalidProjectArchiveError("invalid_topic_candidate")
+            TopicDecisionCandidateSet.model_validate(
+                {
+                    "job_id": row["source_job_id"],
+                    "project_id": row["project_id"],
+                    "based_on_revision": row["based_on_revision"],
+                    "target_field": row["target_field"],
+                    "candidates": candidates,
+                }
+            )
+            seen_candidate_sets.add(row["id"])
+        if set(candidates_by_set) != seen_candidate_sets:
+            raise InvalidProjectArchiveError("orphan_topic_candidate")
+
+        archived_candidate_ids = ids_by_table["topic_decision_candidates"]
+        for topic in topic_decisions_by_id.values():
+            if not set(topic.source_candidate_ids) <= archived_candidate_ids:
+                raise InvalidProjectArchiveError("external_topic_candidate")
+        for confirmed_topic_version in topic_versions_by_revision.values():
+            if not set(confirmed_topic_version.source_candidate_ids) <= archived_candidate_ids:
+                raise InvalidProjectArchiveError("external_topic_candidate")
         for row in tables["volume_plans"]:
             volume_content = VolumePlanContent.model_validate(_parse_json(row["content_json"]))
             VolumePlan.model_validate(
@@ -1207,12 +1420,12 @@ def _validate_business_rows(
                 raise InvalidProjectArchiveError("invalid_serial_goal")
             datetime.fromisoformat(row["goal_date"])
         for row in tables["chapter_versions"]:
-            version = ChapterVersion.model_validate(
+            chapter_version = ChapterVersion.model_validate(
                 {**row, "is_candidate": bool(row["is_candidate"])}
             )
             if not compare_digest(
-                hashlib.sha256(version.content.encode("utf-8")).hexdigest(),
-                version.content_sha256,
+                hashlib.sha256(chapter_version.content.encode("utf-8")).hexdigest(),
+                chapter_version.content_sha256,
             ):
                 raise InvalidProjectArchiveError("invalid_chapter_version_hash")
         for row in tables["context_directives"]:
@@ -1456,6 +1669,7 @@ def _validate_business_rows(
             "deleted_at",
             "undone_at",
             "reviewed_at",
+            "decided_at",
         }
         for table in ARCHIVE_TABLES:
             for row in tables[table.name]:
@@ -1471,6 +1685,70 @@ def _validate_business_rows(
         raise
     except (TypeError, ValueError, ValidationError) as error:
         raise InvalidProjectArchiveError("invalid_business_values") from error
+
+
+def _insert_legacy_topic_decision(
+    connection: sqlite3.Connection,
+    project: dict[str, Any],
+    blueprints: list[dict[str, Any]],
+) -> None:
+    blueprint = blueprints[0] if blueprints else None
+    blueprint_content = (
+        _parse_json(blueprint["content_json"]) if blueprint is not None else {}
+    )
+    if not isinstance(blueprint_content, dict):
+        raise InvalidProjectArchiveError("invalid_legacy_topic_blueprint")
+
+    def blueprint_text(field: str) -> str:
+        value = blueprint_content.get(field, "")
+        if not isinstance(value, str):
+            raise InvalidProjectArchiveError("invalid_legacy_topic_blueprint")
+        return value
+
+    content = TopicDecisionContent(
+        target_platform="",
+        target_audience=blueprint_text("target_audience"),
+        subgenre=topic_subgenre_label(Genre(str(project["genre"]))),
+        premise=(str(blueprint["idea"]) if blueprint is not None else str(project["title"])),
+        core_desire=blueprint_text("core_desire"),
+        long_term_promise=blueprint_text("long_term_promise"),
+        first_three_chapter_promise="",
+        constraints=[],
+        forbidden_elements=[],
+        reference_purpose="",
+        reality_anchor=f"{project['rebirth_year']} · {project['rebirth_location']}",
+        first_ten_chapter_goal="",
+    )
+    timestamp = str(project["updated_at"])
+    connection.execute(
+        """
+        INSERT INTO topic_decisions (
+            id, project_id, content_json, locks_json, field_versions_json,
+            rejection_reasons_json, source_template_id, source_job_id,
+            source_candidate_ids_json, revision, confirmed_revision,
+            plan_stale, onboarding_required, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, '{}', NULL, NULL, '[]', 0, NULL, 0, 0, ?, ?)
+        """,
+        (
+            str(uuid4()),
+            project["id"],
+            content.model_dump_json(),
+            json.dumps(
+                {field.value: False for field in TopicDecisionField},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            json.dumps(
+                {field.value: 1 for field in TopicDecisionField},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            timestamp,
+            timestamp,
+        ),
+    )
 
 
 class ProjectArchiveService:
@@ -1541,9 +1819,18 @@ class ProjectArchiveService:
     def import_project(self, raw_archive: bytes) -> str:
         if len(raw_archive) > MAX_ARCHIVE_BYTES:
             raise ProjectArchiveTooLargeError("archive_too_large")
-        archive = self._validate_archive(_parse_json(raw_archive))
+        parsed_archive = _parse_json(raw_archive)
+        source_archive_version = (
+            parsed_archive.get("format_version")
+            if isinstance(parsed_archive, dict)
+            else None
+        )
+        archive = self._validate_archive(parsed_archive)
+        assert isinstance(source_archive_version, int)
         tables = archive["tables"]
         assert isinstance(tables, dict)
+        if source_archive_version >= 12 and not tables["topic_decisions"]:
+            raise InvalidProjectArchiveError("missing_topic_decision")
 
         ids_by_table: dict[str, set[str]] = {}
         id_map: dict[str, str] = {}
@@ -1672,6 +1959,12 @@ class ProjectArchiveService:
                             tuple(row[column] for column in table.columns)
                             for row in remapped[table.name]
                         ],
+                    )
+                if source_archive_version < 12:
+                    _insert_legacy_topic_decision(
+                        connection,
+                        restored_project,
+                        remapped["book_blueprints"],
                     )
                 connection.executemany(
                     """
@@ -1807,6 +2100,7 @@ class ProjectArchiveService:
             9,
             10,
             11,
+            12,
         }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
@@ -1846,6 +2140,8 @@ class ProjectArchiveService:
             value = self._upgrade_v9_archive(value)
         if value["format_version"] == 10:
             value = self._upgrade_v10_archive(value)
+        if value["format_version"] == 11:
+            value = self._upgrade_v11_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -2302,6 +2598,24 @@ class ProjectArchiveService:
         upgraded_tables["reference_pattern_applications"] = upgraded_applications
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = 11
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v11_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["topic_decisions"] = []
+        upgraded_tables["topic_decision_versions"] = []
+        upgraded_tables["topic_decision_candidate_sets"] = []
+        upgraded_tables["topic_decision_candidates"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 12
         unsigned = dict(upgraded)
         unsigned.pop("checksum_sha256", None)
         upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()

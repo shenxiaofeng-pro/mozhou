@@ -141,6 +141,16 @@ import type {
   ReviewOutboundPreview,
   RollbackChapterVersionInput,
   TextChangeSet,
+  ConfirmTopicDecisionInput,
+  RejectTopicDecisionCandidateInput,
+  SelectTopicDecisionCandidateInput,
+  TopicDecision,
+  TopicDecisionCandidate,
+  TopicDecisionCandidateRequest,
+  TopicDecisionCandidateSet,
+  TopicDecisionOutboundPreview,
+  TopicDecisionRegenerationRequest,
+  UpdateTopicDecisionInput,
 } from '@mozhou/contracts'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -619,6 +629,59 @@ export const api = {
   },
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })
+  },
+  updateTopicDecision(projectId: string, input: UpdateTopicDecisionInput) {
+    return request<TopicDecision>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  confirmTopicDecision(projectId: string, input: ConfirmTopicDecisionInput) {
+    return request<TopicDecision>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/confirm`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewTopicDecisionCandidates(projectId: string, input: TopicDecisionCandidateRequest) {
+    return request<TopicDecisionOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidates-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startTopicDecisionCandidateJob(projectId: string, input: TopicDecisionCandidateRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidate-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewTopicDecisionRegeneration(projectId: string, input: TopicDecisionRegenerationRequest) {
+    return request<TopicDecisionOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/regeneration-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startTopicDecisionRegenerationJob(projectId: string, input: TopicDecisionRegenerationRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/regeneration-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getTopicDecisionCandidates(jobId: string) {
+    return request<TopicDecisionCandidateSet>(
+      `/api/jobs/${encodeURIComponent(jobId)}/topic-decision-candidates`,
+    )
+  },
+  selectTopicDecisionCandidate(projectId: string, input: SelectTopicDecisionCandidateInput) {
+    return request<TopicDecision>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidate-selection`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  rejectTopicDecisionCandidate(projectId: string, input: RejectTopicDecisionCandidateInput) {
+    return request<TopicDecisionCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidate-rejection`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
   },
   previewManuscript(file: File) {
     const query = new URLSearchParams({ source_filename: file.name })

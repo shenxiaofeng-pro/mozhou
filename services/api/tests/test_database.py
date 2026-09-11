@@ -95,6 +95,10 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "text_change_sets",
         "text_changes",
         "timeline_events",
+        "topic_decision_candidate_sets",
+        "topic_decision_candidates",
+        "topic_decision_versions",
+        "topic_decisions",
         "volume_plans",
     ]
 
@@ -130,7 +134,7 @@ def test_database_upgrades_v21_to_latest_without_losing_existing_jobs(tmp_path: 
     database.initialize()
 
     with database.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 24
         assert connection.execute("SELECT id FROM jobs WHERE id = ?", (job.id,)).fetchone()[0] == job.id
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'comic_%'"
@@ -139,6 +143,7 @@ def test_database_upgrades_v21_to_latest_without_losing_existing_jobs(tmp_path: 
 
 def test_database_upgrades_v22_reference_applications_to_active_lifecycle(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_path = tmp_path / "v22-reference-applications.db"
     with closing(sqlite3.connect(database_path)) as connection:
@@ -161,6 +166,8 @@ def test_database_upgrades_v22_reference_applications_to_active_lifecycle(
             """
         )
 
+    monkeypatch.setattr(database_module, "MIGRATIONS", MIGRATIONS[:23])
+    monkeypatch.setattr(database_module, "CURRENT_SCHEMA_VERSION", 23)
     database = Database(database_path)
     database.initialize()
     database.initialize()
@@ -183,6 +190,120 @@ def test_database_upgrades_v22_reference_applications_to_active_lifecycle(
     assert schema_version == 23
     backups = list((tmp_path / "backups").glob("mozhou-before-v23-*.db"))
     assert len(backups) == 1
+
+
+def test_database_upgrades_v23_projects_to_nonblocking_topic_drafts(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "v23-topic-decisions.db"
+    database = Database(database_path)
+    database.initialize()
+    repository = ProjectRepository(database)
+    with_blueprint = repository.create_project(
+        CreateProjectRequest(
+            title="旧库有蓝图",
+            genre=Genre.URBAN_REBIRTH,
+            rebirth_year=1998,
+            rebirth_location="南平",
+        )
+    )
+    without_blueprint = repository.create_project(
+        CreateProjectRequest(
+            title="旧库无蓝图",
+            genre=Genre.EASTERN_FANTASY,
+            rebirth_year=728,
+            rebirth_location="九州·云泽",
+        )
+    )
+    timestamp = "2026-09-01T00:00:00+00:00"
+    blueprint_content = {
+        "title": "旧蓝图",
+        "genre": "urban_rebirth",
+        "rebirth_year": 1998,
+        "rebirth_location": "南平",
+        "target_audience": "男频年代创业读者",
+        "core_selling_points": ["真实产业升级"],
+        "core_desire": "先救家人，再重建产业信用",
+        "divergence_point": "抢在违约前救下第一张订单",
+        "long_term_promise": "每卷完成一次产业跃迁",
+        "ending_direction": "完成代际和解",
+        "protagonist_arc": "从补偿走向责任",
+        "resource_growth": "从信息差到组织能力",
+        "relationship_design": "家人是价值锚",
+    }
+    with database.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO book_blueprints (
+                id, project_id, idea, content_json, locks_json, field_versions_json,
+                stale_fields_json, plan_stale, source_candidate_id, revision,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, NULL, 0, ?, ?)
+            """,
+            (
+                "legacy-blueprint",
+                with_blueprint.project.id,
+                "一张订单改变家庭命运",
+                json.dumps(blueprint_content, ensure_ascii=False),
+                json.dumps({field: False for field in blueprint_content}),
+                json.dumps({field: 1 for field in blueprint_content}),
+                timestamp,
+                timestamp,
+            ),
+        )
+        for table in (
+            "topic_decision_candidates",
+            "topic_decision_candidate_sets",
+            "topic_decision_versions",
+            "topic_decisions",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 24")
+        connection.execute("PRAGMA user_version=23")
+
+    database.initialize()
+    database.initialize()
+
+    with database.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT project_id, content_json, confirmed_revision, onboarding_required
+            FROM topic_decisions ORDER BY project_id
+            """
+        ).fetchall()
+        migration_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 24"
+        ).fetchone()[0]
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 24
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    by_project = {row["project_id"]: row for row in rows}
+    migrated_blueprint = json.loads(by_project[with_blueprint.project.id]["content_json"])
+    migrated_plain = json.loads(by_project[without_blueprint.project.id]["content_json"])
+    assert migrated_blueprint["premise"] == "一张订单改变家庭命运"
+    assert migrated_blueprint["core_desire"] == blueprint_content["core_desire"]
+    assert migrated_blueprint["target_audience"] == blueprint_content["target_audience"]
+    assert migrated_plain["premise"] == "旧库无蓝图"
+    assert migrated_plain["subgenre"] == "东方玄幻"
+    assert all(row["confirmed_revision"] is None for row in rows)
+    assert all(row["onboarding_required"] == 0 for row in rows)
+    assert migration_count == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v24-*.db"))) == 1
+
+    assert repository.get_workspace(with_blueprint.project.id).next_action == "continue_writing"
+    assert repository.get_workspace(without_blueprint.project.id).next_action == "plan_book"
+
+    created, was_created = JobRepository(database).create_job(
+        project_id=with_blueprint.project.id,
+        kind=JobKind.TOPIC_DECISION,
+        workflow="topic_candidates",
+        idempotency_key="v24-topic-job",
+        input_payload={"based_on_revision": 0},
+        provider="test",
+        model="test",
+    )
+    assert was_created is True
+    assert created.kind == JobKind.TOPIC_DECISION
 
 
 def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -> None:
@@ -246,21 +367,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v23-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v24-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (23,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (24,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v23-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v24-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v23_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_v24_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -316,7 +437,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v23_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (23,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (24,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -344,8 +465,9 @@ def test_database_runs_v1_and_v2_fixtures_to_v23_without_losing_data(
             (21, "document_formats_and_author_productivity"),
             (22, "ai_comic_drama_workbench"),
             (23, "reference_application_lifecycle"),
+            (24, "topic_decisions"),
         ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v23-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v24-*.db"))) == 1
 
 
 def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
@@ -392,7 +514,7 @@ def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
     assert was_created is True
     assert created.kind == JobKind.SANDBOX_AI_ROUND
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (23,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (24,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -697,7 +819,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             is None
         )
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v23-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v24-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

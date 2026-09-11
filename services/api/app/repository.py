@@ -173,6 +173,17 @@ class ProjectRepository:
         self.database = database
 
     def create_project(self, request: CreateProjectRequest) -> Workspace:
+        from app.beta import BETA_TEMPLATES
+        from app.topic_decisions import InvalidTopicTemplateError
+
+        template = next(
+            (item for item in BETA_TEMPLATES if item.id == request.template_id),
+            None,
+        )
+        if request.template_id is not None and (
+            template is None or template.genre != request.genre
+        ):
+            raise InvalidTopicTemplateError(request.template_id)
         project_id = str(uuid4())
         volume_id = str(uuid4())
         chapter_id = str(uuid4())
@@ -229,6 +240,15 @@ class ProjectRepository:
                 content="",
                 source=ChapterVersionSource.INITIAL,
                 created_at=timestamp,
+            )
+            from app.topic_decisions import insert_initial_topic_decision
+
+            insert_initial_topic_decision(
+                connection,
+                project_id=project_id,
+                request=request,
+                template=template,
+                timestamp=timestamp,
             )
         return self.get_workspace(project_id)
 
@@ -400,6 +420,10 @@ class ProjectRepository:
                 "SELECT * FROM book_blueprints WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
+            topic_decision_row = connection.execute(
+                "SELECT * FROM topic_decisions WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
             volume_plan_rows = connection.execute(
                 "SELECT * FROM volume_plans WHERE project_id = ? ORDER BY volume_number",
                 (project_id,),
@@ -435,6 +459,8 @@ class ProjectRepository:
             segments_by_work.setdefault(row["reference_work_id"], []).append(
                 self._reference_segment(row)
             )
+        from app.topic_decisions import parse_topic_decision, project_next_action
+
         workspace_payload: dict[str, object] = {
             "project": self._project(project_row),
             "chapters": (
@@ -478,6 +504,21 @@ class ProjectRepository:
                 DirectorRepository.parse_book_blueprint(book_blueprint_row)
                 if book_blueprint_row is not None
                 else None
+            ),
+            "topic_decision": (
+                parse_topic_decision(topic_decision_row)
+                if topic_decision_row is not None
+                else None
+            ),
+            "next_action": project_next_action(
+                topic_decision_row,
+                has_blueprint=book_blueprint_row is not None,
+                has_manuscript=any(
+                    bool(str(row["content"]).strip())
+                    if include_chapter_content
+                    else bool(row["has_content"])
+                    for row in chapter_rows
+                ),
             ),
             "volume_plans": [DirectorRepository.parse_volume_plan(row) for row in volume_plan_rows],
             "rolling_chapter_plans": [
