@@ -28,6 +28,7 @@ from app.migrations import (
     v23,
     v24,
     v25,
+    v26,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -82,6 +83,7 @@ MIGRATIONS = (
     ),
     Migration(version=24, name="topic_decisions", upgrade=v24.upgrade),
     Migration(version=25, name="craft_pattern_v2", upgrade=v25.upgrade),
+    Migration(version=26, name="writing_pattern_recipes", upgrade=v26.upgrade),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

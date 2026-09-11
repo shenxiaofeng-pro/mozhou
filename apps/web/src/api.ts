@@ -161,6 +161,21 @@ import type {
   TopicDecisionOutboundPreview,
   TopicDecisionRegenerationRequest,
   UpdateTopicDecisionInput,
+  CreateWritingPatternRecipeInput,
+  CreateWritingPatternRecipeVersionInput,
+  PreviewWritingPatternRecipeInput,
+  PreviewWritingPatternRecipeVersionInput,
+  PreviewWritingPatternReuseInput,
+  ReuseWritingPatternRecipeInput,
+  UpdateWritingPatternLifecycleInput,
+  WritingPatternLifecycleState,
+  WritingPatternProfilePreview,
+  WritingPatternProfileSummary,
+  WritingPatternProfileVersion,
+  WritingPatternRecipePage,
+  WritingPatternRecipePreview,
+  WritingPatternRecipeSeries,
+  WritingPatternRecipeVersion,
 } from '@mozhou/contracts'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -168,9 +183,26 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code: string | null = null,
   ) {
     super(message)
   }
+}
+
+function parseApiError(payload: unknown): { message: string; code: string | null } {
+  if (!payload || typeof payload !== 'object' || !('detail' in payload)) {
+    return { message: '本地服务暂时无法完成操作', code: null }
+  }
+  const { detail } = payload
+  if (typeof detail === 'string') return { message: detail, code: null }
+  if (!detail || typeof detail !== 'object') {
+    return { message: '本地服务暂时无法完成操作', code: null }
+  }
+  const message = 'message' in detail && typeof detail.message === 'string'
+    ? detail.message
+    : '本地服务暂时无法完成操作'
+  const code = 'code' in detail && typeof detail.code === 'string' ? detail.code : null
+  return { message, code }
 }
 
 let tauriApiConnection: Promise<ApiConnection> | null = null
@@ -231,11 +263,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null)
-    const detail =
-      payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string'
-        ? payload.detail
-        : '本地服务暂时无法完成操作'
-    throw new ApiError(detail, response.status)
+    const error = parseApiError(payload)
+    throw new ApiError(error.message, response.status, error.code)
   }
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
@@ -248,10 +277,8 @@ async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Bl
   const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers })
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null)
-    const detail = payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string'
-      ? payload.detail
-      : '本地服务暂时无法完成操作'
-    throw new ApiError(detail, response.status)
+    const error = parseApiError(payload)
+    throw new ApiError(error.message, response.status, error.code)
   }
   const disposition = response.headers.get('content-disposition') ?? ''
   const encodedFilename = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
@@ -1326,6 +1353,113 @@ export const api = {
   ) {
     return request<CraftPatternAsset>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets/${encodeURIComponent(assetId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewWritingPatternRecipe(projectId: string, input: PreviewWritingPatternRecipeInput) {
+    return request<WritingPatternRecipePreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  createWritingPatternRecipe(projectId: string, input: CreateWritingPatternRecipeInput) {
+    return request<WritingPatternRecipeVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewWritingPatternRecipeVersion(
+    projectId: string,
+    recipeId: string,
+    input: PreviewWritingPatternRecipeVersionInput,
+  ) {
+    return request<WritingPatternRecipePreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(recipeId)}/versions/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  createWritingPatternRecipeVersion(
+    projectId: string,
+    recipeId: string,
+    input: CreateWritingPatternRecipeVersionInput,
+  ) {
+    return request<WritingPatternRecipeVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(recipeId)}/versions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listWritingPatternRecipes(input: {
+    lifecycle_state?: WritingPatternLifecycleState
+    limit?: number
+    offset?: number
+  } = {}) {
+    const query = new URLSearchParams()
+    if (input.lifecycle_state) query.set('lifecycle_state', input.lifecycle_state)
+    query.set('limit', String(input.limit ?? 30))
+    query.set('offset', String(input.offset ?? 0))
+    return request<WritingPatternRecipePage>(`/api/writing-pattern-recipes?${query}`)
+  },
+  getWritingPatternRecipe(recipeId: string) {
+    return request<WritingPatternRecipeSeries>(
+      `/api/writing-pattern-recipes/${encodeURIComponent(recipeId)}`,
+    )
+  },
+  getWritingPatternRecipeVersion(versionId: string) {
+    return request<WritingPatternRecipeVersion>(
+      `/api/writing-pattern-recipe-versions/${encodeURIComponent(versionId)}`,
+    )
+  },
+  updateWritingPatternRecipeLifecycle(
+    recipeId: string,
+    input: UpdateWritingPatternLifecycleInput,
+  ) {
+    return request<WritingPatternRecipeSeries>(
+      `/api/writing-pattern-recipes/${encodeURIComponent(recipeId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewWritingPatternRecipeReuse(
+    projectId: string,
+    versionId: string,
+    input: PreviewWritingPatternReuseInput,
+  ) {
+    return request<WritingPatternProfilePreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(versionId)}/reuse-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  reuseWritingPatternRecipe(
+    projectId: string,
+    versionId: string,
+    input: ReuseWritingPatternRecipeInput,
+  ) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(versionId)}/reuse`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listWritingPatternProfiles(projectId: string) {
+    return request<WritingPatternProfileSummary[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles`,
+    )
+  },
+  getActiveWritingPatternProfile(projectId: string) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profile`,
+    )
+  },
+  getWritingPatternProfile(projectId: string, profileVersionId: string) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles/${encodeURIComponent(profileVersionId)}`,
+    )
+  },
+  updateWritingPatternProfileLifecycle(
+    projectId: string,
+    profileVersionId: string,
+    input: UpdateWritingPatternLifecycleInput,
+  ) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles/${encodeURIComponent(profileVersionId)}/lifecycle`,
       { method: 'PATCH', body: JSON.stringify(input) },
     )
   },

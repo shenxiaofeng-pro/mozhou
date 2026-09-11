@@ -45,6 +45,11 @@ ARCHIVE_TABLES = {
     "topic_decision_versions",
     "topic_decision_candidate_sets",
     "topic_decision_candidates",
+    "writing_pattern_recipes",
+    "writing_pattern_recipe_versions",
+    "writing_pattern_recipe_sources",
+    "writing_pattern_profile_versions",
+    "project_writing_pattern_profiles",
     "comic_projects",
     "comic_episodes",
     "comic_versions",
@@ -122,7 +127,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 13
+    assert archive["format_version"] == 14
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -251,7 +256,7 @@ def test_round_trip_preserves_confirmed_topic_versions_and_rejected_candidates(
                 (restored_project_id,),
             ).fetchall()
 
-    assert archive["format_version"] == 13
+    assert archive["format_version"] == 14
     assert len(archive["tables"]["topic_decisions"]) == 1
     assert len(archive["tables"]["topic_decision_versions"]) == 1
     assert len(archive["tables"]["topic_decision_candidate_sets"]) == 1
@@ -651,7 +656,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 13
+    assert archive["format_version"] == 14
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -1250,6 +1255,46 @@ def test_import_requires_json_content_type(tmp_path: Path) -> None:
 
     assert response.status_code == 415
     assert response.json() == {"detail": "请选择墨舟项目归档文件"}
+
+
+def test_import_upgrades_v13_archive_with_empty_writing_pattern_tables(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "v13-archive.db")) as client:
+        original = client.post(
+            "/api/projects",
+            json={
+                "title": "旧归档写作模式兼容",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "南平",
+            },
+        ).json()
+        archive = client.get(
+            f"/api/projects/{original['project']['id']}/export"
+        ).json()
+        for table in (
+            "writing_pattern_recipes",
+            "writing_pattern_recipe_versions",
+            "writing_pattern_recipe_sources",
+            "writing_pattern_profile_versions",
+            "project_writing_pattern_profiles",
+        ):
+            archive["tables"].pop(table)
+        archive["format_version"] = 13
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(
+            canonical_json(unsigned)
+        ).hexdigest()
+
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
 
 
 def test_creates_lists_and_restores_compressed_recovery_point(tmp_path: Path) -> None:

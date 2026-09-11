@@ -66,9 +66,14 @@ from app.models import (
 from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 from app.topic_decisions import topic_subgenre_label
+from app.writing_patterns.archive import (
+    InvalidWritingPatternArchiveError,
+    rebind_writing_pattern_rows,
+    validate_writing_pattern_tables,
+)
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 13
+ARCHIVE_FORMAT_VERSION = 14
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -514,6 +519,15 @@ ARCHIVE_TABLES = (
         "SELECT asset_version_id FROM project_craft_pattern_assets WHERE project_id = ?1 "
         "UNION SELECT o.asset_version_id FROM craft_pattern_job_outputs o "
         "JOIN jobs j ON j.id = o.job_id WHERE j.project_id = ?1 "
+        "UNION SELECT s.asset_version_id FROM writing_pattern_recipe_sources s "
+        "JOIN writing_pattern_recipe_versions rv ON rv.id = s.recipe_version_id "
+        "WHERE rv.recipe_id IN ("
+        "SELECT r.id FROM writing_pattern_recipes r "
+        "WHERE r.created_from_project_id = ?1 "
+        "UNION SELECT used.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions used ON used.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1"
+        ") "
         "UNION SELECT child.value FROM asset_tree tree "
         "JOIN craft_pattern_assets parent ON parent.id = tree.id "
         "JOIN json_each(parent.source_asset_version_ids_json) child"
@@ -643,6 +657,138 @@ ARCHIVE_TABLES = (
         (
             ("candidate_set_id", "topic_decision_candidate_sets", False),
             ("project_id", "projects", False),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_recipes",
+        (
+            "id",
+            "created_from_project_id",
+            "lifecycle_state",
+            "lifecycle_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "created_from_project_id = ?1 OR id IN ("
+        "SELECT rv.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions rv ON rv.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1)",
+        (("created_from_project_id", "projects", True),),
+    ),
+    ArchiveTable(
+        "writing_pattern_recipe_versions",
+        (
+            "id",
+            "recipe_id",
+            "version",
+            "name",
+            "description",
+            "conflict_decisions_json",
+            "conflicts_json",
+            "source_asset_count",
+            "source_work_count",
+            "safety_basis",
+            "source_snapshot_sha256",
+            "content_sha256",
+            "created_at",
+        ),
+        "recipe_id IN ("
+        "SELECT r.id FROM writing_pattern_recipes r "
+        "WHERE r.created_from_project_id = ?1 "
+        "UNION SELECT used.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions used ON used.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1)",
+        (("recipe_id", "writing_pattern_recipes", False),),
+        ("conflict_decisions_json", "conflicts_json"),
+    ),
+    ArchiveTable(
+        "writing_pattern_recipe_sources",
+        (
+            "id",
+            "recipe_version_id",
+            "ordinal",
+            "entry_key",
+            "asset_version_id",
+            "asset_series_id",
+            "asset_version",
+            "asset_content_sha256",
+            "asset_type",
+            "dimension",
+            "pattern_name",
+            "transferable_rule",
+            "adaptation_risk",
+            "purpose",
+            "strategy",
+            "weight",
+            "applicable_stages_json",
+            "chapter_start",
+            "chapter_end",
+            "note",
+            "source_work_fingerprints_json",
+            "source_snapshot_sha256",
+        ),
+        "recipe_version_id IN ("
+        "SELECT rv.id FROM writing_pattern_recipe_versions rv "
+        "WHERE rv.recipe_id IN ("
+        "SELECT r.id FROM writing_pattern_recipes r "
+        "WHERE r.created_from_project_id = ?1 "
+        "UNION SELECT used.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions used ON used.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1))",
+        (
+            ("recipe_version_id", "writing_pattern_recipe_versions", False),
+            ("asset_version_id", "craft_pattern_assets", False),
+        ),
+        ("applicable_stages_json", "source_work_fingerprints_json"),
+    ),
+    ArchiveTable(
+        "writing_pattern_profile_versions",
+        (
+            "id",
+            "project_id",
+            "recipe_version_id",
+            "recipe_content_sha256",
+            "topic_decision_version_id",
+            "topic_revision",
+            "topic_content_sha256",
+            "compiler_version",
+            "safety_basis",
+            "source_snapshot_sha256",
+            "profile_json",
+            "conflicts_json",
+            "decisions_json",
+            "excluded_entry_keys_json",
+            "profile_fingerprint_sha256",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("recipe_version_id", "writing_pattern_recipe_versions", False),
+            ("topic_decision_version_id", "topic_decision_versions", False),
+        ),
+        (
+            "profile_json",
+            "conflicts_json",
+            "decisions_json",
+            "excluded_entry_keys_json",
+        ),
+    ),
+    ArchiveTable(
+        "project_writing_pattern_profiles",
+        (
+            "id",
+            "project_id",
+            "profile_version_id",
+            "lifecycle_state",
+            "lifecycle_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("profile_version_id", "writing_pattern_profile_versions", False),
         ),
     ),
     ArchiveTable(
@@ -1875,6 +2021,7 @@ def _validate_business_rows(
             JobEvent.model_validate({**row, "detail": detail})
 
         _validate_craft_pattern_rows(tables)
+        validate_writing_pattern_tables(tables)
 
         for row in tables["comic_projects"]:
             source_ids = _parse_json(row["source_chapter_ids_json"])
@@ -2068,6 +2215,14 @@ class ProjectArchiveService:
                             # The immutable asset is global; a reused asset may
                             # have been produced by a different project's job.
                             row["source_job_id"] = None
+                if table.name == "writing_pattern_recipes":
+                    for row in table_rows:
+                        created_from_project_id = row["created_from_project_id"]
+                        if created_from_project_id != project_id:
+                            # A globally reused recipe can outlive its origin project.
+                            # The exported immutable versions remain complete without
+                            # claiming that the restored project authored the series.
+                            row["created_from_project_id"] = None
                 tables[table.name] = table_rows
 
         payload: dict[str, Any] = {
@@ -2332,6 +2487,17 @@ class ProjectArchiveService:
                 ],
             }
         )
+        try:
+            rebind_writing_pattern_rows(
+                remapped,
+                craft_asset_rows=validation_assets,
+            )
+            validate_writing_pattern_tables(
+                remapped,
+                craft_asset_rows=validation_assets,
+            )
+        except InvalidWritingPatternArchiveError as error:
+            raise InvalidProjectArchiveError(str(error)) from error
 
         restored_project = remapped["projects"][0]
         title = restored_project["title"]
@@ -2495,6 +2661,7 @@ class ProjectArchiveService:
             11,
             12,
             13,
+            14,
         }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
@@ -2538,6 +2705,8 @@ class ProjectArchiveService:
             value = self._upgrade_v11_archive(value)
         if value["format_version"] == 12:
             value = self._upgrade_v12_archive(value)
+        if value["format_version"] == 13:
+            value = self._upgrade_v13_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -3029,6 +3198,25 @@ class ProjectArchiveService:
         upgraded_tables["craft_pattern_job_outputs"] = []
         upgraded["tables"] = upgraded_tables
         upgraded["format_version"] = 13
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v13_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["writing_pattern_recipes"] = []
+        upgraded_tables["writing_pattern_recipe_versions"] = []
+        upgraded_tables["writing_pattern_recipe_sources"] = []
+        upgraded_tables["writing_pattern_profile_versions"] = []
+        upgraded_tables["project_writing_pattern_profiles"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 14
         unsigned = dict(upgraded)
         unsigned.pop("checksum_sha256", None)
         upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()

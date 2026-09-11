@@ -255,6 +255,7 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('App', () => {
@@ -588,6 +589,32 @@ describe('App', () => {
       expected_revision: 0,
     })
     expect(await screen.findByRole('heading', { name: '先拆成规律，再带回你的书' })).toBeVisible()
+  })
+
+  it('flushes the latest chapter text before opening the independent writing-pattern workbench', async () => {
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    vi.spyOn(api, 'listWritingPatternRecipes').mockResolvedValue({ items: [], total: 0, limit: 12, offset: 0 })
+    vi.spyOn(api, 'listWritingPatternProfiles').mockResolvedValue([])
+    const update = vi.spyOn(api, 'updateChapter').mockResolvedValue({
+      ...workspace.chapters[0],
+      content: '配方打开前必须保存的这一句。',
+      revision: 1,
+    })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    fireEvent.change(screen.getByLabelText('章节正文'), {
+      target: { value: '配方打开前必须保存的这一句。' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '打开写作配方' }))
+
+    expect(update).toHaveBeenCalledWith(workspace.chapters[0].id, {
+      content: '配方打开前必须保存的这一句。',
+      expected_revision: 0,
+    })
+    expect(await screen.findByRole('heading', { name: '先看清每条技法，再决定学什么、改什么、避开什么。' })).toBeVisible()
   })
 
   it('flushes the current chapter before switching to another chapter', async () => {

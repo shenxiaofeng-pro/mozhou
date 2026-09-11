@@ -1,7 +1,8 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import type { PreviewWritingPatternRecipeInput } from '@mozhou/contracts'
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { aiCredentialStore, api } from './api'
+import { aiCredentialStore, ApiError, api } from './api'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -275,5 +276,156 @@ it('discovers immutable craft assets globally and loads unlinked detail without 
     2,
     'http://127.0.0.1:8765/api/reference-craft-assets/asset%2Fid',
     expect.objectContaining({ headers: expect.any(Headers) }),
+  )
+})
+
+it('previews and saves a writing-pattern recipe with only immutable abstract source selectors', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ preview_sha256: 'p'.repeat(64) }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+  const input: PreviewWritingPatternRecipeInput = {
+    name: '钩子与兑现配方',
+    description: '学习开篇承诺，避开同构人物关系。',
+    expected_topic_revision: 4,
+    entries: [{
+      asset_version_id: '62c9d281-9194-4e5e-b358-f022d30c479e',
+      asset_content_sha256: 'a'.repeat(64),
+      dimension: 'hook_mechanics',
+      pattern_name: '危机倒计时',
+      purpose: 'learn',
+      strategy: 'transform',
+      weight: 70,
+      applicable_stages: ['startup', 'chapter_brief'],
+      chapter_start: null,
+      chapter_end: null,
+      note: '保留功能，不复制事件。',
+    }],
+    conflict_decisions: [],
+  }
+
+  await api.previewWritingPatternRecipe('project/id', input)
+  await api.createWritingPatternRecipe('project/id', {
+    ...input,
+    expected_preview_sha256: 'p'.repeat(64),
+  })
+
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/writing-pattern-recipes/preview',
+    expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }),
+  )
+  const serialized = JSON.stringify((request.mock.calls[1][1] as RequestInit).body)
+  expect(serialized).not.toMatch(/observation|evidence|work_title|chapter_label|absolute_start_char|raw_text/)
+})
+
+it('keeps the structured writing-pattern conflict code for safe recovery', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({
+      detail: { code: 'preview_changed', message: '配方预览条件已变化，请重新预览' },
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  ))
+
+  const caught = await api.listWritingPatternRecipes().catch((error: unknown) => error)
+
+  expect(caught).toBeInstanceOf(ApiError)
+  expect(caught).toMatchObject({
+    status: 409,
+    code: 'preview_changed',
+    message: '配方预览条件已变化，请重新预览',
+  })
+})
+
+it('routes immutable recipe versions, reuse previews, and lifecycle revisions explicitly', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ items: [], versions: [], rules: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+  const recipeInput: PreviewWritingPatternRecipeInput = {
+    name: '稳定配方',
+    description: '',
+    expected_topic_revision: 7,
+    entries: [{
+      asset_version_id: '62c9d281-9194-4e5e-b358-f022d30c479e',
+      asset_content_sha256: 'a'.repeat(64),
+      dimension: 'scene_design',
+      pattern_name: '场景状态翻转',
+      purpose: 'learn',
+      strategy: 'transform',
+      weight: 80,
+      applicable_stages: ['chapter_brief'],
+      chapter_start: null,
+      chapter_end: null,
+      note: '',
+    }],
+    conflict_decisions: [],
+  }
+
+  await api.previewWritingPatternRecipeVersion('project/id', 'recipe/id', {
+    ...recipeInput,
+    expected_latest_version: 2,
+  })
+  await api.createWritingPatternRecipeVersion('project/id', 'recipe/id', {
+    ...recipeInput,
+    expected_latest_version: 2,
+    expected_preview_sha256: 'p'.repeat(64),
+  })
+  await api.getWritingPatternRecipe('recipe/id')
+  await api.getWritingPatternRecipeVersion('version/id')
+  await api.updateWritingPatternRecipeLifecycle('recipe/id', {
+    state: 'archived',
+    expected_lifecycle_revision: 3,
+  })
+  await api.previewWritingPatternRecipeReuse('project/id', 'version/id', {
+    expected_recipe_content_sha256: 'r'.repeat(64),
+    expected_topic_revision: 7,
+  })
+  await api.reuseWritingPatternRecipe('project/id', 'version/id', {
+    expected_recipe_content_sha256: 'r'.repeat(64),
+    expected_topic_revision: 7,
+    expected_preview_sha256: 'q'.repeat(64),
+  })
+  await api.listWritingPatternProfiles('project/id')
+  await api.getActiveWritingPatternProfile('project/id')
+  await api.getWritingPatternProfile('project/id', 'profile/id')
+  await api.updateWritingPatternProfileLifecycle('project/id', 'profile/id', {
+    state: 'active',
+    expected_lifecycle_revision: 4,
+  })
+
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/writing-pattern-recipes/recipe%2Fid/versions/preview',
+    expect.objectContaining({ method: 'POST', body: expect.stringContaining('"expected_latest_version":2') }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    5,
+    'http://127.0.0.1:8765/api/writing-pattern-recipes/recipe%2Fid/lifecycle',
+    expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ state: 'archived', expected_lifecycle_revision: 3 }) }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    7,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/writing-pattern-recipes/version%2Fid/reuse',
+    expect.objectContaining({ method: 'POST', body: expect.stringContaining('"expected_preview_sha256"') }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    11,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/writing-pattern-profiles/profile%2Fid/lifecycle',
+    expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ state: 'active', expected_lifecycle_revision: 4 }) }),
   )
 })

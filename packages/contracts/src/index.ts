@@ -2050,6 +2050,249 @@ export interface UpdateCraftPatternLifecycleInput {
   expected_lifecycle_revision: number
 }
 
+export type WritingPatternPurpose = 'learn' | 'counterexample'
+
+export type WritingPatternStrategy = 'preserve_function' | 'transform' | 'avoid'
+
+export type WritingPatternStage =
+  | 'startup'
+  | 'volume'
+  | 'rolling'
+  | 'chapter_brief'
+  | 'chapter_draft'
+  | 'rewrite'
+  | 'review'
+
+export type WritingPatternSafetyBasis = 'source_verified' | 'abstract_only'
+
+export type WritingPatternLifecycleState = 'active' | 'archived'
+
+export type WritingPatternConflictResolution =
+  | 'choose_source'
+  | 'combine_as_transform'
+  | 'exclude_all'
+
+export interface WritingPatternRecipeEntryInput {
+  asset_version_id: string
+  asset_content_sha256: string
+  dimension: CraftPatternDimension
+  pattern_name: string
+  purpose: WritingPatternPurpose
+  strategy: WritingPatternStrategy
+  weight: number
+  applicable_stages: WritingPatternStage[]
+  chapter_start: number | null
+  chapter_end: number | null
+  note: string
+}
+
+export interface WritingPatternConflictDecisionInput {
+  conflict_key: string
+  resolution: WritingPatternConflictResolution
+  chosen_entry_key: string | null
+}
+
+export interface WritingPatternWorkFingerprint {
+  basis: 'content_sha256' | 'abstract_lineage'
+  identity_sha256: string
+}
+
+export interface WritingPatternRecipeSource {
+  entry_key: string
+  asset_version_id: string
+  asset_series_id: string
+  asset_version: number
+  asset_content_sha256: string
+  asset_type: CraftPatternAssetType
+  dimension: CraftPatternDimension
+  pattern_name: string
+  transferable_rule: string
+  adaptation_risk: string
+  purpose: WritingPatternPurpose
+  strategy: WritingPatternStrategy
+  weight: number
+  applicable_stages: WritingPatternStage[]
+  chapter_start: number | null
+  chapter_end: number | null
+  note: string
+  source_work_fingerprints: WritingPatternWorkFingerprint[]
+  source_snapshot_sha256: string
+}
+
+export interface WritingPatternConflict {
+  conflict_key: string
+  dimension: CraftPatternDimension
+  applicable_stage: WritingPatternStage
+  entry_keys: string[]
+  reason: 'preserve_vs_avoid' | 'competing_preserve_rules'
+}
+
+export interface AppliedWritingPatternConflictDecision extends WritingPatternConflictDecisionInput {
+  affected_entry_keys: string[]
+}
+
+export interface ModelSafeWritingPatternRule {
+  source_content_sha256: string
+  dimension: CraftPatternDimension
+  name: string
+  transferable_rule: string
+  adaptation_risk: string
+  purpose: WritingPatternPurpose
+  strategy: WritingPatternStrategy
+  weight_basis_points: number
+  applicable_stages: WritingPatternStage[]
+  chapter_start: number | null
+  chapter_end: number | null
+}
+
+export interface ModelSafeWritingPatternProfile {
+  schema_version: 1
+  compiler_version: string
+  topic_revision: number
+  topic_content_sha256: string
+  recipe_content_sha256: string
+  safety_basis: WritingPatternSafetyBasis
+  rules: ModelSafeWritingPatternRule[]
+}
+
+export interface PreviewWritingPatternRecipeInput {
+  name: string
+  description: string
+  expected_topic_revision: number
+  entries: WritingPatternRecipeEntryInput[]
+  conflict_decisions: WritingPatternConflictDecisionInput[]
+}
+
+export interface CreateWritingPatternRecipeInput extends PreviewWritingPatternRecipeInput {
+  expected_preview_sha256: string
+}
+
+export interface PreviewWritingPatternRecipeVersionInput extends PreviewWritingPatternRecipeInput {
+  expected_latest_version: number
+}
+
+export interface CreateWritingPatternRecipeVersionInput extends PreviewWritingPatternRecipeVersionInput {
+  expected_preview_sha256: string
+}
+
+export interface WritingPatternRecipePreview {
+  name: string
+  description: string
+  expected_topic_revision: number
+  expected_latest_version: number | null
+  sources: WritingPatternRecipeSource[]
+  conflicts: WritingPatternConflict[]
+  decisions: WritingPatternConflictDecisionInput[]
+  unresolved_conflict_count: number
+  source_asset_count: number
+  source_work_count: number
+  safety_basis: WritingPatternSafetyBasis
+  source_snapshot_sha256: string
+  recipe_content_sha256: string
+  preview_sha256: string
+}
+
+export interface WritingPatternRecipeVersionSummary {
+  id: string
+  recipe_id: string
+  version: number
+  name: string
+  description: string
+  source_asset_count: number
+  source_work_count: number
+  safety_basis: WritingPatternSafetyBasis
+  source_snapshot_sha256: string
+  content_sha256: string
+  created_at: string
+}
+
+export interface WritingPatternRecipeVersion extends WritingPatternRecipeVersionSummary {
+  sources: WritingPatternRecipeSource[]
+  conflicts: WritingPatternConflict[]
+  conflict_decisions: WritingPatternConflictDecisionInput[]
+}
+
+export interface WritingPatternRecipeSummary {
+  id: string
+  lifecycle_state: WritingPatternLifecycleState
+  lifecycle_revision: number
+  latest_version: WritingPatternRecipeVersionSummary
+  created_at: string
+  updated_at: string
+}
+
+export interface WritingPatternRecipePage {
+  items: WritingPatternRecipeSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface WritingPatternRecipeSeries {
+  id: string
+  lifecycle_state: WritingPatternLifecycleState
+  lifecycle_revision: number
+  versions: WritingPatternRecipeVersionSummary[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PreviewWritingPatternReuseInput {
+  expected_recipe_content_sha256: string
+  expected_topic_revision: number
+}
+
+export interface ReuseWritingPatternRecipeInput extends PreviewWritingPatternReuseInput {
+  expected_preview_sha256: string
+}
+
+export interface WritingPatternProfilePreview {
+  recipe_version_id: string
+  recipe_content_sha256: string
+  topic_decision_version_id: string
+  topic_revision: number
+  topic_content_sha256: string
+  safety_basis: WritingPatternSafetyBasis
+  model_safe_profile: ModelSafeWritingPatternProfile
+  conflicts: WritingPatternConflict[]
+  decisions: AppliedWritingPatternConflictDecision[]
+  excluded_entry_keys: string[]
+  source_snapshot_sha256: string
+  profile_fingerprint_sha256: string
+  preview_sha256: string
+}
+
+export interface WritingPatternProfileSummary {
+  id: string
+  project_id: string
+  recipe_version_id: string
+  recipe_content_sha256: string
+  topic_revision: number
+  topic_content_sha256: string
+  safety_basis: WritingPatternSafetyBasis
+  profile_fingerprint_sha256: string
+  lifecycle_state: WritingPatternLifecycleState
+  lifecycle_revision: number
+  is_current: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WritingPatternProfileVersion extends WritingPatternProfileSummary {
+  topic_decision_version_id: string
+  compiler_version: string
+  source_snapshot_sha256: string
+  model_safe_profile: ModelSafeWritingPatternProfile
+  conflicts: WritingPatternConflict[]
+  decisions: AppliedWritingPatternConflictDecision[]
+  excluded_entry_keys: string[]
+}
+
+export interface UpdateWritingPatternLifecycleInput {
+  state: WritingPatternLifecycleState
+  expected_lifecycle_revision: number
+}
+
 export interface ReferenceDimensionSynthesis {
   summary: string
   source_segment_ids: string[]

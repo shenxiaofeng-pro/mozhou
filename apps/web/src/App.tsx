@@ -22,7 +22,12 @@ const TopicDecisionWorkbench = lazy(async () => {
   return { default: module.TopicDecisionWorkbench }
 })
 
-type ActiveView = 'topic-decision' | 'writing' | 'reference-library' | 'research' | 'comic-drama'
+const WritingPatternRecipePage = lazy(async () => {
+  const module = await import('./components/WritingPatternRecipePage')
+  return { default: module.WritingPatternRecipePage }
+})
+
+type ActiveView = 'topic-decision' | 'writing' | 'reference-library' | 'writing-patterns' | 'research' | 'comic-drama'
 
 function startingView(workspace: WorkspaceSummary): ActiveView {
   return workspace.next_action === 'confirm_topic' || workspace.next_action === 'review_topic_changes'
@@ -255,6 +260,15 @@ export function App() {
           onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
         />
       </Suspense>
+    ) : activeView === 'writing-patterns'
+    ? (
+      <Suspense fallback={<main className="loading-shell" aria-live="polite"><p>正在展开写作配方…</p></main>}>
+        <WritingPatternRecipePage
+          workspace={workspace}
+          onBack={() => setActiveView('writing')}
+          onOpenTopicDecision={() => setActiveView('topic-decision')}
+        />
+      </Suspense>
     ) : activeView === 'reference-library'
     ? (
       <ReferenceLibraryPage
@@ -284,6 +298,7 @@ export function App() {
         onChapterChanged={handleChapterChanged}
         onWorkspaceChanged={handleWorkspaceChanged}
         onOpenTopicDecision={() => setActiveView('topic-decision')}
+        onOpenWritingPatterns={() => setActiveView('writing-patterns')}
         onOpenReferenceLibrary={() => setActiveView('reference-library')}
         onOpenResearch={() => setActiveView('research')}
         onOpenComicDrama={() => setActiveView('comic-drama')}

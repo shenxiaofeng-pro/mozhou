@@ -21,6 +21,7 @@ interface WorkspaceShellProps {
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
+  onOpenWritingPatterns?: () => void
   onOpenTopicDecision?: () => void
   onOpenResearch?: () => void
   onOpenComicDrama?: () => void
@@ -60,6 +61,7 @@ export function WorkspaceShell({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenWritingPatterns = () => undefined,
   onOpenTopicDecision = () => undefined,
   onOpenResearch = () => undefined,
   onOpenComicDrama = () => undefined,
@@ -133,6 +135,7 @@ export function WorkspaceShell({
       onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={onWorkspaceChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
+      onOpenWritingPatterns={onOpenWritingPatterns}
       onOpenTopicDecision={onOpenTopicDecision}
       onOpenResearch={onOpenResearch}
       onOpenComicDrama={onOpenComicDrama}
@@ -154,6 +157,7 @@ function ActiveChapterWorkspace({
   onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
+  onOpenWritingPatterns = () => undefined,
   onOpenTopicDecision = () => undefined,
   onOpenResearch = () => undefined,
   onOpenComicDrama = () => undefined,
@@ -320,6 +324,13 @@ function ActiveChapterWorkspace({
             onClick={() => { void navigateAfterSave(() => setSerialDialogMode('dashboard')) }}
           >连载台</button>
           <button ref={authorToolsTriggerRef} className="library-action" type="button" aria-label="打开作者工具台" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setAuthorTools({ tab: 'calendar', selection: null })) }}>作者工具</button>
+          <button
+            className="library-action"
+            type="button"
+            aria-label="打开写作配方"
+            disabled={isNavigating}
+            onClick={() => { void navigateAfterSave(onOpenWritingPatterns) }}
+          >写作配方</button>
           <button
             className="library-action"
             type="button"

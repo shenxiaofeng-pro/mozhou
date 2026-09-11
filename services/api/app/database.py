@@ -387,6 +387,123 @@ CREATE TABLE IF NOT EXISTS craft_pattern_job_outputs (
 CREATE INDEX IF NOT EXISTS idx_craft_pattern_job_outputs_asset
 ON craft_pattern_job_outputs(asset_version_id, job_id);
 
+CREATE TABLE IF NOT EXISTS writing_pattern_recipes (
+    id TEXT PRIMARY KEY,
+    created_from_project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_recipes_lifecycle_updated
+ON writing_pattern_recipes(lifecycle_state, updated_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_recipe_versions (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL REFERENCES writing_pattern_recipes(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK(version > 0),
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+    description TEXT NOT NULL DEFAULT '' CHECK(length(description) <= 1000),
+    conflict_decisions_json TEXT NOT NULL CHECK(json_valid(conflict_decisions_json)),
+    conflicts_json TEXT NOT NULL CHECK(json_valid(conflicts_json)),
+    source_asset_count INTEGER NOT NULL CHECK(source_asset_count BETWEEN 1 AND 500),
+    source_work_count INTEGER NOT NULL CHECK(source_work_count BETWEEN 1 AND 5),
+    safety_basis TEXT NOT NULL CHECK(safety_basis IN ('source_verified', 'abstract_only')),
+    source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256) = 64),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(recipe_id, version),
+    UNIQUE(recipe_id, content_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_recipe_versions_recipe_version
+ON writing_pattern_recipe_versions(recipe_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_recipe_sources (
+    id TEXT PRIMARY KEY,
+    recipe_version_id TEXT NOT NULL
+        REFERENCES writing_pattern_recipe_versions(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    entry_key TEXT NOT NULL CHECK(length(entry_key) = 64),
+    asset_version_id TEXT NOT NULL REFERENCES craft_pattern_assets(id) ON DELETE RESTRICT,
+    asset_series_id TEXT NOT NULL CHECK(length(asset_series_id) = 64),
+    asset_version INTEGER NOT NULL CHECK(asset_version > 0),
+    asset_content_sha256 TEXT NOT NULL CHECK(length(asset_content_sha256) = 64),
+    asset_type TEXT NOT NULL CHECK(asset_type IN ('stage', 'book_evolution', 'fusion_material')),
+    dimension TEXT NOT NULL CHECK(dimension IN (
+        'era', 'core_desire', 'conflict_causality', 'resource_system',
+        'key_scene_sequence', 'ending', 'hook_mechanics',
+        'promise_payoff_cadence', 'emotional_rhythm', 'information_reveal',
+        'foreshadowing_cycle', 'scene_design', 'pov_narrative_distance',
+        'expression_parameters', 'power_progression'
+    )),
+    pattern_name TEXT NOT NULL CHECK(length(pattern_name) BETWEEN 1 AND 120),
+    transferable_rule TEXT NOT NULL CHECK(length(transferable_rule) BETWEEN 1 AND 1000),
+    adaptation_risk TEXT NOT NULL CHECK(length(adaptation_risk) BETWEEN 1 AND 600),
+    purpose TEXT NOT NULL CHECK(purpose IN ('learn', 'counterexample')),
+    strategy TEXT NOT NULL CHECK(strategy IN ('preserve_function', 'transform', 'avoid')),
+    weight INTEGER NOT NULL CHECK(weight BETWEEN 1 AND 100),
+    applicable_stages_json TEXT NOT NULL CHECK(json_valid(applicable_stages_json)),
+    chapter_start INTEGER CHECK(chapter_start IS NULL OR chapter_start > 0),
+    chapter_end INTEGER CHECK(chapter_end IS NULL OR chapter_end >= chapter_start),
+    note TEXT NOT NULL DEFAULT '' CHECK(length(note) <= 1000),
+    source_work_fingerprints_json TEXT NOT NULL
+        CHECK(json_valid(source_work_fingerprints_json)),
+    source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256) = 64),
+    UNIQUE(recipe_version_id, ordinal),
+    UNIQUE(recipe_version_id, entry_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_recipe_sources_asset
+ON writing_pattern_recipe_sources(asset_version_id, recipe_version_id);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_profile_versions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    recipe_version_id TEXT NOT NULL
+        REFERENCES writing_pattern_recipe_versions(id) ON DELETE RESTRICT,
+    recipe_content_sha256 TEXT NOT NULL CHECK(length(recipe_content_sha256) = 64),
+    topic_decision_version_id TEXT NOT NULL
+        REFERENCES topic_decision_versions(id) ON DELETE CASCADE,
+    topic_revision INTEGER NOT NULL CHECK(topic_revision > 0),
+    topic_content_sha256 TEXT NOT NULL CHECK(length(topic_content_sha256) = 64),
+    compiler_version TEXT NOT NULL CHECK(length(compiler_version) BETWEEN 1 AND 80),
+    safety_basis TEXT NOT NULL CHECK(safety_basis IN ('source_verified', 'abstract_only')),
+    source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256) = 64),
+    profile_json TEXT NOT NULL CHECK(length(profile_json) BETWEEN 2 AND 500000),
+    conflicts_json TEXT NOT NULL CHECK(json_valid(conflicts_json)),
+    decisions_json TEXT NOT NULL CHECK(json_valid(decisions_json)),
+    excluded_entry_keys_json TEXT NOT NULL CHECK(json_valid(excluded_entry_keys_json)),
+    profile_fingerprint_sha256 TEXT NOT NULL CHECK(length(profile_fingerprint_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, profile_fingerprint_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_profile_versions_project_created
+ON writing_pattern_profile_versions(project_id, created_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS project_writing_pattern_profiles (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    profile_version_id TEXT NOT NULL
+        REFERENCES writing_pattern_profile_versions(id) ON DELETE CASCADE,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, profile_version_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_writing_pattern_profiles_one_active
+ON project_writing_pattern_profiles(project_id)
+WHERE lifecycle_state = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_project_writing_pattern_profiles_project_updated
+ON project_writing_pattern_profiles(project_id, updated_at DESC, id);
+
 CREATE TABLE IF NOT EXISTS reference_pattern_applications (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -1,6 +1,7 @@
 import type {
   CraftPatternAsset,
   CraftPatternAssetSummary,
+  CraftPatternItem,
   CraftPatternLifecycleState,
 } from '@mozhou/contracts'
 
@@ -27,6 +28,11 @@ interface CraftPatternAssetCardProps {
     disabled: boolean
     onClick: () => void
   }
+  craftItemAction?: {
+    label: (item: CraftPatternItem) => string
+    disabled: (item: CraftPatternItem) => boolean
+    onClick: (item: CraftPatternItem) => void
+  }
 }
 
 function formatConfidence(confidence: number): string {
@@ -52,6 +58,7 @@ export function CraftPatternAssetCard({
   showFusionSelection = true,
   showLifecycleAction = true,
   installAction,
+  craftItemAction,
 }: CraftPatternAssetCardProps) {
   const active = asset.lifecycle_state === 'active'
   const fusionEligible = active && asset.asset_type !== 'fusion_material'
@@ -141,6 +148,14 @@ export function CraftPatternAssetCard({
                       ))}
                     </ol>
                   </details>
+                  {craftItemAction ? (
+                    <button
+                      className="craft-item-action"
+                      type="button"
+                      disabled={craftItemAction.disabled(item)}
+                      onClick={() => craftItemAction.onClick(item)}
+                    >{craftItemAction.label(item)}</button>
+                  ) : null}
                 </section>
               ))}
             </div>

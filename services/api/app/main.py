@@ -333,6 +333,8 @@ from app.topic_decisions import (
     TopicDecisionNotFoundError,
     TopicDecisionService,
 )
+from app.writing_patterns.routes import writing_pattern_router
+from app.writing_patterns.service import WritingPatternService
 
 
 def create_app(
@@ -421,6 +423,10 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
         )
+        application.state.writing_pattern_service = WritingPatternService(
+            database,
+            application.state.topic_decision_service,
+        )
 
         application.state.review_service = ReviewService(
             application.state.repository,
@@ -489,6 +495,7 @@ def create_app(
         redoc_url=None,
         lifespan=lifespan,
     )
+    application.include_router(writing_pattern_router)
 
     @application.exception_handler(RequestValidationError)
     async def sanitized_validation_error(
