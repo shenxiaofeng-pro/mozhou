@@ -325,6 +325,9 @@ CREATE TABLE IF NOT EXISTS reference_pattern_applications (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     pattern_card_id TEXT NOT NULL REFERENCES reference_pattern_cards(id) ON DELETE CASCADE,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('draft', 'active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
     selected_dimensions_json TEXT NOT NULL,
     dimensions_json TEXT NOT NULL CHECK(length(dimensions_json) BETWEEN 2 AND 20000),
     relationship_recomposition TEXT NOT NULL CHECK(length(relationship_recomposition) BETWEEN 1 AND 1200),

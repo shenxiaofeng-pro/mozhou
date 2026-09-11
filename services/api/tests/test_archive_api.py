@@ -115,7 +115,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 10
+    assert archive["format_version"] == 11
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -124,6 +124,143 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert archive["tables"]["reference_segments"][0]["id"] == reference["segments"][0]["id"]
     checksum = archive.pop("checksum_sha256")
     assert checksum == hashlib.sha256(canonical_json(archive)).hexdigest()
+
+
+def test_import_v10_defaults_reference_application_lifecycle_to_active(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "v10-reference-application.db")) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "旧参考应用归档",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        reference = client.post(
+            f"/api/projects/{project_id}/reference-works",
+            json={
+                "title": "自有测试稿",
+                "source_filename": "legacy-reference.txt",
+                "rights_basis": "self_owned",
+                "content": "第一章\n时代潮水推动人物作出选择。",
+                "segment_target_characters": 500_000,
+            },
+        ).json()
+        segment_id = reference["segments"][0]["id"]
+        archive = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        ).json()
+        card_id = str(uuid4())
+        application_id = str(uuid4())
+        dimension = {
+            "summary": "时代秩序出现新窗口",
+            "source_segment_ids": [segment_id],
+            "transferable_logic": "先用小行动验证机会",
+            "adaptation_risk": "必须重写人物与场景",
+        }
+        proposal = {
+            key: dimension
+            for key in (
+                "era",
+                "core_desire",
+                "conflict_causality",
+                "resource_system",
+                "key_scene_sequence",
+                "ending",
+            )
+        } | {
+            "shared_patterns": ["先验证机会"],
+            "differences": ["资源条件不同"],
+            "relationship_recomposition": "重组为师徒竞争",
+            "originality_risks": [],
+        }
+        blueprint = {
+            "dimensions": {
+                "era": {
+                    "source": dimension,
+                    "mode": "preserve",
+                    "author_edits": "仅保留抽象机会窗口",
+                    "generated_variant": {
+                        "summary": "南平地方产业出现服务缺口",
+                        "transferable_logic": "先用小行动验证机会",
+                    },
+                    "version": 1,
+                    "locked": False,
+                    "named_entities": [],
+                    "source_beats": [],
+                    "key_beats": [],
+                }
+            },
+            "relationship": {
+                "source": "重组为师徒竞争",
+                "mode": "reconstruct",
+                "author_edits": "更换人物职能",
+                "generated_variant": "地方创业者与家庭伙伴相互制衡",
+                "version": 1,
+                "locked": False,
+                "relationships": [],
+            },
+        }
+        archive["tables"]["reference_pattern_cards"].append(
+            {
+                "id": card_id,
+                "project_id": project_id,
+                "selected_segment_ids_json": json.dumps([segment_id]),
+                "author_focus": "测试旧归档",
+                "proposal_json": json.dumps(proposal, ensure_ascii=False),
+                "provider": "openai",
+                "model": "archive-fixture",
+                "source_job_id": None,
+                "created_at": archive["exported_at"],
+            }
+        )
+        archive["tables"]["reference_pattern_applications"].append(
+            {
+                "id": application_id,
+                "project_id": project_id,
+                "pattern_card_id": card_id,
+                "selected_dimensions_json": '["era"]',
+                "dimensions_json": json.dumps(
+                    {
+                        "era": {
+                            "summary": "南平地方产业出现服务缺口",
+                            "transferable_logic": "先用小行动验证机会",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "relationship_recomposition": "地方创业者与家庭伙伴相互制衡",
+                "application_note": "仅保留抽象机会窗口",
+                "blueprint_json": json.dumps(blueprint, ensure_ascii=False),
+                "originality_status": "needs_check",
+                "risk_level": None,
+                "latest_report_id": None,
+                "threshold_version": None,
+                "revision": 0,
+                "created_at": archive["exported_at"],
+                "updated_at": archive["exported_at"],
+            }
+        )
+        archive["format_version"] = 10
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+
+        restored_response = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored_response.status_code == 201, restored_response.text
+    restored = restored_response.json()["reference_pattern_applications"][0]
+    assert restored["lifecycle_state"] == "active"
+    assert restored["lifecycle_revision"] == 0
+    assert restored["revision"] == 0
 
 
 def test_archive_round_trip_preserves_fantasy_genre_story_anchors(
@@ -291,7 +428,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 10
+    assert archive["format_version"] == 11
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -657,6 +794,8 @@ def test_import_restores_complete_project_as_new_copy(tmp_path: Path) -> None:
                 "id": application_id,
                 "project_id": project_id,
                 "pattern_card_id": pattern_card_id,
+                "lifecycle_state": "active",
+                "lifecycle_revision": 0,
                 "selected_dimensions_json": json.dumps(["era"]),
                 "dimensions_json": json.dumps(
                     {

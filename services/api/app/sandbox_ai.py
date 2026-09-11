@@ -209,6 +209,15 @@ class SandboxAiService:
                 step=f"AI 第 {task_input.round_number} 轮已从既有裁决恢复",
             )
             return
+        try:
+            self._require_originality_gate(task_input.run_id)
+        except ValueError as error:
+            if str(error) != "originality_gate_blocked":
+                raise
+            raise JobExecutionError(
+                "originality_gate_blocked",
+                "参考蓝图尚未通过原创性门禁，未调用模型",
+            ) from error
         rebuilt = self.sandbox.ai_round_context(task_input.run_id)
         rebuilt_text = _canonical_json(rebuilt)
         if (
@@ -347,7 +356,8 @@ class SandboxAiService:
             blocked = connection.execute(
                 """
                 SELECT 1 FROM reference_pattern_applications
-                WHERE project_id = ? AND originality_status = 'blocked'
+                WHERE project_id = ? AND lifecycle_state = 'active'
+                  AND originality_status != 'passed'
                 LIMIT 1
                 """,
                 (row["project_id"],),

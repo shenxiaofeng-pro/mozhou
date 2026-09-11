@@ -1723,6 +1723,8 @@ describe('App', () => {
       id: 'pattern-application-1',
       project_id: workspace.project.id,
       pattern_card_id: patternCard.id,
+      lifecycle_state: 'active' as const,
+      lifecycle_revision: 0,
       selected_dimensions: [...appliedDimensions],
       dimensions: {
         era: { summary: patternCard.era.summary, transferable_logic: patternCard.era.transferable_logic },
@@ -1864,7 +1866,7 @@ describe('App', () => {
       application_note: '落到南平本地产业，人物关系全部重组。',
       confirm_original_adaptation: true,
     })
-    expect(await screen.findByText('已应用到当前作品')).toBeVisible()
+    expect(await screen.findByRole('button', { name: '暂停用于 AI' })).toBeVisible()
     expect(screen.getByText('需查看完整报告并显式确认，当前不传给 AI。')).toBeVisible()
     await user.click(screen.getByRole('button', { name: '查看文本与结构报告' }))
     const originalityReport = await screen.findByLabelText('原创性报告')

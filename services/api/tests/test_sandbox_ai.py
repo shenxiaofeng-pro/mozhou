@@ -292,8 +292,15 @@ def test_ai_sandbox_cancelled_job_and_provider_failure_never_write_round(
     assert sandbox2.get_run(run2).rounds == []
 
 
-def test_ai_sandbox_originality_high_gate_blocks_before_model_call(tmp_path: Path) -> None:
-    database, _sandbox, service, _jobs, gateway, run_id = _setup(tmp_path)
+@pytest.mark.parametrize(
+    "originality_status",
+    ["needs_check", "review_required", "blocked"],
+)
+def test_ai_sandbox_active_unpassed_gate_blocks_before_model_call(
+    tmp_path: Path,
+    originality_status: str,
+) -> None:
+    database, _sandbox, service, jobs, gateway, run_id = _setup(tmp_path)
     project_id = service._project_id_for_run(run_id)
     pattern_id = str(uuid4())
     application_id = str(uuid4())
@@ -316,11 +323,49 @@ def test_ai_sandbox_originality_high_gate_blocks_before_model_call(tmp_path: Pat
                 blueprint_json, originality_status, risk_level, latest_report_id,
                 threshold_version, revision, created_at, updated_at
             ) VALUES (?, ?, ?, '[]', '{}', '重组关系', '', '{}',
-                      'blocked', 'high', NULL, 'scene-plot-graph-v1', 0, ?, ?)
+                      ?, 'high', NULL, 'scene-plot-graph-v1', 0, ?, ?)
             """,
-            (application_id, project_id, pattern_id, timestamp, timestamp),
+            (
+                application_id,
+                project_id,
+                pattern_id,
+                originality_status,
+                timestamp,
+                timestamp,
+            ),
         )
 
     with pytest.raises(ValueError, match="originality_gate_blocked"):
         service.preview(run_id)
+    assert gateway.calls == 0
+
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE reference_pattern_applications
+            SET lifecycle_state = 'archived', lifecycle_revision = 1
+            WHERE id = ?
+            """,
+            (application_id,),
+        )
+
+    preview = service.preview(run_id)
+    assert preview.run_id == run_id
+    assert gateway.calls == 0
+
+    queued = service.submit(run_id, _confirmed(preview.state_sha256))
+    with database.connect() as connection:
+        connection.execute(
+            """
+            UPDATE reference_pattern_applications
+            SET lifecycle_state = 'active', lifecycle_revision = 2
+            WHERE id = ?
+            """,
+            (application_id,),
+        )
+    runtime = JobRuntime(jobs, {JobKind.SANDBOX_AI_ROUND: service.handle})
+    assert runtime.run_once()
+    failed = jobs.get_job(queued.id)
+    assert failed.state == JobState.FAILED
+    assert failed.error_code == "originality_gate_blocked"
     assert gateway.calls == 0

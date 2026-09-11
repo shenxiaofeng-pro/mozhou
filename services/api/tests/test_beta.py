@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -93,6 +94,65 @@ def test_closed_beta_report_tracks_local_milestones_without_manuscript(
     assert "不能进入封测报告的作品名" not in serialized
     assert "这段正文绝不能进入报告" not in serialized
     assert str(database_path) not in serialized
+
+
+def test_closed_beta_originality_metrics_only_count_active_reference_applications(
+    tmp_path: Path,
+) -> None:
+    with TestClient(create_app(tmp_path / "active-reference-metrics.db")) as client:
+        workspace = _create_project(client)
+        project_id = str(workspace["project"]["id"])
+        timestamp = "2026-09-11T00:00:00+00:00"
+        database = client.app.state.repository.database
+        with database.connect() as connection:
+            for lifecycle_state, originality_status in (
+                ("active", "blocked"),
+                ("archived", "blocked"),
+                ("active", "passed"),
+                ("archived", "passed"),
+            ):
+                card_id = str(uuid4())
+                application_id = str(uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO reference_pattern_cards (
+                        id, project_id, selected_segment_ids_json, author_focus,
+                        proposal_json, provider, model, created_at
+                    ) VALUES (?, ?, '[]', '', '{}', 'test', 'test', ?)
+                    """,
+                    (card_id, project_id, timestamp),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO reference_pattern_applications (
+                        id, project_id, pattern_card_id, lifecycle_state,
+                        selected_dimensions_json, dimensions_json,
+                        relationship_recomposition, application_note,
+                        blueprint_json, originality_status, risk_level,
+                        latest_report_id, threshold_version, revision,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, '[]', '{}', '重组关系', '', '{}', ?,
+                              NULL, NULL, NULL, 0, ?, ?)
+                    """,
+                    (
+                        application_id,
+                        project_id,
+                        card_id,
+                        lifecycle_state,
+                        originality_status,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+        report = client.get(f"/api/projects/{project_id}/beta-report")
+
+    assert report.status_code == 200
+    payload = report.json()
+    assert payload["metrics"]["originality_blocked_count"] == 1
+    reference_milestone = next(
+        item for item in payload["milestones"] if item["key"] == "reference"
+    )
+    assert reference_milestone["evidence_count"] == 1
 
 
 def test_feedback_validation_and_missing_project_are_sanitized(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ import type {
   BlueprintRelationshipState,
   Job,
   OriginalityReport,
+  ReferenceApplicationLifecycleState,
   ReferenceFilePreview,
   ReferencePatternApplication,
   ReferencePatternCard,
@@ -16,7 +17,7 @@ import type {
 } from '@mozhou/contracts'
 import { useEffect, useMemo, useState } from 'react'
 
-import { api } from '../api'
+import { ApiError, api } from '../api'
 
 interface ReferenceLabPanelProps {
   workspace: WorkspaceSummary
@@ -40,6 +41,12 @@ const dimensionLabels = [
   ['key_scene_sequence', '关键场景顺序'],
   ['ending', '结局'],
 ] as const
+
+const lifecycleLabels: Record<ReferenceApplicationLifecycleState, string> = {
+  active: '使用中',
+  draft: '已暂停',
+  archived: '已归档',
+}
 
 function formatWan(value: number) {
   return value % 10_000 === 0 ? `${value / 10_000} 万` : value.toLocaleString('zh-CN')
@@ -489,6 +496,9 @@ function ReferencePatternCardPanel({
   const [confirmedOriginalAdaptation, setConfirmedOriginalAdaptation] = useState(false)
   const [isApplying, setIsApplying] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
+  const [lifecycleTarget, setLifecycleTarget] = useState<ReferenceApplicationLifecycleState | null>(null)
+  const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null)
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null)
   const existingApplication = workspace.reference_pattern_applications.find(
     (application) => application.pattern_card_id === card.id,
   )
@@ -528,6 +538,59 @@ function ReferencePatternCardPanel({
     }
   }
 
+  async function updateLifecycle(nextState: ReferenceApplicationLifecycleState) {
+    if (!existingApplication || lifecycleTarget) return
+    const previousState = existingApplication.lifecycle_state
+    setLifecycleTarget(nextState)
+    setLifecycleMessage(null)
+    setLifecycleError(null)
+    try {
+      const updated = await api.updateReferenceApplicationLifecycle(
+        workspace.project.id,
+        existingApplication.id,
+        {
+          lifecycle_state: nextState,
+          expected_lifecycle_revision: existingApplication.lifecycle_revision,
+        },
+      )
+      onWorkspaceChanged(replaceApplication(workspace, updated))
+      setLifecycleMessage(
+        nextState === 'active'
+          ? '已启用给 AI，后续章纲与正文会使用这份蓝图。'
+          : nextState === 'archived'
+            ? '已归档，蓝图、报告和来源仍会保留。'
+            : previousState === 'archived'
+              ? '已恢复为草稿，暂不会传给 AI。'
+              : '已暂停使用，这份蓝图不再进入 AI 上下文或原创性门禁。',
+      )
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) {
+        try {
+          onWorkspaceChanged(await api.getProjectSummary(workspace.project.id))
+          setLifecycleError(`${caught.message}，已刷新最新状态。`)
+        } catch {
+          setLifecycleError(`${caught.message}；最新状态读取失败，请重新打开拆书库。`)
+        }
+      } else {
+        setLifecycleError(caught instanceof Error ? caught.message : '参考蓝图状态更新失败')
+      }
+    } finally {
+      setLifecycleTarget(null)
+    }
+  }
+
+  const lifecycleDescription = existingApplication
+    ? existingApplication.lifecycle_state === 'active'
+      ? existingApplication.originality_status === 'passed'
+        ? '正在用于章纲与正文 AI；暂停或归档不会删除蓝图和检查报告。'
+        : '仍参与原创性门禁，可能阻断 AI 写作；可先暂停使用，再继续调整。'
+      : existingApplication.lifecycle_state === 'draft'
+        ? existingApplication.originality_status === 'passed'
+          ? '已暂停，不进入 AI 上下文或门禁；原创性检查已通过，可随时启用。'
+          : '已暂停，不进入 AI 上下文或门禁；通过原创性检查后才能启用。'
+        : '仅保留历史蓝图、报告和来源，不进入 AI 上下文或原创性门禁。'
+    : null
+
   return (
     <article className="reference-proposal">
       <header>
@@ -565,16 +628,63 @@ function ReferencePatternCardPanel({
       <section className="reference-application" aria-label="应用结构到当前作品">
         <div className="reference-application-heading">
           <div><small>目标作品</small><strong>《{workspace.project.title}》</strong></div>
-          {existingApplication ? <span>已应用到当前作品</span> : <span>待作者选择</span>}
+          {existingApplication ? (
+            <span data-state={existingApplication.lifecycle_state}>
+              {lifecycleLabels[existingApplication.lifecycle_state]}
+            </span>
+          ) : <span>待作者选择</span>}
         </div>
         {existingApplication ? (
-          <ReferenceBlueprintEditor
-            key={`${existingApplication.id}:${existingApplication.revision}:${existingApplication.latest_report_id ?? ''}`}
-            application={existingApplication}
-            workspace={workspace}
-            sourceLabels={sourceLabels}
-            onWorkspaceChanged={onWorkspaceChanged}
-          />
+          <>
+            <div className="reference-lifecycle-controls">
+              <p>{lifecycleDescription}</p>
+              <div role="group" aria-label="参考蓝图使用状态">
+                {existingApplication.lifecycle_state === 'active' ? (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('draft')}
+                    disabled={lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'draft' ? '正在暂停…' : '暂停用于 AI'}
+                  </button>
+                ) : existingApplication.lifecycle_state === 'draft' ? (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('active')}
+                    disabled={existingApplication.originality_status !== 'passed' || lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'active' ? '正在启用…' : '启用给 AI'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('draft')}
+                    disabled={lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'draft' ? '正在恢复…' : '恢复为草稿'}
+                  </button>
+                )}
+                {existingApplication.lifecycle_state !== 'archived' ? (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('archived')}
+                    disabled={lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'archived' ? '正在归档…' : '归档'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {lifecycleMessage ? <p className="reference-lifecycle-message" role="status" aria-live="polite">{lifecycleMessage}</p> : null}
+            {lifecycleError ? <p className="agent-error" role="alert">{lifecycleError}</p> : null}
+            <ReferenceBlueprintEditor
+              key={`${existingApplication.id}:${existingApplication.revision}:${existingApplication.latest_report_id ?? ''}`}
+              application={existingApplication}
+              workspace={workspace}
+              sourceLabels={sourceLabels}
+              onWorkspaceChanged={onWorkspaceChanged}
+            />
+          </>
         ) : (
           <>
             <fieldset>

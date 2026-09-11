@@ -25,6 +25,7 @@ from app.migrations import (
     v20,
     v21,
     v22,
+    v23,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -72,6 +73,11 @@ MIGRATIONS = (
         upgrade=v21.upgrade,
     ),
     Migration(version=22, name="ai_comic_drama_workbench", upgrade=v22.upgrade),
+    Migration(
+        version=23,
+        name="reference_application_lifecycle",
+        upgrade=v23.upgrade,
+    ),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

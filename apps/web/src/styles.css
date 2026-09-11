@@ -7098,6 +7098,74 @@ textarea:focus-visible {
   font-weight: 850;
 }
 
+.reference-application-heading > span[data-state] {
+  font-size: 0.75rem;
+}
+
+.reference-application-heading > span[data-state="draft"] {
+  border-left-color: #5d7780;
+  color: #405e67;
+  background: #edf2f1;
+}
+
+.reference-application-heading > span[data-state="archived"] {
+  border-left-color: #8b918c;
+  color: #626963;
+  background: #eeefeb;
+}
+
+.reference-lifecycle-controls {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.65rem;
+  border-top: 1px solid #c4ceca;
+  padding-top: 0.65rem;
+}
+
+.reference-lifecycle-controls > p {
+  max-width: 42rem;
+  margin: 0;
+  color: #4f6266;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.reference-lifecycle-controls > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.35rem;
+}
+
+.reference-lifecycle-controls button {
+  border: 1px solid #7f9996;
+  padding: 0.5rem 0.66rem;
+  color: #2f4d52;
+  background: #f4f7f3;
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.reference-lifecycle-controls button:first-child {
+  border-color: #304b59;
+  color: #f8f5ed;
+  background: #304b59;
+}
+
+.reference-lifecycle-controls button:disabled {
+  border-color: #bec6c2;
+  color: #89918e;
+  background: #dfe3de;
+}
+
+.reference-application > .reference-lifecycle-message {
+  margin: 0.45rem 0 0;
+  color: #35624f;
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
 .reference-application > p {
   margin: 0.55rem 0 0;
   color: #53666a;
@@ -7525,6 +7593,16 @@ textarea:focus-visible {
 }
 
 @media (max-width: 780px) {
+  .reference-lifecycle-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reference-lifecycle-controls > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .originality-gate-summary {
     align-items: stretch;
     flex-direction: column;

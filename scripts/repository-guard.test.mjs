@@ -24,6 +24,7 @@ test('allows only documented environment templates', () => {
 test('detects production-like secrets but permits the explicit test fixture', () => {
   assert.deepEqual(findSecretKinds('sk-test-abcdefghijklmnopqrstuvwxyz'), [])
   assert.deepEqual(findSecretKinds('sk-' + 'abcdefghijklmnopqrstuvwxyz123456'), ['OpenAI API Key'])
+  assert.deepEqual(findSecretKinds('task-center-stale-candidate'), [])
   assert.deepEqual(findSecretKinds('-----BEGIN ' + 'PRIVATE KEY-----'), ['private key'])
 })
 

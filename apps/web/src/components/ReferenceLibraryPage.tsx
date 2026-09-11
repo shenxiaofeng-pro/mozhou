@@ -22,6 +22,9 @@ export function ReferenceLibraryPage({
     (total, work) => total + work.segments.length,
     0,
   )
+  const activeApplicationCount = workspace.reference_pattern_applications.filter(
+    (application) => application.lifecycle_state === 'active',
+  ).length
 
   return (
     <main className="reference-library-page">
@@ -47,7 +50,7 @@ export function ReferenceLibraryPage({
           <div><dt>参考作品</dt><dd>{workspace.reference_works.length}</dd></div>
           <div><dt>分析区段</dt><dd>{segmentCount}</dd></div>
           <div><dt>模式卡</dt><dd>{workspace.reference_pattern_cards.length}</dd></div>
-          <div><dt>已应用</dt><dd>{workspace.reference_pattern_applications.length}</dd></div>
+          <div><dt>使用中</dt><dd>{activeApplicationCount}</dd></div>
         </dl>
       </section>
 

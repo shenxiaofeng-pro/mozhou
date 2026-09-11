@@ -34,6 +34,7 @@ from app.models import (
     ChapterStatus,
     GenerationRun,
     OriginalityStatus,
+    ReferenceApplicationLifecycleState,
     Workspace,
 )
 from app.providers import (
@@ -90,7 +91,8 @@ def _chapter_data_types(workspace: Workspace, chapter: Chapter) -> list[str]:
     if any(card.confirmed for card in workspace.source_cards):
         data_types.append("已确认现实资料")
     if any(
-        application.originality_status == OriginalityStatus.PASSED
+        application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+        and application.originality_status == OriginalityStatus.PASSED
         for application in workspace.reference_pattern_applications
     ):
         data_types.append("已应用拆书蓝图")
@@ -731,7 +733,8 @@ class ChapterJobService:
         if chapter.status not in {ChapterStatus.PLANNED, ChapterStatus.DRAFTED}:
             raise InvalidChapterStateError(chapter.status.value)
         if any(
-            application.originality_status != OriginalityStatus.PASSED
+            application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+            and application.originality_status != OriginalityStatus.PASSED
             for application in workspace.reference_pattern_applications
         ):
             raise OriginalityGateBlockedError("reference_blueprint_not_passed")

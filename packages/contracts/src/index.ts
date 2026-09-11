@@ -73,6 +73,8 @@ export type OriginalityRiskLevel = 'low' | 'medium' | 'high'
 
 export type OriginalityStatus = 'needs_check' | 'blocked' | 'review_required' | 'passed'
 
+export type ReferenceApplicationLifecycleState = 'draft' | 'active' | 'archived'
+
 export type OriginalitySignal =
   | 'phrase_overlap'
   | 'proper_noun'
@@ -1908,6 +1910,8 @@ export interface ReferencePatternApplication {
   id: string
   project_id: string
   pattern_card_id: string
+  lifecycle_state: ReferenceApplicationLifecycleState
+  lifecycle_revision: number
   selected_dimensions: ReferencePatternDimension[]
   dimensions: Partial<Record<ReferencePatternDimension, AppliedReferenceDimension>>
   relationship_recomposition: string
@@ -1927,6 +1931,11 @@ export interface ApplyReferencePatternInput {
   application_note: string
   confirm_original_adaptation: boolean
   blueprint?: ReferenceBlueprintState
+}
+
+export interface UpdateReferenceApplicationLifecycleInput {
+  lifecycle_state: ReferenceApplicationLifecycleState
+  expected_lifecycle_revision: number
 }
 
 export interface UpdateReferenceBlueprintInput {

@@ -375,7 +375,8 @@ class BetaEvaluationService:
             ),
             "originality_blocked": scalar(
                 "SELECT COUNT(*) FROM reference_pattern_applications "
-                "WHERE project_id = ? AND originality_status = 'blocked'"
+                "WHERE project_id = ? AND lifecycle_state = 'active' "
+                "AND originality_status = 'blocked'"
             ),
             "blueprints": scalar("SELECT COUNT(*) FROM book_blueprints WHERE project_id = ?"),
             "fact_applied": scalar(
@@ -384,7 +385,8 @@ class BetaEvaluationService:
             ),
             "reference_applied": scalar(
                 "SELECT COUNT(*) FROM reference_pattern_applications "
-                "WHERE project_id = ? AND originality_status = 'passed'"
+                "WHERE project_id = ? AND lifecycle_state = 'active' "
+                "AND originality_status = 'passed'"
             ),
             "recovery_points": scalar(
                 "SELECT COUNT(*) FROM project_recovery_points WHERE project_id = ?"

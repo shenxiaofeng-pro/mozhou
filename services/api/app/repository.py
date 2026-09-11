@@ -74,6 +74,7 @@ from app.models import (
     TransitionStoryThreadRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateReferenceApplicationLifecycleRequest,
     UpdateReferenceBlueprintRequest,
     UpdateStoryEntityRequest,
     Workspace,
@@ -1076,6 +1077,74 @@ class ProjectRepository:
 
     def get_originality_report(self, report_id: str) -> OriginalityReport:
         return self._get_originality_report(report_id, mark_viewed=True)
+
+    def update_reference_application_lifecycle(
+        self,
+        project_id: str,
+        application_id: str,
+        request: UpdateReferenceApplicationLifecycleRequest,
+    ) -> ReferencePatternApplication:
+        current = self._get_reference_application(project_id, application_id)
+        if current.lifecycle_revision != request.expected_lifecycle_revision:
+            raise StaleRevisionError(str(current.lifecycle_revision))
+        if current.lifecycle_state == request.lifecycle_state:
+            return current
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE reference_pattern_applications
+                SET lifecycle_state = ?, lifecycle_revision = lifecycle_revision + 1,
+                    updated_at = ?
+                WHERE id = ? AND project_id = ? AND lifecycle_revision = ?
+                  AND (
+                    ? != 'active'
+                    OR (
+                      originality_status = 'passed'
+                      AND EXISTS (
+                        SELECT 1 FROM originality_reports r
+                        WHERE r.id = reference_pattern_applications.latest_report_id
+                          AND r.application_id = reference_pattern_applications.id
+                          AND r.blueprint_revision = reference_pattern_applications.revision
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM scene_originality_checks s
+                        WHERE s.application_id = reference_pattern_applications.id
+                          AND s.blueprint_revision = reference_pattern_applications.revision
+                      )
+                    )
+                  )
+                """,
+                (
+                    request.lifecycle_state.value,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_lifecycle_revision,
+                    request.lifecycle_state.value,
+                ),
+            )
+            if result.rowcount == 0:
+                row = connection.execute(
+                    """
+                    SELECT lifecycle_revision, originality_status
+                    FROM reference_pattern_applications
+                    WHERE id = ? AND project_id = ?
+                    """,
+                    (application_id, project_id),
+                ).fetchone()
+                if row is None:
+                    raise NotFoundError(application_id)
+                if int(row["lifecycle_revision"]) != request.expected_lifecycle_revision:
+                    raise StaleRevisionError(str(row["lifecycle_revision"]))
+                raise InvalidReferenceApplicationError("originality_not_passed")
+            row = connection.execute(
+                "SELECT * FROM reference_pattern_applications WHERE id = ?",
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
 
     def _get_originality_report(
         self,

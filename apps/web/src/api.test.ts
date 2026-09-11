@@ -68,3 +68,31 @@ it('keeps multiple browser fallback credentials only in the current module sessi
     active: false,
   })
 })
+
+it('updates a reference application lifecycle with its independent revision', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ lifecycle_state: 'draft', lifecycle_revision: 3 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  vi.stubGlobal('fetch', request)
+
+  await api.updateReferenceApplicationLifecycle('project id', 'application/id', {
+    lifecycle_state: 'draft',
+    expected_lifecycle_revision: 2,
+  })
+
+  expect(request).toHaveBeenCalledWith(
+    'http://127.0.0.1:8765/api/projects/project%20id/reference-pattern-applications/application%2Fid/lifecycle',
+    expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({
+        lifecycle_state: 'draft',
+        expected_lifecycle_revision: 2,
+      }),
+    }),
+  )
+})

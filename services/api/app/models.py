@@ -180,6 +180,12 @@ class OriginalityStatus(StrEnum):
     PASSED = "passed"
 
 
+class ReferenceApplicationLifecycleState(StrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
 class OriginalitySignal(StrEnum):
     PHRASE_OVERLAP = "phrase_overlap"
     PROPER_NOUN = "proper_noun"
@@ -1724,6 +1730,10 @@ class ReferencePatternApplication(BaseModel):
     id: str
     project_id: str
     pattern_card_id: str
+    lifecycle_state: ReferenceApplicationLifecycleState = (
+        ReferenceApplicationLifecycleState.ACTIVE
+    )
+    lifecycle_revision: int = Field(default=0, ge=0)
     selected_dimensions: list[ReferencePatternDimension]
     dimensions: dict[ReferencePatternDimension, AppliedReferenceDimension]
     relationship_recomposition: str
@@ -1787,6 +1797,11 @@ class UpdateReferenceBlueprintRequest(BaseModel):
         if not changed <= set(self.blueprint.dimensions):
             raise ValueError("蓝图变更维度不存在")
         return self
+
+
+class UpdateReferenceApplicationLifecycleRequest(BaseModel):
+    lifecycle_state: ReferenceApplicationLifecycleState
+    expected_lifecycle_revision: int = Field(ge=0)
 
 
 class AcknowledgeOriginalityReportRequest(BaseModel):

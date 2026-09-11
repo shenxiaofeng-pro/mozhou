@@ -19,6 +19,7 @@ from app.models import (
     Chapter,
     KnowledgeStatus,
     OriginalityStatus,
+    ReferenceApplicationLifecycleState,
     StoryThreadStatus,
     TimelineLayer,
     Workspace,
@@ -741,6 +742,8 @@ class ContextCompiler:
             )
 
         for application in workspace.reference_pattern_applications:
+            if application.lifecycle_state != ReferenceApplicationLifecycleState.ACTIVE:
+                continue
             passed = application.originality_status == OriginalityStatus.PASSED
             candidates.append(
                 self._candidate(

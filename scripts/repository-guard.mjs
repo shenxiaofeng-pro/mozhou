@@ -29,7 +29,7 @@ export function findSecretKinds(text) {
   for (const fixture of SAFE_TEST_SECRETS) content = content.replaceAll(fixture, '')
   const findings = []
   const patterns = [
-    ['OpenAI API Key', /sk-[A-Za-z0-9_-]{20,}/],
+    ['OpenAI API Key', /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}/],
     ['GitHub token', /gh[opusr]_[A-Za-z0-9]{20,}/],
     ['private key', /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/],
   ]

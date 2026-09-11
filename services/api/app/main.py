@@ -209,6 +209,7 @@ from app.models import (
     UpdateBookBlueprintRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateReferenceApplicationLifecycleRequest,
     UpdateReferenceBlueprintRequest,
     UpdateRollingChapterPlanRequest,
     UpdateStoryEntityRequest,
@@ -2458,6 +2459,36 @@ def create_app(
         except InvalidReferenceApplicationError as error:
             raise HTTPException(
                 status_code=409, detail="蓝图无法应用，请检查来源或是否已应用"
+            ) from error
+
+    @application.patch(
+        "/api/projects/{project_id}/reference-pattern-applications/"
+        "{application_id}/lifecycle",
+        response_model=ReferencePatternApplication,
+    )
+    def update_reference_application_lifecycle(
+        project_id: UUID,
+        application_id: UUID,
+        body: UpdateReferenceApplicationLifecycleRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferencePatternApplication:
+        try:
+            return repository.update_reference_application_lifecycle(
+                str(project_id),
+                str(application_id),
+                body,
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="参考应用不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="参考应用已有新版本，请刷新后再处理",
+            ) from error
+        except InvalidReferenceApplicationError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="只有通过当前原创性检查的参考应用才能重新启用",
             ) from error
 
     @application.get(

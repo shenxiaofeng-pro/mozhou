@@ -122,6 +122,7 @@ import type {
   UpdateRollingChapterPlanInput,
   UpdateVolumePlanInput,
   UpdateModelProfileInput,
+  UpdateReferenceApplicationLifecycleInput,
   UpdateReferenceBlueprintInput,
   UpdateAiTaskDefaultInput,
   UpdateStoryEntityInput,
@@ -1186,6 +1187,16 @@ export const api = {
     return request<ReferencePatternApplication>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-cards/${encodeURIComponent(cardId)}/applications`,
       { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  updateReferenceApplicationLifecycle(
+    projectId: string,
+    applicationId: string,
+    input: UpdateReferenceApplicationLifecycleInput,
+  ) {
+    return request<ReferencePatternApplication>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-applications/${encodeURIComponent(applicationId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
     )
   },
   getOriginalityReport(reportId: string) {

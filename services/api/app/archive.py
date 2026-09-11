@@ -57,7 +57,7 @@ from app.originality_guard import LEGAL_NOTICE
 from app.repository import NotFoundError
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 10
+ARCHIVE_FORMAT_VERSION = 11
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -961,6 +961,8 @@ ARCHIVE_TABLES = (
             "id",
             "project_id",
             "pattern_card_id",
+            "lifecycle_state",
+            "lifecycle_revision",
             "selected_dimensions_json",
             "dimensions_json",
             "relationship_recomposition",
@@ -1804,6 +1806,7 @@ class ProjectArchiveService:
             8,
             9,
             10,
+            11,
         }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
@@ -1841,6 +1844,8 @@ class ProjectArchiveService:
             value = self._upgrade_v8_archive(value)
         if value["format_version"] == 9:
             value = self._upgrade_v9_archive(value)
+        if value["format_version"] == 10:
+            value = self._upgrade_v10_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -2258,7 +2263,45 @@ class ProjectArchiveService:
         upgraded_tables["comic_versions"] = []
         upgraded_tables["comic_scenes"] = []
         upgraded["tables"] = upgraded_tables
-        upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
+        upgraded["format_version"] = 10
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v10_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        application_rows = tables.get("reference_pattern_applications")
+        if not isinstance(application_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        application_table = next(
+            table
+            for table in ARCHIVE_TABLES
+            if table.name == "reference_pattern_applications"
+        )
+        legacy_columns = set(application_table.columns) - {
+            "lifecycle_state",
+            "lifecycle_revision",
+        }
+        upgraded_applications: list[dict[str, Any]] = []
+        for row in application_rows:
+            if not isinstance(row, dict) or set(row) != legacy_columns:
+                raise InvalidProjectArchiveError("invalid_columns")
+            upgraded_applications.append(
+                {
+                    **row,
+                    "lifecycle_state": "active",
+                    "lifecycle_revision": 0,
+                }
+            )
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["reference_pattern_applications"] = upgraded_applications
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 11
         unsigned = dict(upgraded)
         unsigned.pop("checksum_sha256", None)
         upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()

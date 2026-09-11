@@ -50,6 +50,7 @@ from app.models import (
     DirectorStartupRequest,
     DirectorWorkflow,
     OriginalityStatus,
+    ReferenceApplicationLifecycleState,
     SelectDirectorCandidateRequest,
     Workspace,
 )
@@ -1059,7 +1060,8 @@ class DirectorService:
     def _load_workspace(self, project_id: str) -> Workspace:
         workspace = self.repository.get_workspace(project_id)
         if any(
-            application.originality_status != OriginalityStatus.PASSED
+            application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+            and application.originality_status != OriginalityStatus.PASSED
             for application in workspace.reference_pattern_applications
         ):
             raise OriginalityGateBlockedError("reference_blueprint_not_passed")
@@ -1088,7 +1090,8 @@ class DirectorService:
     @staticmethod
     def _ensure_originality_gate(workspace: Workspace) -> None:
         if any(
-            application.originality_status != OriginalityStatus.PASSED
+            application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+            and application.originality_status != OriginalityStatus.PASSED
             for application in workspace.reference_pattern_applications
         ):
             raise OriginalityGateBlockedError("reference_blueprint_not_passed")
@@ -1135,7 +1138,8 @@ class DirectorService:
                         "relationship_recomposition": application.relationship_recomposition,
                     }
                     for application in workspace.reference_pattern_applications
-                    if application.originality_status == OriginalityStatus.PASSED
+                    if application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+                    and application.originality_status == OriginalityStatus.PASSED
                 ][:10],
             }
         )
