@@ -13,7 +13,7 @@ import type {
 } from '@mozhou/contracts'
 import { useEffect, useMemo, useState } from 'react'
 
-import { api } from '../api'
+import { ApiError, api } from '../api'
 
 interface TaskCenterProps {
   projectId: string
@@ -68,6 +68,7 @@ export function TaskCenter({
   const [result, setResult] = useState<TaskResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [staleDraftRunIds, setStaleDraftRunIds] = useState<Set<string>>(() => new Set())
   const activeCount = useMemo(
     () => jobs.filter((job) => activeStates.has(job.state)).length,
     [jobs],
@@ -101,6 +102,20 @@ export function TaskCenter({
       hasCost: selected.attempts.some((attempt) => attempt.estimated_cost_microusd !== null),
     }
   }, [selected])
+  const draftResult = result?.kind === 'draft' ? result : null
+  const draftChapter = draftResult
+    ? chapters.find((chapter) => chapter.id === draftResult.run.chapter_id)
+    : null
+  const draftResultIsStale = Boolean(
+    draftResult
+    && draftResult.run.state !== 'applied'
+    && (
+      staleDraftRunIds.has(draftResult.run.id)
+      || !draftChapter
+      || draftChapter.revision !== draftResult.run.expected_chapter_revision
+      || draftChapter.status === 'approved'
+    ),
+  )
 
   useEffect(() => {
     let stopped = false
@@ -237,7 +252,7 @@ export function TaskCenter({
   }
 
   async function adoptDraft() {
-    if (result?.kind !== 'draft') return
+    if (result?.kind !== 'draft' || draftResultIsStale) return
     const chapter = chapters.find((item) => item.id === result.run.chapter_id)
     if (!chapter) return
     setBusyAction(`adopt:${selected?.id ?? result.run.id}`)
@@ -246,10 +261,21 @@ export function TaskCenter({
       onChapterChanged(await api.applyGeneration(result.run.id, chapter.revision))
       setResult({ kind: 'draft', run: { ...result.run, state: 'applied' } })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '正文候选采用失败')
+      if (caught instanceof ApiError && caught.status === 409) {
+        setStaleDraftRunIds((current) => new Set(current).add(result.run.id))
+        setError(null)
+      } else {
+        setError(caught instanceof Error ? caught.message : '正文候选采用失败')
+      }
     } finally {
       setBusyAction(null)
     }
+  }
+
+  function dismissDraftResult(returnToWriting: boolean) {
+    setResult(null)
+    setError(null)
+    if (returnToWriting) onClose()
   }
 
   return (
@@ -365,10 +391,21 @@ export function TaskCenter({
                 <article className="task-result-preview">
                   <span>正文候选</span>
                   <p>{result.run.candidate_content}</p>
+                  {draftResultIsStale ? (
+                    <div id="task-center-stale-candidate" className="task-detail-error" role="alert">
+                      <strong>候选基于旧版本</strong>
+                      <p>这份候选生成后，当前章节已被修改或定稿，因此不能再写入正文。</p>
+                      <div>
+                        <button type="button" onClick={() => dismissDraftResult(true)}>返回创作台重新生成</button>
+                        <button type="button" onClick={() => dismissDraftResult(false)}>关闭此候选</button>
+                      </div>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => { void adoptDraft() }}
-                    disabled={result.run.state === 'applied'}
+                    disabled={result.run.state === 'applied' || draftResultIsStale || busyAction !== null}
+                    aria-describedby={draftResultIsStale ? 'task-center-stale-candidate' : undefined}
                   >{result.run.state === 'applied' ? '已写入正文' : '确认并写入正文'}</button>
                 </article>
               ) : null}

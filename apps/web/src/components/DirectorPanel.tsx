@@ -7,9 +7,9 @@ import type {
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
-import { api } from '../api'
+import { ApiError, api } from '../api'
 import { getStoryAnchorLabels } from '../genre'
 import { AiCoauthorPanel } from './AiCoauthorPanel'
 import { BookDirectorPanel } from './BookDirectorPanel'
@@ -66,6 +66,7 @@ export function DirectorPanel({
   }))
   const [contextReady, setContextReady] = useState(false)
   const [run, setRun] = useState<GenerationRun | null>(null)
+  const [staleRunId, setStaleRunId] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isSavingBrief, setIsSavingBrief] = useState(false)
   const [isTransitioning, setIsTransitioning] = useState(false)
@@ -87,6 +88,15 @@ export function DirectorPanel({
     || brief.ending_cliffhanger !== (chapter.ending_cliffhanger ?? '')
   const isApproved = chapter.status === 'approved'
   const canGenerate = chapter.status === 'planned' || chapter.status === 'drafted'
+  const candidateIsStale = Boolean(
+    run
+    && run.state !== 'applied'
+    && (
+      staleRunId === run.id
+      || run.expected_chapter_revision !== chapter.revision
+      || isApproved
+    ),
+  )
   const primaryTransition = primaryTransitions[chapter.status]
   const transitionNeedsPlan = primaryTransition.target === 'reviewing' || primaryTransition.target === 'approved'
   const transitionDisabled = !canUpdateChapter
@@ -99,6 +109,7 @@ export function DirectorPanel({
     setBrief((current) => ({ ...current, [field]: value }))
     setContextReady(false)
     setRun(null)
+    setStaleRunId(null)
   }
 
   async function saveBrief() {
@@ -113,6 +124,7 @@ export function DirectorPanel({
       onChapterUpdated(updated)
       setContextReady(false)
       setRun(null)
+      setStaleRunId(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '章纲保存失败')
     } finally {
@@ -130,6 +142,7 @@ export function DirectorPanel({
       }))
       setContextReady(false)
       setRun(null)
+      setStaleRunId(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '章节状态更新失败')
     } finally {
@@ -141,7 +154,9 @@ export function DirectorPanel({
     setIsRunning(true)
     setError(null)
     try {
-      setRun(await api.startGeneration(chapter.id, chapter.revision))
+      const nextRun = await api.startGeneration(chapter.id, chapter.revision)
+      setRun(nextRun)
+      setStaleRunId(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '假模型运行失败')
     } finally {
@@ -150,14 +165,19 @@ export function DirectorPanel({
   }
 
   async function applyCandidate() {
-    if (!run) return
+    if (!run || candidateIsStale) return
     setIsRunning(true)
     setError(null)
     try {
       onChapterUpdated(await api.applyGeneration(run.id, chapter.revision))
       setRun((current) => current ? { ...current, state: 'applied' } : current)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '候选稿采用失败')
+      if (caught instanceof ApiError && caught.status === 409) {
+        setStaleRunId(run.id)
+        setError(null)
+      } else {
+        setError(caught instanceof Error ? caught.message : '候选稿采用失败')
+      }
     } finally {
       setIsRunning(false)
     }
@@ -174,6 +194,19 @@ export function DirectorPanel({
     })
     setContextReady(false)
     setRun(null)
+    setStaleRunId(null)
+  }
+
+  const showDraftCandidate = useCallback((nextRun: GenerationRun) => {
+    setRun(nextRun)
+    setStaleRunId(null)
+    setError(null)
+  }, [])
+
+  function closeCandidate() {
+    setRun(null)
+    setStaleRunId(null)
+    setError(null)
   }
 
   return (
@@ -189,7 +222,7 @@ export function DirectorPanel({
         canUseChapter={canGenerate && canUpdateChapter}
         onWorkspaceChanged={onWorkspaceChanged}
         onAdoptBrief={adoptAiProposal}
-        onDraftGenerated={setRun}
+        onDraftGenerated={showDraftCandidate}
       />
       <ReviewWorkbench
         key={`${chapter.id}:${chapter.revision}`}
@@ -202,7 +235,7 @@ export function DirectorPanel({
         canUseAi={canGenerate && canUpdateChapter}
         canGenerateDraft={canGenerate && canUpdateChapter && savedBriefComplete && !briefDirty}
         onAdoptProposal={adoptAiProposal}
-        onDraftGenerated={setRun}
+        onDraftGenerated={showDraftCandidate}
       />
       <section className="chapter-brief">
         <div className="brief-fields">
@@ -319,14 +352,27 @@ export function DirectorPanel({
         <section className="candidate-card" aria-labelledby="candidate-title">
           <div className="pulse-heading">
             <h3 id="candidate-title">候选正文</h3>
-            <span>{run.state === 'applied' ? '已采用' : `${run.provider} · ${run.model}`}</span>
+            <span>{run.state === 'applied' ? '已采用' : candidateIsStale ? '旧版本' : `${run.provider} · ${run.model}`}</span>
           </div>
           <p>{run.candidate_content}</p>
+          {candidateIsStale ? (
+            <div id="candidate-stale-explanation" className="agent-error" role="alert">
+              <strong>候选基于旧版本</strong>
+              <p>生成后正文已被修改或定稿，这份候选不能再覆盖当前稿件。</p>
+              <div className="state-actions">
+                <button type="button" onClick={generateCandidate} disabled={isRunning || !canGenerate}>
+                  {isRunning ? '正在重新生成…' : '基于当前正文重新生成'}
+                </button>
+                <button type="button" onClick={closeCandidate} disabled={isRunning}>关闭此候选</button>
+              </div>
+            </div>
+          ) : null}
           <button
             className="primary-action"
             type="button"
             onClick={applyCandidate}
-            disabled={isRunning || run.state === 'applied'}
+            disabled={isRunning || run.state === 'applied' || candidateIsStale}
+            aria-describedby={candidateIsStale ? 'candidate-stale-explanation' : undefined}
           >
             {run.state === 'applied' ? '已写入草稿' : '采用并写入编辑器'}
           </button>

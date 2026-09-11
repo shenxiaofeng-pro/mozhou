@@ -14,7 +14,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
-import { api } from './api'
+import { ApiError, api } from './api'
 
 const workspace: Workspace = {
   project: {
@@ -686,6 +686,44 @@ describe('App', () => {
 
     expect(screen.getByLabelText('章节正文')).toHaveValue(candidate)
     expect(screen.getByRole('button', { name: '已写入草稿' })).toBeDisabled()
+  })
+
+  it('marks a director candidate stale after the apply API reports a revision conflict', async () => {
+    const candidate = '这份候选稿基于作者修改前的正文。'
+    const generatedRun: GenerationRun = {
+      id: '4c20df25-648d-4d8b-b187-855e752da45e',
+      chapter_id: workspace.chapters[0].id,
+      state: 'drafted',
+      expected_chapter_revision: 0,
+      candidate_content: candidate,
+      error_message: null,
+      provider: 'demo',
+      model: 'replay-v1',
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:00:01Z',
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    const startGeneration = vi.spyOn(api, 'startGeneration').mockResolvedValue(generatedRun)
+    const applyGeneration = vi.spyOn(api, 'applyGeneration').mockRejectedValue(
+      new ApiError('generation_revision_conflict', 409),
+    )
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+    await user.click(await screen.findByRole('button', { name: '准备章节上下文' }))
+    await user.click(screen.getByRole('button', { name: '生成示范候选稿' }))
+
+    await user.click(await screen.findByRole('button', { name: '采用并写入编辑器' }))
+
+    expect(await screen.findByText('候选基于旧版本')).toBeVisible()
+    expect(screen.getByRole('button', { name: '采用并写入编辑器' })).toBeDisabled()
+    expect(screen.getByLabelText('章节正文')).toHaveValue('')
+
+    await user.click(screen.getByRole('button', { name: '基于当前正文重新生成' }))
+    await waitFor(() => expect(startGeneration).toHaveBeenCalledTimes(2))
+    expect(applyGeneration).toHaveBeenCalledOnce()
+    expect(screen.queryByText('候选基于旧版本')).not.toBeInTheDocument()
   })
 
   it('lets AI propose a complete brief without changing the saved chapter', async () => {
@@ -1418,6 +1456,100 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: proposal.title })).toBeVisible()
     })
+  })
+
+  it('blocks an old chapter draft in the task center and returns to the writing workspace', async () => {
+    const currentWorkspace: Workspace = {
+      ...workspace,
+      chapters: [{
+        ...workspace.chapters[0],
+        content: '作者已经修改的正文。',
+        status: 'drafted',
+        revision: 2,
+      }],
+    }
+    const completedJob: Job = {
+      ...queuedJob('chapter_draft', currentWorkspace.chapters[0].id),
+      state: 'succeeded',
+      progress_current: 1,
+      completed_calls: 1,
+      current_step: '章节候选已生成',
+    }
+    const oldRun: GenerationRun = {
+      id: '410c4506-c3b4-4f65-aabf-51ad9a17fb89',
+      chapter_id: currentWorkspace.chapters[0].id,
+      state: 'drafted',
+      expected_chapter_revision: 1,
+      candidate_content: '旧版本候选正文。',
+      error_message: null,
+      provider: 'openai',
+      model: 'gpt-5.6',
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:00:01Z',
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue(currentWorkspace)
+    vi.mocked(api.listJobs).mockResolvedValue([completedJob])
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobDetail(completedJob))
+    vi.spyOn(api, 'getAiChapterDraftJobResult').mockResolvedValue(oldRun)
+    const applyGeneration = vi.spyOn(api, 'applyGeneration')
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), currentWorkspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+
+    await user.click(screen.getByRole('button', { name: '打开任务中心' }))
+    await user.click(await screen.findByRole('button', { name: '继续采用' }))
+
+    expect(await screen.findByText('候选基于旧版本')).toBeVisible()
+    expect(screen.getByRole('button', { name: '确认并写入正文' })).toBeDisabled()
+    expect(applyGeneration).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: '返回创作台重新生成' }))
+    expect(screen.queryByRole('dialog', { name: '任务中心' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('章节正文')).toHaveValue('作者已经修改的正文。')
+  })
+
+  it('turns an apply conflict into a recoverable stale candidate in the task center', async () => {
+    const completedJob: Job = {
+      ...queuedJob('chapter_draft', workspace.chapters[0].id),
+      state: 'succeeded',
+      progress_current: 1,
+      completed_calls: 1,
+      current_step: '章节候选已生成',
+    }
+    const generatedRun: GenerationRun = {
+      id: '594f9bcc-fab3-47cf-a8f0-54cb7e2e90d9',
+      chapter_id: workspace.chapters[0].id,
+      state: 'drafted',
+      expected_chapter_revision: workspace.chapters[0].revision,
+      candidate_content: '提交采用时才发现过期的候选。',
+      error_message: null,
+      provider: 'openai',
+      model: 'gpt-5.6',
+      created_at: '2026-09-11T00:00:00Z',
+      updated_at: '2026-09-11T00:00:01Z',
+    }
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    vi.mocked(api.listJobs).mockResolvedValue([completedJob])
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobDetail(completedJob))
+    vi.spyOn(api, 'getAiChapterDraftJobResult').mockResolvedValue(generatedRun)
+    const applyGeneration = vi.spyOn(api, 'applyGeneration').mockRejectedValue(
+      new ApiError('generation_revision_conflict', 409),
+    )
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+    await user.click(screen.getByRole('button', { name: '打开任务中心' }))
+    await user.click(await screen.findByRole('button', { name: '继续采用' }))
+
+    await user.click(await screen.findByRole('button', { name: '确认并写入正文' }))
+
+    expect(applyGeneration).toHaveBeenCalledWith(generatedRun.id, workspace.chapters[0].revision)
+    expect(await screen.findByText('候选基于旧版本')).toBeVisible()
+    expect(screen.getByRole('button', { name: '确认并写入正文' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '关闭此候选' }))
+    expect(screen.queryByText(generatedRun.candidate_content!)).not.toBeInTheDocument()
   })
 
   it('imports another reference work and selects segments across books', async () => {

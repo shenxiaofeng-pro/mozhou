@@ -142,18 +142,46 @@ def test_candidate_only_changes_chapter_after_explicit_apply(
     assert applied.status.value == "drafted"
 
 
-def test_apply_rejects_chapter_changed_after_generation(
+def test_apply_rejects_stale_candidate_when_request_uses_current_chapter_revision(
     generation_setup: tuple[Database, ProjectRepository, str],
 ) -> None:
     _, repository, chapter_id = generation_setup
     run = GenerationService(repository).start(chapter_id, expected_revision=0)
-    repository.update_chapter(
+    edited = repository.update_chapter(
         chapter_id,
         UpdateChapterRequest(content="作者刚写的新内容", expected_revision=0),
     )
 
     with pytest.raises(StaleRevisionError):
+        repository.apply_generation(run.id, expected_revision=edited.revision)
+
+    unchanged = repository.get_chapter(chapter_id)
+    unapplied = repository.get_generation_run(run.id)
+    assert unchanged.content == "作者刚写的新内容"
+    assert unchanged.revision == 1
+    assert unapplied.state == GenerationState.DRAFTED
+
+
+def test_apply_never_overwrites_approved_chapter_even_when_revisions_match(
+    generation_setup: tuple[Database, ProjectRepository, str],
+) -> None:
+    database, repository, chapter_id = generation_setup
+    run = GenerationService(repository).start(chapter_id, expected_revision=0)
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE chapters SET content = ?, status = ? WHERE id = ?",
+            ("作者确认的定稿", ChapterStatus.APPROVED.value, chapter_id),
+        )
+
+    with pytest.raises(StaleRevisionError):
         repository.apply_generation(run.id, expected_revision=0)
+
+    unchanged = repository.get_chapter(chapter_id)
+    unapplied = repository.get_generation_run(run.id)
+    assert unchanged.content == "作者确认的定稿"
+    assert unchanged.status == ChapterStatus.APPROVED
+    assert unchanged.revision == 0
+    assert unapplied.state == GenerationState.DRAFTED
 
 
 def test_reviewing_chapter_cannot_start_a_new_generation(

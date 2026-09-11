@@ -3090,7 +3090,10 @@ class ProjectRepository:
                 """
                 UPDATE chapters
                 SET content = ?, status = ?, revision = revision + 1, updated_at = ?
-                WHERE id = ? AND revision = ?
+                WHERE id = ?
+                  AND revision = ?
+                  AND revision = ?
+                  AND status != ?
                 """,
                 (
                     run["candidate_content"],
@@ -3098,6 +3101,8 @@ class ProjectRepository:
                     timestamp,
                     run["chapter_id"],
                     expected_revision,
+                    run["expected_chapter_revision"],
+                    ChapterStatus.APPROVED.value,
                 ),
             )
             if result.rowcount == 0:
