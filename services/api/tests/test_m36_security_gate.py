@@ -157,7 +157,7 @@ def test_m28_m35_sql_uses_parameters_or_reviewed_identifier_whitelists() -> None
     }
     assert len(dynamic_calls) == 19
     for path, _owner, interpolations, expression in dynamic_calls:
-        relative = str(Path(path).relative_to(app_root))
+        relative = Path(path).relative_to(app_root).as_posix()
         if interpolations:
             assert set(interpolations) <= reviewed_interpolations[relative]
         else:
