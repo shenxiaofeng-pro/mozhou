@@ -23,10 +23,17 @@ import type {
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useEffect, useState } from 'react'
+import { creativeContextCanSubmit } from '@mozhou/contracts'
+import { lazy, Suspense, useEffect, useState } from 'react'
 
 import { api } from '../api'
 import { genreOptions, getStoryAnchorLabels } from '../genre'
+import { ContextPacketPanel } from './ContextPacketPanel'
+
+const PlanRebaseWorkbench = lazy(async () => {
+  const module = await import('./PlanRebaseWorkbench')
+  return { default: module.PlanRebaseWorkbench }
+})
 
 interface BookDirectorPanelProps {
   project: Project
@@ -36,6 +43,7 @@ interface BookDirectorPanelProps {
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onAdoptBrief: (proposal: AiChapterBriefProposal) => void
   onDraftGenerated: (run: GenerationRun) => void
+  onOpenChapterProduction?: () => void
 }
 
 type DirectorTask = 'startup' | 'expansion' | 'field' | 'pipeline'
@@ -112,6 +120,7 @@ export function BookDirectorPanel({
   onWorkspaceChanged,
   onAdoptBrief,
   onDraftGenerated,
+  onOpenChapterProduction,
 }: BookDirectorPanelProps) {
   const initialSnapshot: DirectorPlanningSnapshot = {
     book_blueprint: workspace.book_blueprint,
@@ -285,6 +294,8 @@ export function BookDirectorPanel({
 
   async function confirmPreview() {
     if (!preview || !previewTask) return
+    const contextPacket = preview.context_packet
+    if (contextPacket && !creativeContextCanSubmit(contextPacket)) return
     setBusy(true)
     setError(null)
     try {
@@ -474,6 +485,13 @@ export function BookDirectorPanel({
 
   const blueprint = snapshot.book_blueprint
   const hasLockedField = blueprint ? Object.values(blueprint.locks).some(Boolean) : false
+  const previewContextPacket = preview
+    ? preview.context_packet
+    : null
+  const needsPlanRebase = Boolean(
+    blueprint
+    && (blueprint.plan_stale || blueprint.stale_fields.length > 0 || workspace.next_action === 'review_downstream_plans'),
+  )
 
   return (
     <section className="book-director" aria-labelledby="book-director-title">
@@ -568,6 +586,22 @@ export function BookDirectorPanel({
             <button type="button" onClick={() => { void saveBlueprint() }} disabled={busy}>保存蓝图修改</button>
           </details>
 
+          {needsPlanRebase ? (
+            <Suspense fallback={<p className="plan-rebase-status" role="status">正在打开计划复核…</p>}>
+              <PlanRebaseWorkbench
+                projectId={project.id}
+                active
+                onAdopted={async (planning) => {
+                  setSnapshot(planning)
+                  setBlueprintDraft(planning.book_blueprint?.content ?? null)
+                  setPreview(null)
+                  setPreviewTask(null)
+                  await refreshWorkspace(planning)
+                }}
+              />
+            </Suspense>
+          ) : null}
+
           {originalityGate && !['legacy', 'needs_adaptation'].includes(originalityGate.state) ? (
             <aside className="director-originality-gate" data-state={originalityGate.state} aria-label="实际蓝图原创性门禁">
               <div>
@@ -625,9 +659,15 @@ export function BookDirectorPanel({
                 只重生成这一项
               </button>
             </div>
-            <button type="button" className="pipeline-action" onClick={() => { void showPreview('pipeline') }} disabled={busy || !canUseChapter || blueprint.plan_stale}>
-              一键跑完：上下文 → 章纲 → 写前审查 → 候选稿
-            </button>
+            {onOpenChapterProduction ? (
+              <button type="button" className="pipeline-action" onClick={onOpenChapterProduction}>
+                单章纲要与正文已迁移 · 打开新工作台
+              </button>
+            ) : (
+              <button type="button" className="pipeline-action" onClick={() => { void showPreview('pipeline') }} disabled={busy || !canUseChapter || blueprint.plan_stale}>
+                一键跑完：上下文 → 章纲 → 写前审查 → 候选稿
+              </button>
+            )}
           </div>
         </>
       )}
@@ -648,8 +688,13 @@ export function BookDirectorPanel({
           <p>{preview.character_count.toLocaleString()} 字符 · {preview.estimated_calls} 次模型调用 · 估算 {previewCost(preview)}</p>
           <p>数据类型：{preview.data_types.join('、')}</p>
           {impact ? <p>联动影响：{impact.downstream_affected.join('、') || '无'}{impact.locked_conflicts.length ? `；锁定冲突：${impact.locked_conflicts.join('、')}` : ''}</p> : null}
+          {previewContextPacket ? <ContextPacketPanel packet={previewContextPacket} /> : null}
           <div>
-            <button type="button" onClick={() => { void confirmPreview() }} disabled={busy || Boolean(impact?.locked_conflicts.length)}>确认外发并启动</button>
+            <button
+              type="button"
+              onClick={() => { void confirmPreview() }}
+              disabled={busy || Boolean(impact?.locked_conflicts.length) || Boolean(previewContextPacket && !creativeContextCanSubmit(previewContextPacket))}
+            >确认外发并启动</button>
             <button type="button" className="quiet-action" onClick={() => { setPreview(null); setPreviewTask(null) }}>取消</button>
           </div>
         </article>

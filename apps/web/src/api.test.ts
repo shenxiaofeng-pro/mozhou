@@ -548,3 +548,173 @@ it('loads the persisted project originality gate after refresh', async () => {
     expect.any(Object),
   )
 })
+
+it('uses the frozen creative-context and isolated plan-rebase routes', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ id: 'fixture' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+
+  await api.createCreativeContextPacket('project/id', {
+    purpose: 'draft',
+    subject: { kind: 'chapter', id: 'chapter/id', revision: 4, content_sha256: null },
+    token_budget: 24_000,
+    author_intent: '加强结尾悬念',
+  })
+  await api.getCreativeContextImpact('project/id')
+  await api.createPlanRebaseCandidate('project/id', {
+    expected_dependency_fingerprint_sha256: 'a'.repeat(64),
+  })
+  await api.getPlanRebaseCandidate('project/id', 'candidate/id')
+  await api.updatePlanRebaseCandidate('project/id', 'candidate/id', {
+    expected_revision: 2,
+    volume_plans: [],
+    rolling_chapter_plans: [],
+  })
+  await api.adoptPlanRebaseCandidate('project/id', 'candidate/id', {
+    expected_revision: 3,
+    expected_dependency_fingerprint_sha256: 'b'.repeat(64),
+    idempotency_key: 'rebase-once',
+  })
+
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/creative-context/packets',
+    expect.objectContaining({ method: 'POST', body: expect.stringContaining('"purpose":"draft"') }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/creative-context/impact',
+    expect.any(Object),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    3,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/plan-rebase-candidates',
+    expect.objectContaining({ method: 'POST' }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    5,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/plan-rebase-candidates/candidate%2Fid',
+    expect.objectContaining({ method: 'PUT', body: expect.stringContaining('"expected_revision":2') }),
+  )
+  expect(request).toHaveBeenNthCalledWith(
+    6,
+    'http://127.0.0.1:8765/api/projects/project%2Fid/plan-rebase-candidates/candidate%2Fid/adopt',
+    expect.objectContaining({ method: 'POST', body: expect.stringContaining('"idempotency_key":"rebase-once"') }),
+  )
+  expect(JSON.stringify(request.mock.calls.map((call) => (call[1] as RequestInit).body))).not.toMatch(
+    /observation|evidence|work_title|chapter_label|absolute_start_char|raw_text/,
+  )
+})
+
+it('uses the frozen chapter-production routes and forwards every revision guard', async () => {
+  vi.mocked(isTauri).mockReturnValue(false)
+  vi.stubEnv('VITE_API_BASE_URL', 'http://127.0.0.1:8765')
+  const request = vi.fn().mockImplementation(async () => (
+    new Response(JSON.stringify({ id: 'fixture' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  vi.stubGlobal('fetch', request)
+
+  const digest = 'a'.repeat(64)
+  const selection = { start_char: 2, end_char: 6, selected_text_sha256: digest }
+  const candidateGuard = {
+    expected_candidate_revision: 3,
+    expected_candidate_content_sha256: digest,
+  }
+  const outlineGuard = {
+    outline_candidate_id: 'outline/id',
+    expected_outline_revision: 2,
+    expected_outline_content_sha256: digest,
+  }
+  const confirmation = {
+    context_packet_id: 'packet/id',
+    context_packet_sha256: digest,
+    confirm_external_processing: true,
+    confirm_unknown_cost: false,
+    max_estimated_cost_microusd: 42_000,
+  }
+
+  await api.getCurrentChapterProduction('project/id', 'chapter/id')
+  await api.createChapterProduction('project/id', 'chapter/id', {
+    expected_chapter_revision: 7,
+    expected_chapter_content_sha256: digest,
+  })
+  await api.getChapterProduction('production/id')
+  await api.previewChapterProductionOutline('production/id', {
+    author_intent: '保留人物动机', token_budget: 8_000, label: 'AI 章纲',
+  })
+  await api.startChapterProductionOutlineJob('production/id', {
+    author_intent: '保留人物动机', token_budget: 8_000, label: 'AI 章纲', ...confirmation,
+  })
+  await api.getChapterProductionOutlineJobResult('production/id', 'job/id')
+  await api.updateChapterProductionOutline('production/id', 'outline/id', {
+    expected_outline_revision: 2,
+    expected_outline_content_sha256: digest,
+    content: {
+      title: '新局', reader_promise: '承诺', opening_hook: '钩子', state_change: '变化',
+      emotional_payoff: '兑现', ending_cliffhanger: '悬念', scene_beats: ['第一拍'],
+    },
+  })
+  await api.checkChapterProductionPreflight('production/id', 'outline/id', outlineGuard)
+  await api.previewChapterProductionDraft('production/id', {
+    ...outlineGuard, author_intent: '', token_budget: 24_000, label: 'AI 正文候选',
+  })
+  await api.startChapterProductionDraftJob('production/id', {
+    ...outlineGuard, author_intent: '', token_budget: 24_000, label: 'AI 正文候选', ...confirmation,
+  })
+  await api.getChapterProductionDraftJobResult('production/id', 'job/id')
+  await api.editChapterProductionCandidate('production/id', 'candidate/id', {
+    ...candidateGuard, selection, replacement: '新句子',
+  })
+  await api.previewChapterProductionRewrite('production/id', 'candidate/id', {
+    ...candidateGuard, selection, intent: 'custom', custom_instruction: '加强压迫感', token_budget: 8_000,
+  })
+  await api.startChapterProductionRewriteJob('production/id', 'candidate/id', {
+    ...candidateGuard, selection, intent: 'custom', custom_instruction: '加强压迫感', token_budget: 8_000,
+    ...confirmation,
+  })
+  await api.lockChapterProductionSelection('production/id', 'candidate/id', {
+    ...candidateGuard, selection,
+  })
+  await api.unlockChapterProductionSelection('production/id', 'candidate/id', 'lock/id', candidateGuard)
+  await api.undoChapterProductionCandidate('production/id', 'candidate/id', {
+    ...candidateGuard, target_version_id: null,
+  })
+  await api.previewChapterProductionCandidateReview('production/id', 'candidate/id', {
+    ...candidateGuard, token_budget: 16_000,
+  })
+  await api.adoptChapterProductionCandidate('production/id', 'candidate/id', {
+    ...candidateGuard,
+    expected_chapter_revision: 7,
+    expected_chapter_content_sha256: digest,
+    mode: 'whole',
+    candidate_selection: null,
+    chapter_selection: null,
+    idempotency_key: 'adopt-candidate-once',
+  })
+
+  const urls = request.mock.calls.map(([url]) => String(url))
+  expect(urls).toContain('http://127.0.0.1:8765/api/projects/project%2Fid/chapters/chapter%2Fid/production')
+  expect(urls).toContain('http://127.0.0.1:8765/api/projects/project%2Fid/chapters/chapter%2Fid/productions')
+  expect(urls).toContain('http://127.0.0.1:8765/api/chapter-productions/production%2Fid/outline/jobs/job%2Fid/result')
+  expect(urls).toContain('http://127.0.0.1:8765/api/chapter-productions/production%2Fid/outlines/outline%2Fid/preflight')
+  expect(urls).toContain('http://127.0.0.1:8765/api/chapter-productions/production%2Fid/candidates/candidate%2Fid/rewrite/jobs')
+  expect(urls).toContain('http://127.0.0.1:8765/api/chapter-productions/production%2Fid/candidates/candidate%2Fid/locks/lock%2Fid')
+  expect(urls).toContain('http://127.0.0.1:8765/api/chapter-productions/production%2Fid/candidates/candidate%2Fid/adopt')
+  expect(request.mock.calls.some(([, init]) => (
+    (init as RequestInit).method === 'PATCH'
+    && String((init as RequestInit).body).includes('"expected_candidate_revision":3')
+  ))).toBe(true)
+  expect(request.mock.calls.some(([, init]) => (
+    String((init as RequestInit).body).includes('"confirm_external_processing":true')
+    && String((init as RequestInit).body).includes('"context_packet_sha256"')
+  ))).toBe(true)
+})

@@ -2,6 +2,7 @@ import type {
   BookBlueprint,
   BookBlueprintContent,
   Chapter,
+  CreativePlanImpactPreview,
   DirectorChapterPipelineResult,
   DirectorOutboundPreview,
   Job,
@@ -42,6 +43,25 @@ const legacyOriginalityGate: PatternOriginalityGateState = {
   blueprint_content_sha256: null,
   latest_report: null,
   report_is_current: false,
+}
+
+const currentCreativeImpact: CreativePlanImpactPreview = {
+  project_id: project.id,
+  current_dependency: {
+    schema_version: 1,
+    topic: null,
+    writing_pattern_profile: null,
+    writing_pattern_source_availability: null,
+    base_blueprint: null,
+    subject_sha256: sha('f'),
+  },
+  current_dependency_fingerprint_sha256: sha('e'),
+  reasons: [],
+  affected_blueprint_fields: [],
+  locked_blueprint_fields: [],
+  targets: [],
+  approved_chapter_count: 0,
+  can_rebase: false,
 }
 
 const chapter: Chapter = {
@@ -175,6 +195,7 @@ afterEach(() => {
 describe('BookDirectorPanel', () => {
   beforeEach(() => {
     vi.spyOn(api, 'getPatternOriginalityGate').mockResolvedValue(legacyOriginalityGate)
+    vi.spyOn(api, 'getCreativeContextImpact').mockResolvedValue(currentCreativeImpact)
   })
 
   it('uses fantasy blueprint labels and exposes all four genres', () => {

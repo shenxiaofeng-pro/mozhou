@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
 
@@ -30,6 +31,9 @@ from app.providers import ModelCapabilities, ModelProfile, ProviderKind
 class StubAiGateway:
     def __init__(self, *, fail_draft: bool = False) -> None:
         self.fail_draft = fail_draft
+        self.brief_calls = 0
+        self.draft_calls = 0
+        self.legacy_calls = 0
 
     def status(self) -> AiStatus:
         return AiStatus(
@@ -45,8 +49,13 @@ class StubAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> AiChapterBriefProposal:
-        assert workspace.project.rebirth_location == "福建南平"
-        assert author_intent == "让主角先用信息差救下父亲"
+        del workspace, chapter, author_intent
+        self.legacy_calls += 1
+        raise AssertionError("legacy workspace context must never reach the provider")
+
+    def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal:
+        assert '"creative_context"' in context_text
+        self.brief_calls += 1
         return AiChapterBriefProposal(
             title="第一章 名单之前",
             reader_promise="主角第一次改变家庭命运",
@@ -64,9 +73,15 @@ class StubAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> str:
+        del workspace, chapter, author_intent
+        self.legacy_calls += 1
+        raise AssertionError("legacy workspace context must never reach the provider")
+
+    def draft_chapter_from_context(self, context_text: str) -> str:
+        assert '"creative_context"' in context_text
+        self.draft_calls += 1
         if self.fail_draft:
             raise AiProviderError("provider failed")
-        assert chapter.opening_hook == "停产名单比记忆中提前贴出"
         return "一九九八年的梅山坡还没有后来那排高楼。" * 30
 
 
@@ -115,6 +130,19 @@ def create_project(client: TestClient) -> dict[str, object]:
     )
     assert response.status_code == 201
     return response.json()
+
+
+def wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
+    deadline = monotonic() + 10
+    detail: dict[str, object] = {}
+    while monotonic() < deadline:
+        response = client.get(f"/api/jobs/{job_id}")
+        assert response.status_code == 200
+        detail = response.json()
+        if detail["state"] in {"succeeded", "failed", "cancelled"}:
+            return detail
+        sleep(0.01)
+    raise AssertionError(f"job did not finish: {detail}")
 
 
 def test_ai_instruction_contract_covers_four_genres_and_world_rule_review() -> None:
@@ -214,7 +242,7 @@ def test_ai_requires_configuration_and_never_echoes_session_key(tmp_path: Path) 
         created = create_project(client)
         chapter = created["chapters"][0]  # type: ignore[index]
         unavailable = client.post(
-            f"/api/chapters/{chapter['id']}/ai-brief-proposals",  # type: ignore[index]
+            f"/api/chapters/{chapter['id']}/ai-brief-preview",  # type: ignore[index]
             json={"expected_revision": 0, "author_intent": ""},
         )
         invalid_secret = "too-short-secret"
@@ -244,26 +272,80 @@ def test_ai_requires_configuration_and_never_echoes_session_key(tmp_path: Path) 
     assert "sk-test" not in configured.text
 
 
+def test_retired_sync_writing_endpoints_never_call_provider(tmp_path: Path) -> None:
+    gateway = StubAiGateway()
+    with TestClient(
+        create_app(tmp_path / "retired-sync.db", ai_manager=AiGatewayManager(gateway))
+    ) as client:
+        created = create_project(client)
+        chapter = created["chapters"][0]  # type: ignore[index]
+        brief = client.post(
+            f"/api/chapters/{chapter['id']}/ai-brief-proposals",  # type: ignore[index]
+            json={"expected_revision": 0, "author_intent": "任意内容"},
+        )
+        draft = client.post(
+            f"/api/chapters/{chapter['id']}/ai-draft-runs",  # type: ignore[index]
+            json={"expected_revision": 0, "author_intent": "任意内容"},
+        )
+
+    assert brief.status_code == 410
+    assert draft.status_code == 410
+    assert "预览上下文与费用" in brief.text
+    assert "预览上下文与费用" in draft.text
+    assert gateway.legacy_calls == 0
+    assert gateway.brief_calls == 0
+    assert gateway.draft_calls == 0
+
+
 def test_ai_brief_and_draft_remain_candidates_until_author_applies(tmp_path: Path) -> None:
-    manager = AiGatewayManager(StubAiGateway())
+    gateway = StubAiGateway()
+    manager = AiGatewayManager(gateway)
     with TestClient(create_app(tmp_path / "mozhou.db", ai_manager=manager)) as client:
         created = create_project(client)
         chapter = created["chapters"][0]  # type: ignore[index]
-        proposal = client.post(
-            f"/api/chapters/{chapter['id']}/ai-brief-proposals",  # type: ignore[index]
+        brief_preview = client.post(
+            f"/api/chapters/{chapter['id']}/ai-brief-preview",  # type: ignore[index]
             json={
                 "expected_revision": 0,
                 "author_intent": "让主角先用信息差救下父亲",
             },
+        )
+        assert brief_preview.status_code == 200
+        brief_job = client.post(
+            f"/api/chapters/{chapter['id']}/ai-brief-jobs",  # type: ignore[index]
+            json={
+                "expected_revision": 0,
+                "author_intent": "让主角先用信息差救下父亲",
+                "context_packet_id": brief_preview.json()["context_packet"]["id"],
+            },
+        )
+        assert brief_job.status_code == 202
+        assert wait_for_job(client, brief_job.json()["id"])["state"] == "succeeded"
+        proposal = client.get(
+            f"/api/jobs/{brief_job.json()['id']}/chapter-brief-result"
         )
         unchanged = client.get(f"/api/projects/{created['project']['id']}").json()  # type: ignore[index]
         saved = client.patch(
             f"/api/chapters/{chapter['id']}/brief",  # type: ignore[index]
             json={**proposal.json(), "expected_revision": 0},
         ).json()
-        draft = client.post(
-            f"/api/chapters/{chapter['id']}/ai-draft-runs",  # type: ignore[index]
+        draft_preview = client.post(
+            f"/api/chapters/{chapter['id']}/ai-draft-preview",  # type: ignore[index]
             json={"expected_revision": saved["revision"], "author_intent": ""},
+        )
+        assert draft_preview.status_code == 200
+        draft_job = client.post(
+            f"/api/chapters/{chapter['id']}/ai-draft-jobs",  # type: ignore[index]
+            json={
+                "expected_revision": saved["revision"],
+                "author_intent": "",
+                "context_packet_id": draft_preview.json()["context_packet"]["id"],
+            },
+        )
+        assert draft_job.status_code == 202
+        assert wait_for_job(client, draft_job.json()["id"])["state"] == "succeeded"
+        draft = client.get(
+            f"/api/jobs/{draft_job.json()['id']}/chapter-draft-result"
         )
         before_apply = client.get(f"/api/projects/{created['project']['id']}").json()  # type: ignore[index]
         applied = client.post(
@@ -274,16 +356,20 @@ def test_ai_brief_and_draft_remain_candidates_until_author_applies(tmp_path: Pat
     assert proposal.status_code == 200
     assert proposal.json()["title"] == "第一章 名单之前"
     assert unchanged["chapters"][0]["opening_hook"] == ""
-    assert draft.status_code == 201
+    assert draft.status_code == 200
     assert draft.json()["provider"] == "openai"
     assert draft.json()["model"] == "test-writing-model"
     assert before_apply["chapters"][0]["content"] == ""
     assert applied.status_code == 200
     assert applied.json()["content"] == draft.json()["candidate_content"]
+    assert gateway.legacy_calls == 0
+    assert gateway.brief_calls == 1
+    assert gateway.draft_calls == 1
 
 
 def test_ai_provider_failure_is_generic_and_leaves_interrupted_run(tmp_path: Path) -> None:
-    manager = AiGatewayManager(StubAiGateway(fail_draft=True))
+    gateway = StubAiGateway(fail_draft=True)
+    manager = AiGatewayManager(gateway)
     application = create_app(tmp_path / "mozhou.db", ai_manager=manager)
     with TestClient(application) as client:
         created = create_project(client)
@@ -297,19 +383,28 @@ def test_ai_provider_failure_is_generic_and_leaves_interrupted_run(tmp_path: Pat
                 "expected_revision": 0,
             },
         ).json()
-        failed = client.post(
-            f"/api/chapters/{chapter['id']}/ai-draft-runs",  # type: ignore[index]
+        preview = client.post(
+            f"/api/chapters/{chapter['id']}/ai-draft-preview",  # type: ignore[index]
             json={"expected_revision": saved["revision"], "author_intent": ""},
         )
+        submitted = client.post(
+            f"/api/chapters/{chapter['id']}/ai-draft-jobs",  # type: ignore[index]
+            json={
+                "expected_revision": saved["revision"],
+                "author_intent": "",
+                "context_packet_id": preview.json()["context_packet"]["id"],
+            },
+        )
+        failed = wait_for_job(client, submitted.json()["id"])
         with application.state.repository.database.connect() as connection:
             run = connection.execute(
                 "SELECT state, error_message FROM generation_runs ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
 
-    assert failed.status_code == 502
-    assert failed.json() == {"detail": "AI 暂时未能生成可用正文"}
-    assert run is not None
-    assert dict(run) == {
-        "state": "interrupted",
-        "error_message": "模型服务未完成本次生成",
-    }
+    assert failed["state"] == "failed"
+    assert failed["error_code"] == "unavailable"
+    assert failed["error_message"] == "模型服务未完成本次请求"
+    assert "provider failed" not in json.dumps(failed, ensure_ascii=False)
+    assert run is None
+    assert gateway.legacy_calls == 0
+    assert gateway.draft_calls == 1

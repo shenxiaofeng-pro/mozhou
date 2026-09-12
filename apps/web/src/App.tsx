@@ -77,6 +77,10 @@ export function App() {
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<ActiveView>('writing')
   const [isTaskCenterOpen, setIsTaskCenterOpen] = useState(false)
+  const [chapterProductionRequest, setChapterProductionRequest] = useState<{
+    chapterId: string | null
+    requestId: number
+  } | null>(null)
   const [isGlobalLibraryOpen, setIsGlobalLibraryOpen] = useState(false)
 
   useEffect(() => {
@@ -122,6 +126,7 @@ export function App() {
     setIsCreatingProject(false)
     setActiveView(startingView(summarizeWorkspace(created)))
     setIsTaskCenterOpen(false)
+    setChapterProductionRequest(null)
   }, [])
 
   const handleProjectAdded = useCallback((added: Workspace) => {
@@ -147,6 +152,7 @@ export function App() {
       ])
       setActiveView(startingView(loaded.workspace))
       setIsTaskCenterOpen(false)
+      setChapterProductionRequest(null)
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : '无法打开作品')
     } finally {
@@ -179,6 +185,7 @@ export function App() {
     setIsCreatingProject(false)
     setActiveView('writing')
     setIsTaskCenterOpen(false)
+    setChapterProductionRequest(null)
   }, [])
 
   const handleWorkspaceChanged = useCallback((updated: Workspace | WorkspaceSummary) => {
@@ -304,6 +311,8 @@ export function App() {
         onOpenResearch={() => setActiveView('research')}
         onOpenComicDrama={() => setActiveView('comic-drama')}
         onOpenTaskCenter={() => setIsTaskCenterOpen(true)}
+        chapterProductionRequest={chapterProductionRequest}
+        onChapterProductionRequestHandled={() => setChapterProductionRequest(null)}
         onClose={handleClose}
       />
     )
@@ -321,6 +330,10 @@ export function App() {
         onWorkspaceChanged={handleWorkspaceChanged}
         onOpenReferenceLibrary={() => setActiveView('reference-library')}
         onOpenWritingPatterns={() => setActiveView('writing-patterns')}
+        onOpenChapterProduction={(chapterId) => {
+          setActiveView('writing')
+          setChapterProductionRequest({ chapterId, requestId: Date.now() })
+        }}
       />
     </>
   )

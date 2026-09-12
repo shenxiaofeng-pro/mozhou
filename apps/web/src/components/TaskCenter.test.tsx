@@ -62,6 +62,41 @@ afterEach(() => {
 })
 
 describe('TaskCenter craft pattern jobs', () => {
+  it('returns completed chapter work to the unified production desk without using legacy adoption', async () => {
+    const productionJob: Job = {
+      ...craftJob('craft_pattern_analysis_v2'),
+      id: 'chapter-production-draft-job',
+      chapter_id: 'chapter-7',
+      kind: 'chapter_draft',
+      workflow: 'chapter_production_draft',
+      current_step: '正文候选已生成',
+    }
+    vi.spyOn(api, 'listJobs').mockResolvedValue([productionJob])
+    const legacyResult = vi.spyOn(api, 'getAiChapterDraftJobResult')
+    const onClose = vi.fn()
+    const onOpenChapterProduction = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <TaskCenter
+        projectId="project-1"
+        chapters={[]}
+        open
+        onClose={onClose}
+        onChapterChanged={vi.fn()}
+        onWorkspaceChanged={vi.fn()}
+        onOpenReferenceLibrary={vi.fn()}
+        onOpenChapterProduction={onOpenChapterProduction}
+      />,
+    )
+
+    expect(await screen.findByText('本章正文候选')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '回到单章生产台' }))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(onOpenChapterProduction).toHaveBeenCalledWith('chapter-7')
+    expect(legacyResult).not.toHaveBeenCalled()
+  })
+
   it('labels a single-book workflow correctly and navigates to its persisted assets', async () => {
     const job = craftJob('craft_pattern_analysis_v2')
     vi.spyOn(api, 'listJobs').mockResolvedValue([job])

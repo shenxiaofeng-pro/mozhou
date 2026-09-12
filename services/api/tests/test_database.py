@@ -46,8 +46,19 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "beta_feedback",
         "book_blueprints",
         "chapter_annotations",
+        "chapter_candidate_merge_sources",
+        "chapter_candidate_reviews",
+        "chapter_draft_candidate_locks",
+        "chapter_draft_candidate_versions",
+        "chapter_draft_candidates",
         "chapter_events",
+        "chapter_outline_candidate_versions",
+        "chapter_outline_candidates",
+        "chapter_preflight_checks",
+        "chapter_production_events",
+        "chapter_productions",
         "chapter_versions",
+        "chapter_writing_outcomes",
         "chapters",
         "comic_episodes",
         "comic_projects",
@@ -57,6 +68,7 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "context_packets",
         "craft_pattern_assets",
         "craft_pattern_job_outputs",
+        "creative_plan_dependencies",
         "directory_events",
         "fact_change_sets",
         "fact_changes",
@@ -70,6 +82,7 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "manuscript_scenes",
         "manuscript_volumes",
         "originality_reports",
+        "plan_rebase_candidates",
         "project_craft_pattern_assets",
         "project_recovery_points",
         "project_reference_works",
@@ -155,7 +168,7 @@ def test_database_upgrades_v21_to_latest_without_losing_existing_jobs(tmp_path: 
     database.initialize()
 
     with database.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 30
         assert (
             connection.execute("SELECT id FROM jobs WHERE id = ?", (job.id,)).fetchone()[0]
             == job.id
@@ -301,7 +314,7 @@ def test_database_upgrades_v23_projects_to_nonblocking_topic_drafts(
         migration_count = connection.execute(
             "SELECT COUNT(*) FROM schema_migrations WHERE version = 24"
         ).fetchone()[0]
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 30
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
     by_project = {row["project_id"]: row for row in rows}
@@ -315,7 +328,7 @@ def test_database_upgrades_v23_projects_to_nonblocking_topic_drafts(
     assert all(row["confirmed_revision"] is None for row in rows)
     assert all(row["onboarding_required"] == 0 for row in rows)
     assert migration_count == 1
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v30-*.db"))) == 1
 
     assert repository.get_workspace(with_blueprint.project.id).next_action == "continue_writing"
     assert repository.get_workspace(without_blueprint.project.id).next_action == "plan_book"
@@ -370,7 +383,7 @@ def test_database_upgrades_v24_with_append_only_craft_pattern_tables(
             "craft_pattern_job_outputs",
             "project_craft_pattern_assets",
         } <= names
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 30
         assert (
             connection.execute(
                 "SELECT title FROM projects WHERE id = ?",
@@ -386,7 +399,7 @@ def test_database_upgrades_v24_with_append_only_craft_pattern_tables(
         )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v30-*.db"))) == 1
 
 
 def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
@@ -432,7 +445,7 @@ def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
             "writing_pattern_profile_versions",
             "project_writing_pattern_profiles",
         } <= names
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 28
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 30
         assert (
             connection.execute(
                 "SELECT title FROM projects WHERE id = ?",
@@ -448,7 +461,7 @@ def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
         )
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v30-*.db"))) == 1
 
 
 def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -> None:
@@ -512,21 +525,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v30-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (30,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v28-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v30-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v28_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_latest_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -582,7 +595,7 @@ def test_database_runs_v1_and_v2_fixtures_to_v28_without_losing_data(
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (30,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -615,8 +628,10 @@ def test_database_runs_v1_and_v2_fixtures_to_v28_without_losing_data(
         (26, "writing_pattern_recipes"),
         (27, "pattern_adaptation_originality_gate"),
         (28, "pattern_adaptation_job_routing"),
+        (29, "unified_creative_context_and_plan_rebase"),
+        (30, "chapter_production_workbench"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v30-*.db"))) == 1
 
 
 def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
@@ -663,7 +678,7 @@ def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
     assert was_created is True
     assert created.kind == JobKind.SANDBOX_AI_ROUND
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (30,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         for table in ("generation_runs", "fact_change_sets", "text_change_sets"):
             columns = {
@@ -754,7 +769,7 @@ def test_v28_adds_dedicated_pattern_routes_without_losing_v27_jobs(
     assert pattern_job.kind == JobKind.PATTERN_ADAPTATION
     assert pattern_chunk.kind == JobKind.PATTERN_ADAPTATION
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (28,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (30,)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -1059,7 +1074,7 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
             is None
         )
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v28-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v30-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)

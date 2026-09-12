@@ -1,4 +1,6 @@
+import json
 from collections.abc import Callable
+from hashlib import sha256
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -84,6 +86,10 @@ class RecoverableChapterGateway:
         author_intent: str,
     ) -> AiChapterBriefProposal:
         del workspace, chapter, author_intent
+        raise AssertionError("legacy workspace context must never reach the provider")
+
+    def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal:
+        assert '"creative_context"' in context_text
         self.brief_calls += 1
         return AiChapterBriefProposal(
             title="第一章 名单之前",
@@ -103,6 +109,10 @@ class RecoverableChapterGateway:
         author_intent: str,
     ) -> str:
         del workspace, chapter, author_intent
+        raise AssertionError("legacy workspace context must never reach the provider")
+
+    def draft_chapter_from_context(self, context_text: str) -> str:
+        assert '"creative_context"' in context_text
         self.draft_calls += 1
         if self.draft_failure is not None:
             failure, self.draft_failure = self.draft_failure, None
@@ -140,6 +150,39 @@ class RecoverableChapterGateway:
         author_focus: str,
     ) -> ReferenceSynthesisProposal:
         raise AssertionError("not used")
+
+
+class LegacyOnlyChapterGateway:
+    def __init__(self) -> None:
+        self.legacy_calls = 0
+
+    def status(self) -> AiStatus:
+        return AiStatus(
+            configured=True,
+            provider=AiProvider.OPENAI,
+            model="legacy-only-test",
+            key_source="test",
+        )
+
+    def propose_brief(
+        self,
+        workspace: Workspace,
+        chapter: Chapter,
+        author_intent: str,
+    ) -> AiChapterBriefProposal:
+        del workspace, chapter, author_intent
+        self.legacy_calls += 1
+        raise AssertionError("legacy provider method must not be called")
+
+    def draft_chapter(
+        self,
+        workspace: Workspace,
+        chapter: Chapter,
+        author_intent: str,
+    ) -> str:
+        del workspace, chapter, author_intent
+        self.legacy_calls += 1
+        raise AssertionError("legacy provider method must not be called")
 
 
 class UsageFixtureAdapter:
@@ -289,6 +332,26 @@ def test_brief_job_is_idempotent_and_keeps_saved_chapter_unchanged(tmp_path: Pat
     assert gateway.brief_calls == 1
     assert result.title == "第一章 名单之前"
     assert unchanged.opening_hook == ""
+
+
+def test_legacy_only_gateway_is_rejected_before_any_provider_call(tmp_path: Path) -> None:
+    gateway = LegacyOnlyChapterGateway()
+    _repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "legacy-gateway.db",
+        gateway,  # type: ignore[arg-type]
+    )
+    job = service.submit_brief(
+        chapter.id,
+        AiChapterBriefRequest(expected_revision=chapter.revision, author_intent=""),
+    )
+
+    runtime.run_once()
+
+    failed = jobs.get_job(job.id)
+    assert failed.state == JobState.FAILED
+    assert failed.error_code == "unsupported_capability"
+    assert failed.error_message == "当前模型线路不支持安全创作上下文，未调用模型"
+    assert gateway.legacy_calls == 0
 
 
 def test_chapter_attempt_records_usage_duration_and_estimated_cost(tmp_path: Path) -> None:
@@ -731,6 +794,44 @@ def test_openai_adapter_consumes_exact_previewed_context_packet(tmp_path: Path) 
     assert jobs.get_job(job.id).state == JobState.SUCCEEDED
     assert adapter.structured_inputs == [preview.context_packet.rendered_context]
     assert "提交后加入的人物" not in adapter.structured_inputs[0]
+
+
+def test_chapter_worker_rejects_tampered_context_artifact_before_provider_call(
+    tmp_path: Path,
+) -> None:
+    gateway = RecoverableChapterGateway()
+    repository, jobs, service, runtime, chapter = build_chapter_runtime(
+        tmp_path / "tampered-context-artifact.db",
+        gateway,
+    )
+    job = service.submit_brief(
+        chapter.id,
+        AiChapterBriefRequest(expected_revision=chapter.revision, author_intent=""),
+    )
+    context_artifact = jobs.find_artifact(job.id, "context_packet")
+    assert context_artifact is not None
+    payload = json.loads(context_artifact.payload)
+    payload["rendered_context"] = '{"tampered":true}'
+    tampered = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    with repository.database.connect() as connection:
+        connection.execute(
+            "DELETE FROM context_packets WHERE id = ?",
+            (payload["id"],),
+        )
+        connection.execute(
+            """
+            UPDATE job_artifacts SET payload = ?, payload_sha256 = ?
+            WHERE id = ?
+            """,
+            (tampered, sha256(tampered.encode("utf-8")).hexdigest(), context_artifact.id),
+        )
+
+    assert runtime.run_once()
+
+    failed = jobs.get_job(job.id)
+    assert failed.state == JobState.FAILED
+    assert failed.error_code == "context_packet_artifact_invalid"
+    assert gateway.brief_calls == 0
 
 
 def test_chapter_job_replays_frozen_context_artifact_after_archive_restore(

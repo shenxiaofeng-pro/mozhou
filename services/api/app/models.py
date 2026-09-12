@@ -978,6 +978,7 @@ class DirectorOutboundPreview(BaseModel):
     estimated_output_tokens: int = Field(ge=0)
     estimated_calls: int = Field(ge=1)
     estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    context_packet: dict[str, object] | None = None
 
 
 class DirectorPreReviewFinding(BaseModel):
@@ -1543,6 +1544,7 @@ class ReviewOutboundPreview(BaseModel):
     estimated_calls: int = Field(ge=0)
     estimated_cost_microusd: int | None = Field(default=None, ge=0)
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_packet: dict[str, object] | None = None
 
 
 class ReviewChapterRequest(BaseModel):

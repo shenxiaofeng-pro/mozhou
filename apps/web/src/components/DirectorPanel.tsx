@@ -29,6 +29,7 @@ interface DirectorPanelProps {
   canUpdateChapter: boolean
   onChapterUpdated: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+  onOpenChapterProduction?: () => void
 }
 
 type BriefField = 'title' | 'reader_promise' | 'opening_hook' | 'state_change' | 'emotional_payoff' | 'ending_cliffhanger'
@@ -55,6 +56,7 @@ export function DirectorPanel({
   canUpdateChapter,
   onChapterUpdated,
   onWorkspaceChanged,
+  onOpenChapterProduction,
 }: DirectorPanelProps) {
   const [brief, setBrief] = useState(() => ({
     title: chapter.title,
@@ -215,6 +217,14 @@ export function DirectorPanel({
         <p className="section-kicker">本章导演台</p>
         <h2>先确定这一章改变什么</h2>
       </header>
+      {onOpenChapterProduction ? (
+        <section className="chapter-production-compatibility" aria-labelledby="chapter-production-compatibility-title">
+          <p className="section-kicker">UNIFIED CHAPTER FLOW</p>
+          <h3 id="chapter-production-compatibility-title">单章 AI 入口已合并</h3>
+          <p>原“AI 共创”、“一键单章链”和“示范候选稿”已并入同一个工作台，统一使用费用确认、候选隔离和版本门禁。</p>
+          <button type="button" onClick={onOpenChapterProduction}>前往单章生产工作台</button>
+        </section>
+      ) : null}
       <BookDirectorPanel
         project={project}
         workspace={workspace}
@@ -223,6 +233,7 @@ export function DirectorPanel({
         onWorkspaceChanged={onWorkspaceChanged}
         onAdoptBrief={adoptAiProposal}
         onDraftGenerated={showDraftCandidate}
+        onOpenChapterProduction={onOpenChapterProduction}
       />
       <ReviewWorkbench
         key={`${chapter.id}:${chapter.revision}`}
@@ -236,8 +247,9 @@ export function DirectorPanel({
         canGenerateDraft={canGenerate && canUpdateChapter && savedBriefComplete && !briefDirty}
         onAdoptProposal={adoptAiProposal}
         onDraftGenerated={showDraftCandidate}
+        onOpenChapterProduction={onOpenChapterProduction}
       />
-      <section className="chapter-brief">
+      {!onOpenChapterProduction ? <section className="chapter-brief">
         <div className="brief-fields">
           <label>
             章节标题
@@ -328,9 +340,9 @@ export function DirectorPanel({
                 ? '准备章节上下文'
                 : '先完成并保存章纲'}
         </button>
-      </section>
+      </section> : null}
 
-      {contextReady ? (
+      {contextReady && !onOpenChapterProduction ? (
         <section className="context-preview" aria-labelledby="context-title">
           <div className="pulse-heading">
             <h3 id="context-title">本次使用的上下文</h3>
@@ -348,7 +360,7 @@ export function DirectorPanel({
         </section>
       ) : null}
 
-      {run?.candidate_content ? (
+      {run?.candidate_content && !onOpenChapterProduction ? (
         <section className="candidate-card" aria-labelledby="candidate-title">
           <div className="pulse-heading">
             <h3 id="candidate-title">候选正文</h3>

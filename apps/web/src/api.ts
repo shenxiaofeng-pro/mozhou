@@ -5,6 +5,9 @@ import type {
   AiStatus,
   AiTaskDefault,
   AiTaskType,
+  AdoptChapterProductionCandidateInput,
+  AdoptPlanRebaseCandidateInput,
+  AdoptPlanRebaseCandidateResult,
   AdoptPatternAdaptationCandidateInput,
   AdoptPatternAdaptationResult,
   AcknowledgeOriginalityReportInput,
@@ -13,7 +16,19 @@ import type {
   ApplyReferencePatternInput,
   ApplyTextChangeSetInput,
   Chapter,
+  ChapterCandidateGuard,
+  ChapterCandidateLock,
+  ChapterCandidateReview,
+  ChapterDraftCandidate,
+  ChapterDraftCandidateVersion,
+  ChapterOutlineCandidate,
+  ChapterProductionEvent,
+  ChapterProductionOutboundPreview,
+  ChapterProductionPreflightCheck,
+  ChapterProductionSnapshot,
+  ChapterWritingOutcome,
   ChapterVersion,
+  CheckChapterPreflightInput,
   CraftPatternAnalysisJobInput,
   CraftPatternAnalysisPreviewInput,
   CraftPatternAsset,
@@ -43,9 +58,11 @@ import type {
   ContextDirective,
   ContextDirectiveInput,
   ContextPacket,
+  CreatePlanRebaseCandidateInput,
   CreateModelProfileInput,
   CreateDirectoryNodeInput,
   CreateChapterInput,
+  CreateChapterProductionInput,
   CreateBetaFeedbackInput,
   CreateSandboxBranchInput,
   CreateSandboxCandidateInput,
@@ -58,6 +75,8 @@ import type {
   CreateStoryThreadInput,
   CreateTextChangeSetInput,
   CreateTimelineEventInput,
+  CreativeContextCompileInput,
+  CreativePlanImpactPreview,
   DeleteDirectoryNodeInput,
   DirectoryDeleteImpact,
   DirectoryEvent,
@@ -72,6 +91,7 @@ import type {
   JobDetail,
   KnowledgeReviewAction,
   ModelProfile,
+  EditChapterCandidateInput,
   EditPatternAdaptationCandidateInput,
   ManuscriptExport,
   ManuscriptImportPreview,
@@ -83,6 +103,7 @@ import type {
   PatternAdaptationProposal,
   PatternOriginalityGateState,
   PatternOriginalityReport,
+  PlanRebaseCandidate,
   Project,
   ProjectArchive,
   ReferenceWork,
@@ -98,7 +119,9 @@ import type {
   ResearchSession,
   ResearchSubmission,
   ResearchWorkspace,
+  RejectChapterProductionCandidateInput,
   RejectTextChangeSetInput,
+  RegenerateChapterSelectionInput,
   RenameDirectoryNodeInput,
   RecoveryPointSummary,
   SerialDashboard,
@@ -119,6 +142,10 @@ import type {
   StoryThread,
   TransitionStoryThreadInput,
   GenerationRun,
+  GenerateChapterDraftInput,
+  GenerateChapterOutlineInput,
+  LockChapterSelectionInput,
+  MergeChapterCandidatesInput,
   DirectorChapterPipelineRequest,
   DirectorChapterPipelineResult,
   DirectorExpansionProposal,
@@ -141,6 +168,7 @@ import type {
   UpdateRollingChapterPlanInput,
   UpdateVolumePlanInput,
   UpdateModelProfileInput,
+  UpdatePlanRebaseCandidateInput,
   UpdateReferenceApplicationLifecycleInput,
   UpdateReferenceBlueprintInput,
   UpdateAiTaskDefaultInput,
@@ -154,6 +182,7 @@ import type {
   StoryGraphs,
   StoryRelationship,
   SelectDirectorCandidateInput,
+  ReviewChapterCandidateInput,
   ReviewChapterInput,
   ReviewFinding,
   ReviewJobResult,
@@ -177,7 +206,13 @@ import type {
   PreviewWritingPatternReuseInput,
   ReuseWritingPatternRecipeInput,
   RunPatternOriginalityCheckInput,
+  SubmitChapterCandidateReviewJobInput,
+  SubmitChapterDraftJobInput,
+  SubmitChapterOutlineJobInput,
+  SubmitChapterRewriteJobInput,
   SubmitPatternAdaptationInput,
+  UndoChapterCandidateInput,
+  UpdateChapterOutlineInput,
   UpdateWritingPatternLifecycleInput,
   WritingPatternLifecycleState,
   WritingPatternProfilePreview,
@@ -660,6 +695,48 @@ export const api = {
   getContextPacket(packetId: string) {
     return request<ContextPacket>(`/api/context-packets/${encodeURIComponent(packetId)}`)
   },
+  createCreativeContextPacket(projectId: string, input: CreativeContextCompileInput) {
+    return request<ContextPacket>(
+      `/api/projects/${encodeURIComponent(projectId)}/creative-context/packets`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getCreativeContextImpact(projectId: string) {
+    return request<CreativePlanImpactPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/creative-context/impact`,
+    )
+  },
+  createPlanRebaseCandidate(projectId: string, input: CreatePlanRebaseCandidateInput) {
+    return request<PlanRebaseCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getPlanRebaseCandidate(projectId: string, candidateId: string) {
+    return request<PlanRebaseCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates/${encodeURIComponent(candidateId)}`,
+    )
+  },
+  updatePlanRebaseCandidate(
+    projectId: string,
+    candidateId: string,
+    input: UpdatePlanRebaseCandidateInput,
+  ) {
+    return request<PlanRebaseCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates/${encodeURIComponent(candidateId)}`,
+      { method: 'PUT', body: JSON.stringify(input) },
+    )
+  },
+  adoptPlanRebaseCandidate(
+    projectId: string,
+    candidateId: string,
+    input: AdoptPlanRebaseCandidateInput,
+  ) {
+    return request<AdoptPlanRebaseCandidateResult>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates/${encodeURIComponent(candidateId)}/adopt`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
   listContextDirectives(chapterId: string) {
     return request<ContextDirective[]>(`/api/chapters/${encodeURIComponent(chapterId)}/context-directives`)
   },
@@ -963,6 +1040,211 @@ export const api = {
   },
   getChapter(chapterId: string) {
     return request<Chapter>(`/api/chapters/${encodeURIComponent(chapterId)}`)
+  },
+  getCurrentChapterProduction(projectId: string, chapterId: string) {
+    return request<ChapterProductionSnapshot>(
+      `/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/production`,
+    )
+  },
+  createChapterProduction(
+    projectId: string,
+    chapterId: string,
+    input: CreateChapterProductionInput,
+  ) {
+    return request<ChapterProductionSnapshot>(
+      `/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/productions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProduction(productionId: string) {
+    return request<ChapterProductionSnapshot>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}`,
+    )
+  },
+  listChapterProductionEvents(productionId: string) {
+    return request<ChapterProductionEvent[]>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/events`,
+    )
+  },
+  listChapterCandidateVersions(productionId: string, candidateId: string) {
+    return request<ChapterDraftCandidateVersion[]>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/versions`,
+    )
+  },
+  previewChapterProductionOutline(productionId: string, input: GenerateChapterOutlineInput) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outline/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionOutlineJob(productionId: string, input: SubmitChapterOutlineJobInput) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outline/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionOutlineJobResult(productionId: string, jobId: string) {
+    return request<ChapterOutlineCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outline/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  updateChapterProductionOutline(
+    productionId: string,
+    outlineId: string,
+    input: UpdateChapterOutlineInput,
+  ) {
+    return request<ChapterOutlineCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outlines/${encodeURIComponent(outlineId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  checkChapterProductionPreflight(
+    productionId: string,
+    outlineId: string,
+    input: CheckChapterPreflightInput,
+  ) {
+    return request<ChapterProductionPreflightCheck>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outlines/${encodeURIComponent(outlineId)}/preflight`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterProductionDraft(productionId: string, input: GenerateChapterDraftInput) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/draft/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionDraftJob(productionId: string, input: SubmitChapterDraftJobInput) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/draft/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionDraftJobResult(productionId: string, jobId: string) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/draft/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  editChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: EditChapterCandidateInput,
+  ) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterProductionRewrite(
+    productionId: string,
+    candidateId: string,
+    input: RegenerateChapterSelectionInput,
+  ) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/rewrite/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionRewriteJob(
+    productionId: string,
+    candidateId: string,
+    input: SubmitChapterRewriteJobInput,
+  ) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/rewrite/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionRewriteJobResult(productionId: string, candidateId: string, jobId: string) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/rewrite/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  lockChapterProductionSelection(
+    productionId: string,
+    candidateId: string,
+    input: LockChapterSelectionInput,
+  ) {
+    return request<ChapterCandidateLock>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/locks`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  unlockChapterProductionSelection(
+    productionId: string,
+    candidateId: string,
+    lockId: string,
+    input: ChapterCandidateGuard,
+  ) {
+    return request<void>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/locks/${encodeURIComponent(lockId)}`,
+      { method: 'DELETE', body: JSON.stringify(input) },
+    )
+  },
+  undoChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: UndoChapterCandidateInput,
+  ) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/undo`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  mergeChapterProductionCandidates(productionId: string, input: MergeChapterCandidatesInput) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/merge`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterProductionCandidateReview(
+    productionId: string,
+    candidateId: string,
+    input: ReviewChapterCandidateInput,
+  ) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/review/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionCandidateReviewJob(
+    productionId: string,
+    candidateId: string,
+    input: SubmitChapterCandidateReviewJobInput,
+  ) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/review/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionCandidateReviewJobResult(
+    productionId: string,
+    candidateId: string,
+    jobId: string,
+  ) {
+    return request<ChapterCandidateReview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/review/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  adoptChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: AdoptChapterProductionCandidateInput,
+  ) {
+    return request<ChapterWritingOutcome>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/adopt`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  rejectChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: RejectChapterProductionCandidateInput,
+  ) {
+    return request<ChapterWritingOutcome>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/reject`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
   },
   listChapterVersions(chapterId: string) {
     return request<ChapterVersion[]>(`/api/chapters/${encodeURIComponent(chapterId)}/versions`)

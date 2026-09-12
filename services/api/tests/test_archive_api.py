@@ -4,8 +4,11 @@ import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.context import ContextPacket, CreativeContextBlockedError, CreativeContextService
+from app.database import Database
 from app.jobs import JobKind, JobRepository
 from app.main import create_app
 from app.models import (
@@ -14,6 +17,7 @@ from app.models import (
     ReviewEvidenceKind,
     ReviewSeverity,
 )
+from app.repository import ProjectRepository
 from app.review.rules import make_finding
 
 ARCHIVE_TABLES = {
@@ -30,6 +34,8 @@ ARCHIVE_TABLES = {
     "chapter_versions",
     "chapter_annotations",
     "context_directives",
+    "context_packets",
+    "creative_plan_dependencies",
     "generation_runs",
     "chapter_events",
     "run_events",
@@ -38,6 +44,17 @@ ARCHIVE_TABLES = {
     "job_attempts",
     "job_artifacts",
     "job_events",
+    "chapter_productions",
+    "chapter_production_events",
+    "chapter_outline_candidates",
+    "chapter_outline_candidate_versions",
+    "chapter_preflight_checks",
+    "chapter_draft_candidates",
+    "chapter_draft_candidate_versions",
+    "chapter_draft_candidate_locks",
+    "chapter_candidate_reviews",
+    "chapter_candidate_merge_sources",
+    "chapter_writing_outcomes",
     "craft_pattern_assets",
     "project_craft_pattern_assets",
     "craft_pattern_job_outputs",
@@ -79,6 +96,7 @@ ARCHIVE_TABLES = {
     "reference_pattern_applications",
     "reference_blueprint_versions",
     "originality_reports",
+    "plan_rebase_candidates",
     "scene_originality_checks",
     "scene_originality_findings",
     "review_findings",
@@ -133,7 +151,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 15
+    assert archive["format_version"] == 17
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -262,7 +280,7 @@ def test_round_trip_preserves_confirmed_topic_versions_and_rejected_candidates(
                 (restored_project_id,),
             ).fetchall()
 
-    assert archive["format_version"] == 15
+    assert archive["format_version"] == 17
     assert len(archive["tables"]["topic_decisions"]) == 1
     assert len(archive["tables"]["topic_decision_versions"]) == 1
     assert len(archive["tables"]["topic_decision_candidate_sets"]) == 1
@@ -662,7 +680,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 15
+    assert archive["format_version"] == 17
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -675,6 +693,284 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
     assert restored["volume_plans"][0]["locked"] is True
     assert restored["rolling_chapter_plans"][0]["opening_hook"] == "停产名单提前贴出"
     assert restored["rolling_chapter_plans"][0]["revision"] == 3
+
+
+def test_m32_archive_rebinds_context_and_plan_lineage_and_stales_open_candidate(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "m32-archive.db"
+    timestamp = "2026-09-12T00:00:00+00:00"
+    blueprint_id = str(uuid4())
+    volume_id = str(uuid4())
+    rolling_id = str(uuid4())
+    blueprint_content = {
+        "title": "南平春潮",
+        "genre": "urban_rebirth",
+        "rebirth_year": 1998,
+        "rebirth_location": "福建南平",
+        "target_audience": "喜欢产业升级与家庭关系的读者",
+        "core_selling_points": ["订单破局", "家庭改命"],
+        "core_desire": "保住家庭并建立长期事业",
+        "divergence_point": "提前截住第一张违约订单",
+        "long_term_promise": "每卷完成一次产业和关系跃迁",
+        "ending_direction": "形成可持续的本地产业网络",
+        "protagonist_arc": "从补偿家人走向承担公共责任",
+        "resource_growth": "从信息差成长为组织与信用网络",
+        "relationship_design": "家人锚定价值，伙伴执行，对手迫使升级",
+    }
+    volume_content = {
+        "volume_number": 1,
+        "title": "第一卷 抢回订单",
+        "direction": "用第一笔订单重建家庭与行业信用",
+        "central_conflict": "没有现金、资质和稳定交付能力",
+        "state_goal": "成为能调动三方资源的执行者",
+        "resource_goal": "建立第一笔可持续现金流",
+        "emotional_payoff": "父亲第一次承认主角能扛事",
+        "climax": "在违约前夜完成替代交付",
+        "verification": "回款、关系和竞争格局同时变化",
+    }
+    rolling_content = {
+        "chapter_number": 1,
+        "title": "第一章 抢时间",
+        "reader_promise": "看主角解决第一个现实阻碍",
+        "opening_hook": "坏消息比记忆中更早到来",
+        "state_change": "从被动得知转为主动介入",
+        "resource_change": "新增一个可调动的资源节点",
+        "emotional_payoff": "家人第一次给予有限信任",
+        "ending_cliffhanger": "更大的违约代价提前浮现",
+        "verification": "合同和关系状态发生可观察变化",
+        "scene_beats": [
+            {
+                "ordinal": 1,
+                "summary": "坏消息落地，主角立即选择",
+                "state_change": "主角开始介入",
+                "resource_change": "暴露当前资源缺口",
+                "emotional_turn": "焦虑转为决断",
+                "verification": "明确下一步行动和失败代价",
+            }
+        ],
+    }
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "南平春潮",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+                "template_id": "urban-rebirth",
+            },
+        ).json()
+        project_id = workspace["project"]["id"]
+        chapter_id = workspace["chapters"][0]["id"]
+        chapter_revision = workspace["chapters"][0]["revision"]
+        confirmed = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": workspace["topic_decision"]["revision"]},
+        )
+        assert confirmed.status_code == 200
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO book_blueprints (
+                    id, project_id, idea, content_json, locks_json,
+                    field_versions_json, stale_fields_json, plan_stale,
+                    source_candidate_id, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, NULL, 0, ?, ?)
+                """,
+                (
+                    blueprint_id,
+                    project_id,
+                    "用订单救下家庭和工厂",
+                    json.dumps(blueprint_content, ensure_ascii=False),
+                    json.dumps({key: False for key in blueprint_content}),
+                    json.dumps({key: 1 for key in blueprint_content}),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO volume_plans (
+                    id, project_id, volume_number, content_json, locked,
+                    revision, created_at, updated_at
+                ) VALUES (?, ?, 1, ?, 0, 0, ?, ?)
+                """,
+                (volume_id, project_id, json.dumps(volume_content), timestamp, timestamp),
+            )
+            connection.execute(
+                """
+                INSERT INTO rolling_chapter_plans (
+                    id, project_id, volume_plan_id, chapter_number, content_json,
+                    locked, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, 1, ?, 0, 0, ?, ?)
+                """,
+                (
+                    rolling_id,
+                    project_id,
+                    volume_id,
+                    json.dumps(rolling_content),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+        impact = client.get(
+            f"/api/projects/{project_id}/creative-context/impact"
+        ).json()
+        candidate_body = {
+            "expected_dependency_fingerprint_sha256": impact[
+                "current_dependency_fingerprint_sha256"
+            ]
+        }
+        open_candidate = client.post(
+            f"/api/projects/{project_id}/plan-rebase-candidates",
+            json=candidate_body,
+        ).json()
+        adopted_candidate = client.post(
+            f"/api/projects/{project_id}/plan-rebase-candidates",
+            json=candidate_body,
+        ).json()
+        adopted = client.post(
+            f"/api/projects/{project_id}/plan-rebase-candidates/"
+            f"{adopted_candidate['id']}/adopt",
+            json={
+                "expected_revision": adopted_candidate["revision"],
+                "expected_dependency_fingerprint_sha256": adopted_candidate[
+                    "target_dependency_fingerprint_sha256"
+                ],
+                "idempotency_key": "archive-adopted-candidate",
+            },
+        )
+        assert adopted.status_code == 200
+        packet_response = client.post(
+            f"/api/projects/{project_id}/creative-context/packets",
+            json={
+                "purpose": "draft",
+                "subject": {
+                    "kind": "chapter",
+                    "id": chapter_id,
+                    "revision": chapter_revision,
+                },
+                "token_budget": 8_000,
+            },
+        )
+        assert packet_response.status_code == 201
+        original_packet = packet_response.json()
+        archive = client.get(f"/api/projects/{project_id}/export").json()
+        original_topic_version_id = archive["tables"]["topic_decision_versions"][0][
+            "id"
+        ]
+        restored_response = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+        assert restored_response.status_code == 201, restored_response.text
+        restored_workspace = restored_response.json()
+
+    restored_project_id = restored_workspace["project"]["id"]
+    restored_chapter_id = restored_workspace["chapters"][0]["id"]
+    restored_blueprint_id = restored_workspace["book_blueprint"]["id"]
+    restored_volume_id = restored_workspace["volume_plans"][0]["id"]
+    restored_rolling_id = restored_workspace["rolling_chapter_plans"][0]["id"]
+    with Database(database_path).connect() as connection:
+        packet_row = connection.execute(
+            "SELECT * FROM context_packets WHERE project_id = ?",
+            (restored_project_id,),
+        ).fetchone()
+        dependency_rows = connection.execute(
+            """
+            SELECT * FROM creative_plan_dependencies
+            WHERE project_id = ? ORDER BY subject_kind
+            """,
+            (restored_project_id,),
+        ).fetchall()
+        candidate_rows = connection.execute(
+            """
+            SELECT state, revision, adopted_at FROM plan_rebase_candidates
+            WHERE project_id = ? ORDER BY id
+            """,
+            (restored_project_id,),
+        ).fetchall()
+    assert packet_row is not None
+    packet = ContextPacket.model_validate_json(packet_row["packet_json"])
+    assert packet.id != original_packet["id"]
+    assert packet.project_id == restored_project_id
+    assert packet.chapter_id == restored_chapter_id
+    assert packet.subject.id == restored_chapter_id
+    assert packet.dependency_snapshot.topic is not None
+    assert packet.dependency_snapshot.topic.id != original_topic_version_id
+    assert packet.dependency_snapshot.base_blueprint is not None
+    assert packet.dependency_snapshot.base_blueprint.id == restored_blueprint_id
+    assert packet.dependency_fingerprint_sha256 == hashlib.sha256(
+        canonical_json(packet.dependency_snapshot.model_dump(mode="json"))
+    ).hexdigest()
+    assert "restored_dependency_snapshot" in packet.blocking_reasons
+    with pytest.raises(CreativeContextBlockedError, match="restored_dependency_snapshot"):
+        CreativeContextService(
+            ProjectRepository(Database(database_path))
+        ).require_current(packet)
+
+    expected_targets = {
+        "book_blueprint": restored_blueprint_id,
+        "volume_plan": restored_volume_id,
+        "rolling_plan": restored_rolling_id,
+    }
+    assert {
+        row["subject_kind"]: row["subject_id"] for row in dependency_rows
+    } == expected_targets
+    assert sorted(row["state"] for row in candidate_rows) == ["adopted", "stale"]
+    stale_row = next(row for row in candidate_rows if row["state"] == "stale")
+    assert stale_row["revision"] == open_candidate["revision"] + 1
+    adopted_row = next(row for row in candidate_rows if row["state"] == "adopted")
+    assert adopted_row["adopted_at"] is not None
+
+
+def test_import_upgrades_v15_archive_with_empty_m32_tables(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "v15-m32-archive.db")) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "旧归档",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+            },
+        ).json()
+        archive = client.get(
+            f"/api/projects/{workspace['project']['id']}/export"
+        ).json()
+        for table_name in (
+            "context_packets",
+            "creative_plan_dependencies",
+            "plan_rebase_candidates",
+        ):
+            archive["tables"].pop(table_name)
+        archive["format_version"] = 15
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+        assert restored.status_code == 201, restored.text
+        restored_project_id = restored.json()["project"]["id"]
+        with sqlite3.connect(tmp_path / "v15-m32-archive.db") as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM context_packets WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()[0] == 0
+            assert connection.execute(
+                "SELECT COUNT(*) FROM creative_plan_dependencies WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()[0] == 0
+            assert connection.execute(
+                "SELECT COUNT(*) FROM plan_rebase_candidates WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()[0] == 0
 
 
 def test_archive_round_trip_preserves_review_versions_and_partial_changes(

@@ -5,12 +5,13 @@ import type {
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
 import { genreLabels, getStoryAnchorLabels, isRebirthGenre } from '../genre'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
 import { AuthorToolsDialog } from './AuthorToolsDialog'
+import { ChapterProductionDialog } from './ChapterProductionDialog'
 import { DirectorPanel } from './DirectorPanel'
 import { ManuscriptDirectoryDialog } from './ManuscriptDirectoryDialog'
 import { SerialWorkspaceDialog } from './SerialWorkspaceDialog'
@@ -26,6 +27,8 @@ interface WorkspaceShellProps {
   onOpenResearch?: () => void
   onOpenComicDrama?: () => void
   onOpenTaskCenter: () => void
+  chapterProductionRequest?: { chapterId: string | null; requestId: number } | null
+  onChapterProductionRequestHandled?: () => void
   onClose: () => void
 }
 
@@ -66,6 +69,8 @@ export function WorkspaceShell({
   onOpenResearch = () => undefined,
   onOpenComicDrama = () => undefined,
   onOpenTaskCenter,
+  chapterProductionRequest = null,
+  onChapterProductionRequestHandled = () => undefined,
   onClose,
 }: WorkspaceShellProps) {
   const [activeChapter, setActiveChapter] = useState(initialChapter)
@@ -76,6 +81,18 @@ export function WorkspaceShell({
   const futureChapters = workspace.chapters
     .filter((item) => item.chapter_number > activeChapter.chapter_number)
     .slice(0, 3)
+
+  const selectChapter = useCallback(async (chapterId: string): Promise<boolean> => {
+    if (chapterId === activeChapter.id) return true
+    setChapterLoadError(null)
+    try {
+      setActiveChapter(await api.getChapter(chapterId))
+      return true
+    } catch (caught) {
+      setChapterLoadError(caught instanceof Error ? caught.message : '章节正文读取失败')
+      return false
+    }
+  }, [activeChapter.id])
 
   useEffect(() => {
     if (!activeChapterSummary || activeChapterSummary.revision <= activeChapter.revision) return
@@ -92,15 +109,16 @@ export function WorkspaceShell({
     }
   }, [activeChapter.id, activeChapter.revision, activeChapterSummary])
 
-  async function selectChapter(chapterId: string) {
-    if (chapterId === activeChapter.id) return
-    setChapterLoadError(null)
-    try {
-      setActiveChapter(await api.getChapter(chapterId))
-    } catch (caught) {
-      setChapterLoadError(caught instanceof Error ? caught.message : '章节正文读取失败')
-    }
-  }
+  useEffect(() => {
+    const chapterId = chapterProductionRequest?.chapterId
+    if (!chapterId || chapterId === activeChapter.id) return
+    const timer = window.setTimeout(() => {
+      void selectChapter(chapterId).then((selected) => {
+        if (!selected) onChapterProductionRequestHandled()
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeChapter.id, chapterProductionRequest, onChapterProductionRequestHandled, selectChapter])
 
   function handleChapterChanged(chapter: Chapter) {
     if (chapter.id === activeChapter.id) setActiveChapter(chapter)
@@ -140,7 +158,9 @@ export function WorkspaceShell({
       onOpenResearch={onOpenResearch}
       onOpenComicDrama={onOpenComicDrama}
       onOpenTaskCenter={onOpenTaskCenter}
-      onSelectChapter={selectChapter}
+      chapterProductionRequest={chapterProductionRequest}
+      onChapterProductionRequestHandled={onChapterProductionRequestHandled}
+      onSelectChapter={async (chapterId) => { await selectChapter(chapterId) }}
       onCreateChapter={createNextChapter}
       onClose={onClose}
     />
@@ -162,6 +182,8 @@ function ActiveChapterWorkspace({
   onOpenResearch = () => undefined,
   onOpenComicDrama = () => undefined,
   onOpenTaskCenter,
+  chapterProductionRequest = null,
+  onChapterProductionRequestHandled = () => undefined,
   onSelectChapter,
   onCreateChapter,
   onClose,
@@ -173,11 +195,15 @@ function ActiveChapterWorkspace({
   const [isNavigating, setIsNavigating] = useState(false)
   const [isDirectorOpen, setIsDirectorOpen] = useState(false)
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false)
+  const [isProductionOpen, setIsProductionOpen] = useState(false)
   const [serialDialogMode, setSerialDialogMode] = useState<'dashboard' | 'search' | null>(null)
   const [isFocusMode, setIsFocusMode] = useState(false)
   const [authorTools, setAuthorTools] = useState<{ tab: 'calendar' | 'annotations' | 'ideas' | 'graphs'; selection: { start: number; end: number } | null } | null>(null)
   const manuscriptRef = useRef<HTMLTextAreaElement>(null)
+  const productionTriggerRef = useRef<HTMLButtonElement>(null)
   const directorTriggerRef = useRef<HTMLButtonElement>(null)
+  const planReviewTriggerRef = useRef<HTMLButtonElement>(null)
+  const directorReturnFocusRef = useRef<HTMLButtonElement | null>(null)
   const directorCloseRef = useRef<HTMLButtonElement>(null)
   const authorToolsTriggerRef = useRef<HTMLButtonElement>(null)
   const deferredDraft = useDeferredValue(draft)
@@ -217,16 +243,29 @@ function ActiveChapterWorkspace({
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return
       setIsDirectorOpen(false)
-      directorTriggerRef.current?.focus()
+      const returnTarget = directorReturnFocusRef.current ?? directorTriggerRef.current
+      returnTarget?.focus()
     }
 
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [isDirectorOpen])
 
+  useEffect(() => {
+    if (!chapterProductionRequest) return
+    if (chapterProductionRequest.chapterId && chapterProductionRequest.chapterId !== chapter.id) return
+    const timer = window.setTimeout(() => {
+      setIsDirectorOpen(false)
+      setIsProductionOpen(true)
+      onChapterProductionRequestHandled()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [chapter.id, chapterProductionRequest, onChapterProductionRequestHandled])
+
   function closeDirector() {
     setIsDirectorOpen(false)
-    directorTriggerRef.current?.focus()
+    const returnTarget = directorReturnFocusRef.current ?? directorTriggerRef.current
+    returnTarget?.focus()
   }
 
   async function navigateAfterSave(action: () => void | Promise<void>): Promise<boolean> {
@@ -300,6 +339,11 @@ function ActiveChapterWorkspace({
   function closeAuthorTools() {
     setAuthorTools(null)
     authorToolsTriggerRef.current?.focus()
+  }
+
+  function closeProduction() {
+    setIsProductionOpen(false)
+    window.requestAnimationFrame(() => productionTriggerRef.current?.focus())
   }
 
   return (
@@ -390,6 +434,21 @@ function ActiveChapterWorkspace({
               <small>{workspace.topic_decision.status === 'pending_reconfirmation' ? '内容已改，等待复核' : '不会打断当前正文'}</small>
             </button>
           ) : null}
+          {workspace.next_action === 'review_downstream_plans' ? (
+            <button
+              ref={planReviewTriggerRef}
+              className="plan-rebase-entry"
+              type="button"
+              disabled={isNavigating}
+              onClick={() => { void navigateAfterSave(() => {
+                directorReturnFocusRef.current = planReviewTriggerRef.current
+                setIsDirectorOpen(true)
+              }) }}
+            >
+              <strong>计划需复核 · 查看影响</strong>
+              <small>选题或写作模式已更新；已定稿正文不会被改动</small>
+            </button>
+          ) : null}
         </section>
         <nav aria-label="章节目录">
           <div className="tree-section-title">
@@ -456,9 +515,22 @@ function ActiveChapterWorkspace({
             <p>{(workspace.manuscript_volumes ?? []).find((volume) => volume.id === chapter.volume_id)?.title ?? `第 ${chapter.volume_number} 卷`} · 第 {chapter.chapter_number} 章</p>
             <h2 id="chapter-title">{chapter.title}</h2>
           </div>
-          <span className="save-state" data-status={saveStatus} role="status">
-            <i aria-hidden="true" />{isApproved ? '定稿锁定' : saveLabels[saveStatus]}
-          </span>
+          <div className="editor-heading-actions">
+            <span className="save-state" data-status={saveStatus} role="status">
+              <i aria-hidden="true" />{isApproved ? '定稿锁定' : saveLabels[saveStatus]}
+            </span>
+            <button
+              ref={productionTriggerRef}
+              className="chapter-production-entry"
+              type="button"
+              disabled={isNavigating || isApproved}
+              aria-haspopup="dialog"
+              onClick={() => { void navigateAfterSave(() => setIsProductionOpen(true)) }}
+            >
+              <span aria-hidden="true">AI</span>
+              <strong>{isApproved ? '定稿章节已锁定' : '生成本章候选'}</strong>
+            </button>
+          </div>
         </header>
         <textarea
           ref={manuscriptRef}
@@ -496,7 +568,10 @@ function ActiveChapterWorkspace({
         aria-label="打开 AI 导演"
         aria-controls="ai-director-surface"
         aria-expanded={isDirectorOpen}
-        onClick={() => setIsDirectorOpen(true)}
+        onClick={() => {
+          directorReturnFocusRef.current = directorTriggerRef.current
+          setIsDirectorOpen(true)
+        }}
       >
         <span aria-hidden="true">AI</span>
         <strong aria-hidden="true">导演</strong>
@@ -518,6 +593,18 @@ function ActiveChapterWorkspace({
         />
       ) : null}
       {authorTools ? <AuthorToolsDialog project={workspace.project} chapter={chapter} initialTab={authorTools.tab} selection={authorTools.selection} onClose={closeAuthorTools} onAdjustGoal={() => { setAuthorTools(null); setSerialDialogMode('dashboard') }} /> : null}
+      {isProductionOpen ? (
+        <ChapterProductionDialog
+          project={workspace.project}
+          chapter={chapter}
+          onClose={closeProduction}
+          onChapterChanged={handleChapterUpdated}
+          onOpenTaskCenter={() => {
+            setIsProductionOpen(false)
+            onOpenTaskCenter()
+          }}
+        />
+      ) : null}
       <button
         className="director-drawer-backdrop"
         type="button"
@@ -554,6 +641,10 @@ function ActiveChapterWorkspace({
           canUpdateChapter={saveStatus === 'saved'}
           onChapterUpdated={handleChapterUpdated}
           onWorkspaceChanged={onWorkspaceChanged}
+          onOpenChapterProduction={() => {
+            closeDirector()
+            void navigateAfterSave(() => setIsProductionOpen(true))
+          }}
         />
       </section>
     </main>

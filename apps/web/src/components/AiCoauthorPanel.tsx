@@ -9,6 +9,7 @@ import type {
   GenerationRun,
   Job,
 } from '@mozhou/contracts'
+import { creativeContextCanSubmit } from '@mozhou/contracts'
 import type { MouseEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -22,6 +23,7 @@ interface AiCoauthorPanelProps {
   canGenerateDraft: boolean
   onAdoptProposal: (proposal: AiChapterBriefProposal) => void
   onDraftGenerated: (run: GenerationRun) => void
+  onOpenChapterProduction?: () => void
 }
 
 export function AiCoauthorPanel({
@@ -30,6 +32,7 @@ export function AiCoauthorPanel({
   canGenerateDraft,
   onAdoptProposal,
   onDraftGenerated,
+  onOpenChapterProduction,
 }: AiCoauthorPanelProps) {
   const [status, setStatus] = useState<AiStatus | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -150,7 +153,7 @@ export function AiCoauthorPanel({
   }
 
   async function confirmOutbound() {
-    if (!outboundPreview || activity) return
+    if (!outboundPreview || activity || !creativeContextCanSubmit(outboundPreview.context_packet)) return
     const kind = outboundPreview.task_type === 'chapter_brief' ? 'brief' : 'draft'
     setActivity(kind)
     setError(null)
@@ -280,8 +283,8 @@ export function AiCoauthorPanel({
     <section className="ai-coauthor" aria-labelledby="ai-coauthor-title">
       <header>
         <div>
-          <p>AI 共创</p>
-          <h3 id="ai-coauthor-title">说一句想法，让 AI 完成章纲和初稿</h3>
+          <p>{onOpenChapterProduction ? '模型线路' : 'AI 共创'}</p>
+          <h3 id="ai-coauthor-title">{onOpenChapterProduction ? '管理本章使用的 AI 线路' : '说一句想法，让 AI 完成章纲和初稿'}</h3>
         </div>
         <div className="ai-route-status">
           <span data-ready={configured}>
@@ -295,7 +298,13 @@ export function AiCoauthorPanel({
         </div>
       </header>
 
-      {!configured ? (
+      {onOpenChapterProduction ? (
+        <div className="ai-setup chapter-production-route-note">
+          <p>章纲设计和完整正文已迁移到单章生产工作台；这里只保留模型线路管理，不再产生另一份正文候选。</p>
+          <button type="button" onClick={onOpenChapterProduction}>前往单章生产工作台</button>
+          {!configured ? <button type="button" onClick={openModelSettings}>打开模型线路台</button> : null}
+        </div>
+      ) : !configured ? (
         <div className="ai-setup">
           <p>先建立一条模型线路。桌面版会把 API Key 放进 macOS 系统凭据库，作品数据库和导出包都不保存密钥。</p>
           <button type="button" onClick={openModelSettings}>打开模型线路台</button>
@@ -370,7 +379,7 @@ export function AiCoauthorPanel({
         </div>
       )}
 
-      {outboundPreview ? (
+      {outboundPreview && !onOpenChapterProduction ? (
         <article className="ai-outbound-preview" aria-labelledby="ai-outbound-preview-title">
           <header>
             <div><small>OUTBOUND CHECK</small><h4 id="ai-outbound-preview-title">发送前确认</h4></div>
@@ -395,14 +404,18 @@ export function AiCoauthorPanel({
           />
           <footer>
             <button type="button" onClick={() => setOutboundPreview(null)}>返回修改</button>
-            <button type="button" onClick={() => { void confirmOutbound() }} disabled={activity !== null}>
+            <button
+              type="button"
+              onClick={() => { void confirmOutbound() }}
+              disabled={activity !== null || !creativeContextCanSubmit(outboundPreview.context_packet)}
+            >
               {activity ? '正在启动…' : '确认外发并开始'}
             </button>
           </footer>
         </article>
       ) : null}
 
-      {proposal ? (
+      {proposal && !onOpenChapterProduction ? (
         <article className="ai-proposal">
           <div><span>候选章纲</span><strong>{proposal.title}</strong></div>
           <dl>

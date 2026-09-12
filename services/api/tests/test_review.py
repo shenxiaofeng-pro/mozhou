@@ -273,6 +273,49 @@ def test_three_and_ten_chapter_windows_freeze_exact_scope(tmp_path: Path) -> Non
     assert "第7章独有正文标记" not in three_context.payload
 
 
+def test_review_worker_rejects_prior_window_change_before_provider_call(
+    tmp_path: Path,
+) -> None:
+    repository, _reviews, jobs, service, runtime, gateway, chapter_id = _review_fixture(
+        tmp_path
+    )
+    first = repository.get_chapter(chapter_id)
+    target = repository.create_chapter(
+        first.project_id,
+        CreateChapterRequest(expected_last_chapter_number=1, title="第二章 窗口门禁"),
+    )
+    target = repository.update_chapter(
+        target.id,
+        UpdateChapterRequest(
+            content="老陈突然改口叫他沈总。",
+            expected_revision=target.revision,
+        ),
+    )
+    job = service.submit(
+        target.id,
+        ReviewChapterRequest(
+            expected_revision=target.revision,
+            window_size=2,
+            dimensions=[ReviewDimension.CHARACTER],
+            confirm_external_processing=True,
+        ),
+    )
+    repository.update_chapter(
+        first.id,
+        UpdateChapterRequest(
+            content=first.content + "\n作者在提交后改写了前置正文。",
+            expected_revision=first.revision,
+        ),
+    )
+
+    assert runtime.run_once()
+
+    failed = jobs.get_job(job.id)
+    assert failed.state.value == "failed"
+    assert failed.error_code == "creative_context_changed"
+    assert gateway.calls == []
+
+
 def test_partial_change_set_and_rollback_create_new_versions(tmp_path: Path) -> None:
     repository, reviews, _jobs, _service, _runtime, _gateway, chapter_id = (
         _review_fixture(tmp_path)

@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,8 @@ class DirectorGateway:
         self.brief_calls = 0
         self.draft_calls = 0
         self.startup_contexts: list[dict[str, object]] = []
+        self.brief_contexts: list[str] = []
+        self.after_brief: Callable[[], None] | None = None
 
     def status(self) -> AiStatus:
         return AiStatus(
@@ -167,7 +170,11 @@ class DirectorGateway:
 
     def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal:
         self.brief_calls += 1
+        self.brief_contexts.append(context_text)
         assert "rolling_chapter_plan" in context_text
+        if self.after_brief is not None:
+            callback, self.after_brief = self.after_brief, None
+            callback()
         return AiChapterBriefProposal(
             title="第一章 坏消息提前三天",
             reader_promise="主角用未来信息抢出第一次行动窗口",
@@ -339,6 +346,13 @@ def test_director_candidates_locks_expansion_and_pipeline_never_overwrite_manusc
         assert pipeline.status_code == 202
         pipeline_job = pipeline.json()
         _run_one(client)
+        director_context = client.app.state.job_repository.find_artifact(
+            pipeline_job["id"], "director_context"
+        )
+        assert director_context is not None
+        assert json.loads(director_context.payload)["rendered_context"] == (
+            gateway.brief_contexts[-1]
+        )
         pipeline_result = client.get(f"/api/jobs/{pipeline_job['id']}/director-pipeline-result")
         assert pipeline_result.status_code == 200
         candidate = pipeline_result.json()
@@ -374,6 +388,42 @@ def test_director_candidates_locks_expansion_and_pipeline_never_overwrite_manusc
         assert (
             client.get(f"/api/jobs/{rerun_job['id']}/director-pipeline-result").status_code == 200
         )
+
+        brief_calls = gateway.brief_calls
+        draft_calls = gateway.draft_calls
+
+        def change_blueprint_after_brief() -> None:
+            with client.app.state.repository.database.connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE book_blueprints
+                    SET revision = revision + 1
+                    WHERE project_id = ?
+                    """,
+                    (project_id,),
+                )
+
+        gateway.after_brief = change_blueprint_after_brief
+        drifted_pipeline = client.post(
+            f"/api/chapters/{chapter_id}/director-pipeline-jobs",
+            json={
+                **pipeline_request,
+                "author_intent": "测试双模型调用之间的依赖漂移",
+            },
+        )
+        assert drifted_pipeline.status_code == 202
+        _run_one(client)
+        drifted_detail = client.get(
+            f"/api/jobs/{drifted_pipeline.json()['id']}"
+        ).json()
+        assert drifted_detail["state"] == "failed"
+        assert drifted_detail["error_code"] == "creative_context_changed"
+        assert gateway.brief_calls == brief_calls + 1
+        assert gateway.draft_calls == draft_calls
+        gateway.after_brief = None
+        blueprint = client.get(f"/api/projects/{project_id}/director").json()[
+            "book_blueprint"
+        ]
 
         field_request = {
             "target_field": "core_desire",

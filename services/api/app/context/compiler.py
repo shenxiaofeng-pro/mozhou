@@ -5,6 +5,7 @@ from hashlib import sha256
 from uuid import NAMESPACE_URL, uuid5
 
 from app.context.models import (
+    ContextDependencySnapshot,
     ContextDirective,
     ContextDirectiveAction,
     ContextItem,
@@ -14,6 +15,9 @@ from app.context.models import (
     ContextTaskType,
     ContextTier,
     ContextTierUsage,
+    CreativeContextPurpose,
+    CreativeContextSubject,
+    CreativeContextSubjectKind,
 )
 from app.models import (
     Chapter,
@@ -236,12 +240,29 @@ class ContextCompiler:
         }
         packet_sha256 = _sha256(_canonical_json(hash_payload))
         packet_id = str(uuid5(NAMESPACE_URL, f"mozhou:context:{packet_sha256}"))
+        subject_sha256 = _sha256(_canonical_json(chapter.model_dump(mode="json")))
+        dependency_snapshot = ContextDependencySnapshot(subject_sha256=subject_sha256)
         return ContextPacket(
             id=packet_id,
             project_id=workspace.project.id,
             chapter_id=chapter.id,
             chapter_revision=chapter.revision,
             task_type=task_type,
+            purpose=(
+                CreativeContextPurpose.BRIEF
+                if task_type == ContextTaskType.CHAPTER_BRIEF
+                else CreativeContextPurpose.DRAFT
+            ),
+            subject=CreativeContextSubject(
+                kind=CreativeContextSubjectKind.CHAPTER,
+                id=chapter.id,
+                revision=chapter.revision,
+                content_sha256=subject_sha256,
+            ),
+            dependency_snapshot=dependency_snapshot,
+            dependency_fingerprint_sha256=_sha256(
+                _canonical_json(dependency_snapshot.model_dump(mode="json"))
+            ),
             compiler_version=self.compiler_version,
             token_budget=token_budget,
             used_tokens=used_tokens,

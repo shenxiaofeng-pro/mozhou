@@ -1,8 +1,6 @@
 import type {
-  AiChapterBriefProposal,
   Chapter,
   ChapterSummary,
-  GenerationRun,
   Job,
   JobArtifactContent,
   JobDetail,
@@ -24,6 +22,7 @@ interface TaskCenterProps {
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onOpenReferenceLibrary: () => void
   onOpenWritingPatterns?: () => void
+  onOpenChapterProduction?: (chapterId: string | null) => void
 }
 
 const kindLabels: Record<JobKind, string> = {
@@ -54,38 +53,46 @@ const stateLabels: Record<JobState, string> = {
 const activeStates = new Set<JobState>(['queued', 'running', 'pause_requested'])
 const retryableStates = new Set<JobState>(['failed', 'interrupted', 'cancelled'])
 const craftPatternWorkflows = new Set(['craft_pattern_analysis_v2', 'craft_pattern_fusion_v2'])
+const chapterProductionWorkflows = new Set([
+  'chapter_production_outline',
+  'chapter_production_draft',
+  'chapter_production_rewrite',
+  'chapter_production_review',
+])
+
+function isChapterProductionJob(job: Pick<Job, 'kind' | 'workflow'>): boolean {
+  return chapterProductionWorkflows.has(job.workflow)
+    || (['chapter_brief', 'chapter_draft'].includes(job.kind) && job.workflow === '')
+}
 
 function needsFreshPreflight(job: Pick<Job, 'kind' | 'workflow'>): boolean {
   return craftPatternWorkflows.has(job.workflow) || job.kind === 'pattern_adaptation'
 }
 
 function jobLabel(job: Pick<Job, 'kind' | 'workflow'>): string {
+  if (job.workflow === 'chapter_production_outline') return '本章章纲候选'
+  if (job.workflow === 'chapter_production_draft') return '本章正文候选'
+  if (job.workflow === 'chapter_production_rewrite') return '候选局部改写'
+  if (job.workflow === 'chapter_production_review') return '候选七维审校'
   if (job.workflow === 'craft_pattern_analysis_v2') return '单书写作模式拆解'
   if (job.workflow === 'craft_pattern_fusion_v2') return '多书模式融合'
   return kindLabels[job.kind]
 }
 
-type TaskResult =
-  | { kind: 'brief'; proposal: AiChapterBriefProposal }
-  | { kind: 'draft'; run: GenerationRun }
-
 export function TaskCenter({
   projectId,
-  chapters,
   open,
   onClose,
-  onChapterChanged,
   onWorkspaceChanged,
   onOpenReferenceLibrary,
   onOpenWritingPatterns = () => undefined,
+  onOpenChapterProduction = () => undefined,
 }: TaskCenterProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [selected, setSelected] = useState<JobDetail | null>(null)
   const [artifact, setArtifact] = useState<JobArtifactContent | null>(null)
-  const [result, setResult] = useState<TaskResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
-  const [staleDraftRunIds, setStaleDraftRunIds] = useState<Set<string>>(() => new Set())
   const [resubmissionJobIds, setResubmissionJobIds] = useState<Set<string>>(() => new Set())
   const activeCount = useMemo(
     () => jobs.filter((job) => activeStates.has(job.state)).length,
@@ -120,21 +127,6 @@ export function TaskCenter({
       hasCost: selected.attempts.some((attempt) => attempt.estimated_cost_microusd !== null),
     }
   }, [selected])
-  const draftResult = result?.kind === 'draft' ? result : null
-  const draftChapter = draftResult
-    ? chapters.find((chapter) => chapter.id === draftResult.run.chapter_id)
-    : null
-  const draftResultIsStale = Boolean(
-    draftResult
-    && draftResult.run.state !== 'applied'
-    && (
-      staleDraftRunIds.has(draftResult.run.id)
-      || !draftChapter
-      || draftChapter.revision !== draftResult.run.expected_chapter_revision
-      || draftChapter.status === 'approved'
-    ),
-  )
-
   useEffect(() => {
     let stopped = false
     let timer: number | undefined
@@ -173,7 +165,6 @@ export function TaskCenter({
   async function inspectJob(job: Job) {
     setError(null)
     setArtifact(null)
-    setResult(null)
     try {
       setSelected(await api.getJob(job.id))
     } catch (caught) {
@@ -243,15 +234,16 @@ export function TaskCenter({
     setBusyAction(`result:${job.id}`)
     setError(null)
     try {
+      if (isChapterProductionJob(job)) {
+        onClose()
+        onOpenChapterProduction(job.chapter_id)
+        return
+      }
       if (selected?.id !== job.id) {
         setSelected(await api.getJob(job.id))
         setArtifact(null)
       }
-      if (job.kind === 'chapter_brief') {
-        setResult({ kind: 'brief', proposal: await api.getAiChapterBriefJobResult(job.id) })
-      } else if (job.kind === 'chapter_draft') {
-        setResult({ kind: 'draft', run: await api.getAiChapterDraftJobResult(job.id) })
-      } else if (job.kind === 'reference_fusion') {
+      if (job.kind === 'reference_fusion') {
         if (craftPatternWorkflows.has(job.workflow)) {
           onClose()
           onOpenReferenceLibrary()
@@ -267,58 +259,6 @@ export function TaskCenter({
     } finally {
       setBusyAction(null)
     }
-  }
-
-  async function adoptBrief() {
-    if (!selected?.chapter_id || result?.kind !== 'brief') return
-    const chapter = chapters.find((item) => item.id === selected.chapter_id)
-    if (!chapter) return
-    setBusyAction(`adopt:${selected.id}`)
-    setError(null)
-    try {
-      const proposal = result.proposal
-      onChapterChanged(await api.updateChapterBrief(chapter.id, {
-        title: proposal.title,
-        reader_promise: proposal.reader_promise,
-        opening_hook: proposal.opening_hook,
-        state_change: proposal.state_change,
-        emotional_payoff: proposal.emotional_payoff,
-        ending_cliffhanger: proposal.ending_cliffhanger,
-        expected_revision: chapter.revision,
-      }))
-      setResult(null)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '章纲采用失败')
-    } finally {
-      setBusyAction(null)
-    }
-  }
-
-  async function adoptDraft() {
-    if (result?.kind !== 'draft' || draftResultIsStale) return
-    const chapter = chapters.find((item) => item.id === result.run.chapter_id)
-    if (!chapter) return
-    setBusyAction(`adopt:${selected?.id ?? result.run.id}`)
-    setError(null)
-    try {
-      onChapterChanged(await api.applyGeneration(result.run.id, chapter.revision))
-      setResult({ kind: 'draft', run: { ...result.run, state: 'applied' } })
-    } catch (caught) {
-      if (caught instanceof ApiError && caught.status === 409) {
-        setStaleDraftRunIds((current) => new Set(current).add(result.run.id))
-        setError(null)
-      } else {
-        setError(caught instanceof Error ? caught.message : '正文候选采用失败')
-      }
-    } finally {
-      setBusyAction(null)
-    }
-  }
-
-  function dismissDraftResult(returnToWriting: boolean) {
-    setResult(null)
-    setError(null)
-    if (returnToWriting) onClose()
   }
 
   return (
@@ -381,12 +321,12 @@ export function TaskCenter({
                       disabled={busyAction === `retry:${job.id}`}
                     >从断点继续</button>
                   ) : null}
-                  {job.state === 'succeeded' && ['chapter_brief', 'chapter_draft', 'reference_fusion', 'pattern_adaptation'].includes(job.kind) ? (
+                  {job.state === 'succeeded' && (isChapterProductionJob(job) || ['reference_fusion', 'pattern_adaptation'].includes(job.kind)) ? (
                     <button
                       type="button"
                       onClick={() => { void continueResult(job) }}
                       disabled={busyAction === `result:${job.id}`}
-                    >{job.kind === 'pattern_adaptation' ? '查看三套候选' : craftPatternWorkflows.has(job.workflow) ? '查看模式素材' : '继续采用'}</button>
+                    >{isChapterProductionJob(job) ? '回到单章生产台' : job.kind === 'pattern_adaptation' ? '查看三套候选' : craftPatternWorkflows.has(job.workflow) ? '查看模式素材' : '继续采用'}</button>
                   ) : null}
                 </div>
               </article>
@@ -427,38 +367,6 @@ export function TaskCenter({
                   <summary>{artifact.kind} · {artifact.content_type}</summary>
                   <pre>{artifact.payload}</pre>
                 </details>
-              ) : null}
-              {result?.kind === 'brief' ? (
-                <article className="task-result-preview">
-                  <span>章纲候选</span>
-                  <h3>{result.proposal.title}</h3>
-                  <p>{result.proposal.reader_promise}</p>
-                  <p>{result.proposal.state_change}</p>
-                  <p>{result.proposal.ending_cliffhanger}</p>
-                  <button type="button" onClick={() => { void adoptBrief() }}>确认并保存为章纲</button>
-                </article>
-              ) : null}
-              {result?.kind === 'draft' ? (
-                <article className="task-result-preview">
-                  <span>正文候选</span>
-                  <p>{result.run.candidate_content}</p>
-                  {draftResultIsStale ? (
-                    <div id="task-center-stale-candidate" className="task-detail-error" role="alert">
-                      <strong>候选基于旧版本</strong>
-                      <p>这份候选生成后，当前章节已被修改或定稿，因此不能再写入正文。</p>
-                      <div>
-                        <button type="button" onClick={() => dismissDraftResult(true)}>返回创作台重新生成</button>
-                        <button type="button" onClick={() => dismissDraftResult(false)}>关闭此候选</button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => { void adoptDraft() }}
-                    disabled={result.run.state === 'applied' || draftResultIsStale || busyAction !== null}
-                    aria-describedby={draftResultIsStale ? 'task-center-stale-candidate' : undefined}
-                  >{result.run.state === 'applied' ? '已写入正文' : '确认并写入正文'}</button>
-                </article>
               ) : null}
             </section>
           ) : null}

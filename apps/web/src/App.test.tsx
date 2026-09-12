@@ -1,6 +1,12 @@
 import type {
-  ContextPacket,
-  GenerationRun,
+  BookBlueprint,
+  BookBlueprintContent,
+  Chapter,
+  ChapterDraftCandidate,
+  ChapterOutlineCandidate,
+  ChapterProductionOutboundPreview,
+  ChapterProductionSnapshot,
+  CreativePlanImpactPreview,
   Job,
   JobDetail,
   JobKind,
@@ -162,6 +168,115 @@ function queuedJob(kind: JobKind, chapterId: string | null = null): Job {
   }
 }
 
+function productionOutline(chapter: Chapter): ChapterOutlineCandidate {
+  return {
+    id: 'production-outline-1',
+    production_id: 'chapter-production-1',
+    ordinal: 1,
+    label: 'AI 章纲',
+    state: 'available',
+    current_version: {
+      id: 'production-outline-version-1',
+      candidate_id: 'production-outline-1',
+      revision: 0,
+      content: {
+        title: chapter.title,
+        reader_promise: chapter.reader_promise,
+        opening_hook: chapter.opening_hook,
+        state_change: chapter.state_change,
+        emotional_payoff: chapter.emotional_payoff,
+        ending_cliffhanger: chapter.ending_cliffhanger,
+        scene_beats: [],
+      },
+      content_sha256: 'a'.repeat(64),
+      operation: 'model_draft',
+      parent_version_id: null,
+      trace: null,
+      source_job_id: 'outline-job',
+      created_at: '2026-09-12T00:00:00Z',
+    },
+    created_at: '2026-09-12T00:00:00Z',
+    updated_at: '2026-09-12T00:00:00Z',
+  }
+}
+
+function productionCandidate(chapter: Chapter, content = '这是 AI 主写、尚未采用的正文候选。'): ChapterDraftCandidate {
+  return {
+    id: 'production-candidate-1',
+    production_id: 'chapter-production-1',
+    label: '正面交锋版',
+    state: 'available',
+    source_outline_candidate_id: 'production-outline-1',
+    source_outline_version_id: 'production-outline-version-1',
+    source_outline_revision: 0,
+    source_outline_content_sha256: 'a'.repeat(64),
+    current_version: {
+      id: 'production-candidate-version-1',
+      candidate_id: 'production-candidate-1',
+      revision: 0,
+      content,
+      content_sha256: 'b'.repeat(64),
+      operation: 'model_draft',
+      parent_version_id: null,
+      restored_from_version_id: null,
+      trace: null,
+      source_job_id: 'draft-job',
+      instruction: '',
+      created_at: '2026-09-12T00:00:00Z',
+    },
+    locks: [],
+    created_at: '2026-09-12T00:00:00Z',
+    updated_at: '2026-09-12T00:00:00Z',
+  }
+}
+
+function productionSnapshot(
+  chapter: Chapter,
+  options: { outline?: ChapterOutlineCandidate; candidate?: ChapterDraftCandidate; baseRevision?: number } = {},
+): ChapterProductionSnapshot {
+  const outlines = options.outline ? [options.outline] : []
+  const candidates = options.candidate ? [options.candidate] : []
+  return {
+    production: {
+      id: 'chapter-production-1',
+      project_id: chapter.project_id,
+      chapter_id: chapter.id,
+      base_chapter_revision: options.baseRevision ?? chapter.revision,
+      base_chapter_content_sha256: 'c'.repeat(64),
+      state: candidates.length > 0 ? 'candidate_ready' : outlines.length > 0 ? 'outline_ready' : 'created',
+      revision: 0,
+      current_outline_candidate_id: options.outline?.id ?? null,
+      created_at: '2026-09-12T00:00:00Z',
+      updated_at: '2026-09-12T00:00:00Z',
+    },
+    outlines,
+    candidates,
+    preflight_checks: [],
+    reviews: [],
+    outcomes: [],
+  }
+}
+
+function productionPreview(purpose: 'brief' | 'draft' | 'candidate_review' = 'brief'): ChapterProductionOutboundPreview {
+  return {
+    purpose,
+    profile_id: null,
+    profile_name: '当前会话线路',
+    provider: 'openai',
+    model: 'gpt-5.6',
+    data_types: ['已编译创作上下文'],
+    content_scope: '当前章节与已确认资料',
+    character_count: 1200,
+    estimated_input_tokens: 900,
+    estimated_output_tokens: 800,
+    estimated_cost_microusd: 15_000,
+    context_packet_id: 'production-packet-1',
+    context_packet_sha256: 'd'.repeat(64),
+    context_dependency_fingerprint_sha256: 'e'.repeat(64),
+    context_compiler_version: 'creative-context-v2',
+  }
+}
+
 function jobDetail(job: Job): JobDetail {
   return {
     ...job,
@@ -169,64 +284,6 @@ function jobDetail(job: Job): JobDetail {
     attempts: [],
     artifacts: [],
     events: [],
-  }
-}
-
-function contextPacket(
-  taskType: 'chapter_brief' | 'chapter_draft',
-  usedTokens: number,
-  tokenBudget = 24_000,
-): ContextPacket {
-  return {
-    id: taskType === 'chapter_brief'
-      ? '7e4dbbc5-af7d-40a5-a8ee-69322bc8b667'
-      : '3a1e84a4-350f-4fb5-afdf-af8551e11187',
-    project_id: workspace.project.id,
-    chapter_id: workspace.chapters[0].id,
-    chapter_revision: 0,
-    task_type: taskType,
-    compiler_version: 'rule-compiler-v1',
-    token_budget: tokenBudget,
-    used_tokens: usedTokens,
-    overflow_tokens: 0,
-    packet_sha256: 'a'.repeat(64),
-    source_fingerprint_sha256: 'b'.repeat(64),
-    rendered_context: '{"items":[]}',
-    items: [{
-      id: 'hard:project',
-      kind: 'project_anchor',
-      tier: 'hard_constraint',
-      label: '作品与重生锚点',
-      content: '福建南平 · 1998',
-      token_estimate: 40,
-      priority: 9990,
-      required: true,
-      included: true,
-      directive: null,
-      selection_reason: '题材、年代和地点是硬约束',
-      exclusion_reason: null,
-      source_refs: [{
-        kind: 'project',
-        source_id: workspace.project.id,
-        label: workspace.project.title,
-        chapter_id: null,
-        chapter_number: null,
-        character_start: null,
-        character_end: null,
-        updated_at: workspace.project.updated_at,
-      }],
-      conflict_notes: [],
-      content_sha256: 'c'.repeat(64),
-    }],
-    tier_usage: [{
-      tier: 'hard_constraint',
-      budget_tokens: 0,
-      used_tokens: 40,
-      included_count: 1,
-      excluded_count: 0,
-    }],
-    conflict_notes: [],
-    created_at: '2026-08-10T00:00:00Z',
   }
 }
 
@@ -249,6 +306,11 @@ beforeEach(() => {
   vi.spyOn(api, 'listContextDirectives').mockResolvedValue([])
   vi.spyOn(api, 'listComicProjects').mockResolvedValue([])
   vi.spyOn(api, 'listReferenceCraftAssets').mockResolvedValue([])
+  vi.spyOn(api, 'getCurrentChapterProduction').mockRejectedValue(new ApiError('尚无单章生产记录', 404))
+  vi.spyOn(api, 'createChapterProduction').mockImplementation(async (_projectId, chapterId) => {
+    const current = workspace.chapters.find((item) => item.id === chapterId) ?? workspace.chapters[0]
+    return productionSnapshot(current)
+  })
 })
 
 afterEach(() => {
@@ -543,6 +605,94 @@ describe('App', () => {
     expect(trigger).toHaveFocus()
   })
 
+  it('opens stale-plan impact from the writing workspace and restores keyboard focus', async () => {
+    const blueprintContent: BookBlueprintContent = {
+      title: workspace.project.title,
+      genre: workspace.project.genre,
+      rebirth_year: 1998,
+      rebirth_location: '福建南平',
+      target_audience: '现实创业读者',
+      core_selling_points: ['产业改命'],
+      core_desire: '先保住父亲的工作',
+      divergence_point: '提前拿到停产名单',
+      long_term_promise: '改变家族与城市产业路线',
+      ending_direction: '建立产业联盟',
+      protagonist_arc: '从救家到担责',
+      resource_growth: '信息差到组织信用',
+      relationship_design: '重构父子与商业盟友关系',
+    }
+    const fields = Object.keys(blueprintContent) as Array<keyof typeof blueprintContent>
+    const staleWorkspace: Workspace = {
+      ...workspace,
+      next_action: 'review_downstream_plans',
+      book_blueprint: {
+        id: 'blueprint-1',
+        project_id: workspace.project.id,
+        idea: '重生后改变家乡产业',
+        content: blueprintContent,
+        locks: Object.fromEntries(fields.map((field) => [field, field === 'title'])) as BookBlueprint['locks'],
+        field_versions: Object.fromEntries(fields.map((field) => [field, 1])) as BookBlueprint['field_versions'],
+        stale_fields: ['core_desire'],
+        plan_stale: true,
+        source_candidate_id: null,
+        revision: 4,
+        created_at: '2026-09-12T00:00:00Z',
+        updated_at: '2026-09-12T00:00:00Z',
+      },
+    }
+    const impact: CreativePlanImpactPreview = {
+      project_id: workspace.project.id,
+      current_dependency: {
+        schema_version: 1,
+        topic: null,
+        writing_pattern_profile: null,
+        writing_pattern_source_availability: null,
+        base_blueprint: null,
+        subject_sha256: 'a'.repeat(64),
+      },
+      current_dependency_fingerprint_sha256: 'b'.repeat(64),
+      reasons: ['选题或写作模式已更新'],
+      affected_blueprint_fields: ['core_desire'],
+      locked_blueprint_fields: ['title'],
+      targets: [{
+        kind: 'book_blueprint',
+        id: 'blueprint-1',
+        revision: 4,
+        locked: false,
+        state: 'stale',
+        stale_reasons: ['写作模式快照已更新'],
+      }],
+      approved_chapter_count: 2,
+      can_rebase: true,
+    }
+    vi.mocked(api.listProjects).mockResolvedValue([workspace.project])
+    vi.mocked(api.getProjectSummary).mockResolvedValue(summarizeWorkspace(staleWorkspace))
+    vi.spyOn(api, 'getCreativeContextImpact').mockResolvedValue(impact)
+    vi.spyOn(api, 'getPatternOriginalityGate').mockResolvedValue({
+      project_id: workspace.project.id,
+      state: 'legacy',
+      reason: 'legacy_project',
+      requires_check: false,
+      adoption: null,
+      blueprint_id: null,
+      blueprint_revision: null,
+      blueprint_content_sha256: null,
+      latest_report: null,
+      report_is_current: false,
+    })
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: `打开《${workspace.project.title}》` }))
+    const entry = await screen.findByRole('button', { name: /计划需复核 · 查看影响/ })
+    await user.click(entry)
+
+    expect(screen.getByRole('region', { name: 'AI 导演' })).toHaveAttribute('data-open', 'true')
+    expect(await screen.findByRole('heading', { name: '安全更新全书计划' })).toBeVisible()
+    await user.keyboard('{Escape}')
+    expect(entry).toHaveFocus()
+  })
+
   it('automatically saves chapter content with the current revision', async () => {
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const update = vi.spyOn(api, 'updateChapter').mockResolvedValue({
@@ -696,45 +846,21 @@ describe('App', () => {
     expect(screen.queryByRole('heading', { name: '先拆成规律，再带回你的书' })).not.toBeInTheDocument()
   })
 
-  it('saves the chapter brief before preparing generation context', async () => {
-    const emptyWorkspace: Workspace = {
-      ...workspace,
-      chapters: [{
-        ...workspace.chapters[0],
-        opening_hook: '',
-        state_change: '',
-        ending_cliffhanger: '',
-      }],
-    }
-    vi.spyOn(api, 'createProject').mockResolvedValue(emptyWorkspace)
-    const saveBrief = vi.spyOn(api, 'updateChapterBrief').mockResolvedValue({
-      ...emptyWorkspace.chapters[0],
-      opening_hook: '洪水预警只剩六小时',
-      state_change: '说服父亲调走仓库物资',
-      ending_cliffhanger: '失踪多年的舅舅打来电话',
-      revision: 1,
-    })
+  it('opens the unified chapter-production desk instead of the legacy brief editor', async () => {
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    const legacyBriefSave = vi.spyOn(api, 'updateChapterBrief')
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
 
-    expect(screen.getByRole('button', { name: '先完成并保存章纲' })).toBeDisabled()
-    await user.type(screen.getByLabelText('开篇钩子'), '洪水预警只剩六小时')
-    await user.type(screen.getByLabelText('状态变化'), '说服父亲调走仓库物资')
-    await user.type(screen.getByLabelText('章尾悬念'), '失踪多年的舅舅打来电话')
-    await user.click(screen.getByRole('button', { name: '保存章纲' }))
+    expect(screen.getAllByRole('button', { name: '生成本章候选' })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '准备章节上下文' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '生成本章候选' }))
 
-    expect(saveBrief).toHaveBeenCalledWith(emptyWorkspace.chapters[0].id, {
-      title: '第一章 未命名',
-      reader_promise: '',
-      opening_hook: '洪水预警只剩六小时',
-      state_change: '说服父亲调走仓库物资',
-      emotional_payoff: '',
-      ending_cliffhanger: '失踪多年的舅舅打来电话',
-      expected_revision: 0,
-    })
-    expect(await screen.findByRole('button', { name: '准备章节上下文' })).toBeEnabled()
+    expect(await screen.findByRole('dialog', { name: '本章候选生产台' })).toBeVisible()
+    expect(screen.getByLabelText('开篇钩子')).toHaveValue(workspace.chapters[0].opening_hook)
+    expect(legacyBriefSave).not.toHaveBeenCalled()
   })
 
   it('adds the next chapter to the rolling plan and switches chapters', async () => {
@@ -799,82 +925,55 @@ describe('App', () => {
     expect(await screen.findByRole('button', { name: '批准定稿' })).toBeEnabled()
   })
 
-  it('keeps generated text as a candidate until the author applies it', async () => {
-    const candidate = '1998年的慢车驶进福建南平时，站台广播带着电流声。'
+  it('keeps restored AI text isolated in the unified candidate comparison', async () => {
+    const content = '1998年的慢车驶进福建南平时，站台广播带着电流声。'
+    const restoredCandidate = productionCandidate(workspace.chapters[0], content)
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
-    vi.spyOn(api, 'startGeneration').mockResolvedValue({
-      id: 'd80eb27a-5f0c-45dc-92ea-ea40e66e1c4c',
-      chapter_id: workspace.chapters[0].id,
-      state: 'drafted' as const,
-      expected_chapter_revision: 0,
-      candidate_content: candidate,
-      error_message: null,
-      provider: 'demo',
-      model: 'replay-v1',
-      created_at: '2026-08-08T00:00:00Z',
-      updated_at: '2026-08-08T00:00:01Z',
-    })
-    vi.spyOn(api, 'applyGeneration').mockResolvedValue({
-      ...workspace.chapters[0],
-      content: candidate,
-      status: 'drafted',
-      revision: 1,
-    })
+    vi.mocked(api.getCurrentChapterProduction).mockResolvedValue(productionSnapshot(workspace.chapters[0], {
+      outline: productionOutline(workspace.chapters[0]),
+      candidate: restoredCandidate,
+    }))
+    const legacyGeneration = vi.spyOn(api, 'startGeneration')
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
 
-    await user.click(await screen.findByRole('button', { name: '准备章节上下文' }))
-    await user.click(screen.getByRole('button', { name: '生成示范候选稿' }))
-    expect(await screen.findByText(candidate)).toBeVisible()
-    expect(screen.getByLabelText('章节正文')).toHaveValue('')
-
-    await user.click(screen.getByRole('button', { name: '采用并写入编辑器' }))
-
-    expect(screen.getByLabelText('章节正文')).toHaveValue(candidate)
-    expect(screen.getByRole('button', { name: '已写入草稿' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '生成示范候选稿' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '生成本章候选' }))
+    expect(await screen.findByRole('textbox', { name: '编辑正面交锋版候选副本' })).toHaveValue(content)
+    expect((document.querySelector('.manuscript') as HTMLTextAreaElement).value).toBe('')
+    expect(legacyGeneration).not.toHaveBeenCalled()
   })
 
-  it('marks a director candidate stale after the apply API reports a revision conflict', async () => {
-    const candidate = '这份候选稿基于作者修改前的正文。'
-    const generatedRun: GenerationRun = {
-      id: '4c20df25-648d-4d8b-b187-855e752da45e',
-      chapter_id: workspace.chapters[0].id,
-      state: 'drafted',
-      expected_chapter_revision: 0,
-      candidate_content: candidate,
-      error_message: null,
-      provider: 'demo',
-      model: 'replay-v1',
-      created_at: '2026-09-11T00:00:00Z',
-      updated_at: '2026-09-11T00:00:01Z',
-    }
-    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
-    const startGeneration = vi.spyOn(api, 'startGeneration').mockResolvedValue(generatedRun)
-    const applyGeneration = vi.spyOn(api, 'applyGeneration').mockRejectedValue(
-      new ApiError('generation_revision_conflict', 409),
-    )
+  it('restores author edits while rebasing an old production on the latest chapter', async () => {
+    const currentChapter = { ...workspace.chapters[0], content: '作者已改过的正文。', status: 'drafted' as const, revision: 2 }
+    const currentWorkspace = { ...workspace, chapters: [currentChapter] }
+    const oldCandidate = productionCandidate(currentChapter, '这份候选基于旧正文。')
+    vi.spyOn(api, 'createProject').mockResolvedValue(currentWorkspace)
+    vi.mocked(api.getCurrentChapterProduction).mockResolvedValue(productionSnapshot(currentChapter, {
+      outline: productionOutline(currentChapter), candidate: oldCandidate, baseRevision: 1,
+    }))
+    vi.mocked(api.getChapter).mockResolvedValue(currentChapter)
+    vi.mocked(api.createChapterProduction).mockResolvedValue(productionSnapshot(currentChapter))
+    const legacyApply = vi.spyOn(api, 'applyGeneration')
     const user = userEvent.setup()
     render(<App />)
-    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.type(await screen.findByLabelText('作品名'), currentWorkspace.project.title)
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
-    await user.click(await screen.findByRole('button', { name: '准备章节上下文' }))
-    await user.click(screen.getByRole('button', { name: '生成示范候选稿' }))
+    await user.click(screen.getByRole('button', { name: '生成本章候选' }))
 
-    await user.click(await screen.findByRole('button', { name: '采用并写入编辑器' }))
+    const editor = await screen.findByRole('textbox', { name: '编辑正面交锋版候选副本' })
+    await user.clear(editor)
+    await user.type(editor, '作者要保留的候选修改。')
+    expect(screen.getByRole('button', { name: '确认采用这份候选' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '刷新正文并重新检查' }))
 
-    expect(await screen.findByText('候选基于旧版本')).toBeVisible()
-    expect(screen.getByRole('button', { name: '采用并写入编辑器' })).toBeDisabled()
-    expect(screen.getByLabelText('章节正文')).toHaveValue('')
-
-    await user.click(screen.getByRole('button', { name: '基于当前正文重新生成' }))
-    await waitFor(() => expect(startGeneration).toHaveBeenCalledTimes(2))
-    expect(applyGeneration).toHaveBeenCalledOnce()
-    expect(screen.queryByText('候选基于旧版本')).not.toBeInTheDocument()
+    expect(await screen.findByLabelText('旧候选作者编辑恢复副本')).toHaveValue('作者要保留的候选修改。')
+    expect(legacyApply).not.toHaveBeenCalled()
   })
 
-  it('lets AI propose a complete brief without changing the saved chapter', async () => {
+  it('lets AI propose a complete outline candidate without changing the saved chapter', async () => {
     vi.mocked(api.getAiStatus).mockResolvedValue({
       configured: true,
       provider: 'openai',
@@ -884,32 +983,25 @@ describe('App', () => {
       profile_name: null,
     })
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
-    const proposal = {
+    const proposedOutline = productionOutline(workspace.chapters[0])
+    proposedOutline.current_version.content = {
+      ...proposedOutline.current_version.content,
       title: '第一章 名单之前',
       reader_promise: '主角第一次改变家庭命运',
       opening_hook: '停产名单比记忆中提前贴出',
       state_change: '主角让父亲避开首轮裁员',
       emotional_payoff: '父亲保住岗位却开始怀疑儿子',
       ending_cliffhanger: '厂长拿出一张不该存在的旧照片',
-      why_this_works: '信息差立即转化为行动和家庭回报。',
-      risk_notes: ['厂办流程需要现实资料校验'],
     }
-    const briefJob = queuedJob('chapter_brief', workspace.chapters[0].id)
-    const previewBrief = vi.spyOn(api, 'previewAiChapterBrief').mockResolvedValue({
-      task_type: 'chapter_brief',
-      profile_id: null,
-      profile_name: '当前会话线路',
-      provider: 'openai',
-      model: 'gpt-5.6',
-      data_types: ['项目设定', '本章章纲', '作者创作意图'],
-      content_scope: '第 1 章章纲及正式资料',
-      character_count: 1860,
-      estimated_input_tokens: 2046,
-      estimated_output_tokens: 1200,
-      estimated_cost_microusd: 23115,
-      context_packet: contextPacket('chapter_brief', 2046),
-    })
-    const startBrief = vi.spyOn(api, 'startAiChapterBriefJob').mockResolvedValue(briefJob)
+    const briefJob: Job = {
+      ...queuedJob('chapter_brief', workspace.chapters[0].id),
+      workflow: 'chapter_production_outline',
+      current_step: '等待生成章纲候选',
+    }
+    const previewBrief = vi.spyOn(api, 'previewChapterProductionOutline').mockResolvedValue(
+      productionPreview('brief'),
+    )
+    const startBrief = vi.spyOn(api, 'startChapterProductionOutlineJob').mockResolvedValue(briefJob)
     vi.spyOn(api, 'getJob').mockResolvedValue({
       ...briefJob,
       state: 'succeeded',
@@ -921,38 +1013,68 @@ describe('App', () => {
       artifacts: [],
       events: [],
     })
-    vi.spyOn(api, 'getAiChapterBriefJobResult').mockResolvedValue(proposal)
+    vi.spyOn(api, 'getChapterProductionOutlineJobResult').mockResolvedValue(proposedOutline)
+    vi.spyOn(api, 'getChapterProduction').mockResolvedValue(productionSnapshot(
+      workspace.chapters[0],
+      { outline: proposedOutline },
+    ))
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
 
-    await user.type(await screen.findByLabelText('本章创作意图'), '让主角用信息差救下父亲')
-    await user.click(screen.getByRole('button', { name: 'AI 设计本章' }))
+    await user.click(screen.getByRole('button', { name: '生成本章候选' }))
+    await user.type(await screen.findByLabelText('本章创作意图（可选）'), '让主角用信息差救下父亲')
+    await user.click(await within(screen.getByRole('dialog', { name: '本章候选生产台' })).findByRole('button', { name: '生成本章候选' }))
 
-    expect(previewBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
-      expected_revision: 0,
+    expect(previewBrief).toHaveBeenCalledWith('chapter-production-1', {
       author_intent: '让主角用信息差救下父亲',
-      context_token_budget: 24000,
+      token_budget: 8000,
+      label: 'AI 章纲',
     })
     expect(startBrief).not.toHaveBeenCalled()
     expect(await screen.findByRole('heading', { name: '发送前确认' })).toBeVisible()
-    expect(screen.getByText('项目设定')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '确认外发并开始' }))
-    expect(startBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
-      expected_revision: 0,
+    expect(screen.getByText('已编译创作上下文')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '确认外发与费用，开始任务' }))
+    expect(startBrief).toHaveBeenCalledWith('chapter-production-1', expect.objectContaining({
       author_intent: '让主角用信息差救下父亲',
-      context_packet_id: '7e4dbbc5-af7d-40a5-a8ee-69322bc8b667',
-      context_token_budget: 24000,
+      context_packet_id: 'production-packet-1',
+      context_packet_sha256: 'd'.repeat(64),
+      confirm_external_processing: true,
+    }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('读者承诺')).toHaveValue(
+        proposedOutline.current_version.content.reader_promise,
+      )
     })
-    expect(await screen.findByText(proposal.why_this_works)).toBeVisible()
-    expect(screen.getByLabelText('章节标题')).toHaveValue(workspace.chapters[0].title)
-    await user.click(screen.getByRole('button', { name: '采用到章纲，继续确认' }))
+    expect(screen.getByLabelText('章节正文')).toHaveValue('')
+  })
 
-    expect(screen.getByLabelText('章节标题')).toHaveValue(proposal.title)
-    expect(screen.getByLabelText('读者承诺')).toHaveValue(proposal.reader_promise)
-    expect(screen.getByLabelText('情绪回报')).toHaveValue(proposal.emotional_payoff)
-    expect(screen.getByRole('button', { name: '保存章纲' })).toBeEnabled()
+  it('blocks model submission when the creative-context preflight is not ready', async () => {
+    vi.mocked(api.getAiStatus).mockResolvedValue({
+      configured: true,
+      provider: 'openai',
+      model: 'gpt-5.6',
+      key_source: 'session',
+      profile_id: null,
+      profile_name: null,
+    })
+    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
+    vi.spyOn(api, 'previewChapterProductionOutline').mockRejectedValue(
+      new ApiError('请先启用一份写作配方', 409, 'writing_pattern_profile_required'),
+    )
+    const start = vi.spyOn(api, 'startChapterProductionOutlineJob')
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
+    await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
+    await user.click(await screen.findByRole('button', { name: '生成本章候选' }))
+    await user.click(await within(screen.getByRole('dialog', { name: '本章候选生产台' })).findByRole('button', { name: '生成本章候选' }))
+
+    expect(await screen.findByText('缺少已启用的写作模式，请先完成写作配方。')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '发送前确认' })).not.toBeInTheDocument()
+    expect(start).not.toHaveBeenCalled()
   })
 
   it('creates and activates an OpenAI-compatible model route from the routing desk', async () => {
@@ -1084,7 +1206,7 @@ describe('App', () => {
     expect(route).toHaveValue(profile.id)
   })
 
-  it('keeps an AI-written full chapter isolated until the author applies it', async () => {
+  it('keeps an AI-written full chapter candidate isolated until the author adopts it', async () => {
     vi.mocked(api.getAiStatus).mockResolvedValue({
       configured: true,
       provider: 'openai',
@@ -1093,36 +1215,45 @@ describe('App', () => {
       profile_id: null,
       profile_name: null,
     })
-    vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
-    const candidate = '一九九八年的梅山坡还没有后来那排高楼。沈砚把停产名单压在桌上。'
-    const generatedRun: GenerationRun = {
-      id: '58463d2b-b298-45ca-a4d0-87af9f068bc6',
-      chapter_id: workspace.chapters[0].id,
-      state: 'drafted',
-      expected_chapter_revision: 0,
-      candidate_content: candidate,
-      error_message: null,
-      provider: 'openai',
-      model: 'gpt-5.6',
-      created_at: '2026-08-09T00:00:00Z',
-      updated_at: '2026-08-09T00:00:01Z',
+    const plannedChapter: Chapter = {
+      ...workspace.chapters[0],
+      reader_promise: '主角第一次改变家庭命运',
+      emotional_payoff: '父亲第一次选择相信主角',
     }
-    const draftJob = queuedJob('chapter_draft', workspace.chapters[0].id)
-    vi.spyOn(api, 'previewAiChapterDraft').mockResolvedValue({
-      task_type: 'chapter_draft',
-      profile_id: null,
-      profile_name: '当前会话线路',
-      provider: 'openai',
-      model: 'gpt-5.6',
-      data_types: ['项目设定', '本章章纲'],
-      content_scope: '第 1 章章纲及正式资料',
-      character_count: 2000,
-      estimated_input_tokens: 2200,
-      estimated_output_tokens: 3600,
-      estimated_cost_microusd: null,
-      context_packet: contextPacket('chapter_draft', 2200),
+    const draftWorkspace = { ...workspace, chapters: [plannedChapter] }
+    const outline = productionOutline(plannedChapter)
+    const candidateText = '一九九八年的梅山坡还没有后来那排高楼。沈砚把停产名单压在桌上。'
+    const generatedCandidate = productionCandidate(plannedChapter, candidateText)
+    vi.spyOn(api, 'createProject').mockResolvedValue(draftWorkspace)
+    vi.mocked(api.getCurrentChapterProduction).mockResolvedValue(
+      productionSnapshot(plannedChapter, { outline }),
+    )
+    vi.spyOn(api, 'checkChapterProductionPreflight').mockResolvedValue({
+      id: 'preflight-1',
+      production_id: 'chapter-production-1',
+      outline_candidate_id: outline.id,
+      outline_version_id: outline.current_version.id,
+      outline_revision: outline.current_version.revision,
+      outline_content_sha256: outline.current_version.content_sha256,
+      reader_promise: true,
+      opening_hook: true,
+      state_change: true,
+      emotional_payoff: true,
+      ending_cliffhanger: true,
+      missing_fields: [],
+      passed: true,
+      created_at: '2026-09-12T00:00:00Z',
     })
-    const startDraft = vi.spyOn(api, 'startAiChapterDraftJob').mockResolvedValue(draftJob)
+    vi.spyOn(api, 'previewChapterProductionDraft').mockResolvedValue({
+      ...productionPreview('draft'),
+      estimated_cost_microusd: null,
+    })
+    const draftJob: Job = {
+      ...queuedJob('chapter_draft', plannedChapter.id),
+      workflow: 'chapter_production_draft',
+      current_step: '等待生成正文候选',
+    }
+    const startDraft = vi.spyOn(api, 'startChapterProductionDraftJob').mockResolvedValue(draftJob)
     vi.spyOn(api, 'getJob').mockResolvedValue({
       ...draftJob,
       state: 'succeeded',
@@ -1134,10 +1265,38 @@ describe('App', () => {
       artifacts: [],
       events: [],
     })
-    vi.spyOn(api, 'getAiChapterDraftJobResult').mockResolvedValue(generatedRun)
-    vi.spyOn(api, 'applyGeneration').mockResolvedValue({
-      ...workspace.chapters[0],
-      content: candidate,
+    vi.spyOn(api, 'getChapterProductionDraftJobResult').mockResolvedValue(generatedCandidate)
+    vi.spyOn(api, 'getChapterProduction').mockResolvedValue(productionSnapshot(
+      plannedChapter,
+      { outline, candidate: generatedCandidate },
+    ))
+    vi.spyOn(api, 'adoptChapterProductionCandidate').mockResolvedValue({
+      id: 'writing-outcome-1',
+      production_id: 'chapter-production-1',
+      candidate_id: generatedCandidate.id,
+      candidate_version_id: generatedCandidate.current_version.id,
+      candidate_revision: generatedCandidate.current_version.revision,
+      candidate_content_sha256: generatedCandidate.current_version.content_sha256,
+      source_outline_candidate_id: outline.id,
+      source_outline_version_id: outline.current_version.id,
+      source_outline_revision: outline.current_version.revision,
+      source_outline_content_sha256: outline.current_version.content_sha256,
+      decision: 'adopted',
+      adoption_mode: 'whole',
+      base_chapter_revision: plannedChapter.revision,
+      base_chapter_content_sha256: 'c'.repeat(64),
+      final_chapter_revision: 1,
+      final_chapter_content_sha256: 'f'.repeat(64),
+      final_chapter_status: 'drafted',
+      chapter_version_id: 'chapter-version-1',
+      adoption_detail: { mode: 'whole' },
+      idempotency_key: 'writing-outcome-key',
+      reason: '',
+      created_at: '2026-09-12T00:00:00Z',
+    })
+    vi.mocked(api.getChapter).mockResolvedValue({
+      ...plannedChapter,
+      content: candidateText,
       status: 'drafted',
       revision: 1,
     })
@@ -1146,21 +1305,22 @@ describe('App', () => {
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
 
-    await user.click(await screen.findByRole('button', { name: 'AI 写完整章节' }))
+    await user.click(await screen.findByRole('button', { name: '生成本章候选' }))
+    await user.click(await within(screen.getByRole('dialog', { name: '本章候选生产台' })).findByRole('button', { name: '生成本章候选' }))
 
     expect(startDraft).not.toHaveBeenCalled()
-    expect(await screen.findByText('线路未填写价格')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '确认外发并开始' }))
-    expect(startDraft).toHaveBeenCalledWith(workspace.chapters[0].id, {
-      expected_revision: 0,
-      author_intent: '',
-      context_packet_id: '3a1e84a4-350f-4fb5-afdf-af8551e11187',
-      context_token_budget: 24000,
-    })
-    expect(await screen.findByText(candidate)).toBeVisible()
+    expect(await screen.findByText('当前线路未配置价格')).toBeVisible()
+    await user.click(screen.getByRole('checkbox', { name: '我知道该线路费用未知，仍要启动这一次' }))
+    await user.click(screen.getByRole('button', { name: '确认外发与费用，开始任务' }))
+    expect(startDraft).toHaveBeenCalledWith('chapter-production-1', expect.objectContaining({
+      outline_candidate_id: outline.id,
+      confirm_external_processing: true,
+      confirm_unknown_cost: true,
+    }))
+    expect(await screen.findByRole('textbox', { name: '编辑正面交锋版候选副本' })).toHaveValue(candidateText)
     expect(screen.getByLabelText('章节正文')).toHaveValue('')
-    await user.click(screen.getByRole('button', { name: '采用并写入编辑器' }))
-    expect(screen.getByLabelText('章节正文')).toHaveValue(candidate)
+    await user.click(screen.getByRole('button', { name: '确认采用这份候选' }))
+    await waitFor(() => expect(screen.getByLabelText('章节正文')).toHaveValue(candidateText))
   })
 
   it('adds evidence to the original timeline without changing the novel timeline', async () => {
@@ -1530,10 +1690,11 @@ describe('App', () => {
     expect(screen.getByText(/排队中 · 0\/1/)).toBeVisible()
   })
 
-  it('views an immutable artifact and adopts a brief from the task center', async () => {
+  it('views an immutable artifact and returns chapter work to the unified production desk', async () => {
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     const completedJob: Job = {
       ...queuedJob('chapter_brief', workspace.chapters[0].id),
+      workflow: 'chapter_production_outline',
       state: 'succeeded',
       progress_current: 1,
       completed_calls: 1,
@@ -1562,24 +1723,11 @@ describe('App', () => {
       ...artifact,
       payload: '{"title":"第一章 名单之前"}',
     })
-    const proposal = {
-      title: '第一章 名单之前',
-      reader_promise: '主角第一次改变家庭命运',
-      opening_hook: '停产名单比记忆中提前贴出',
-      state_change: '主角让父亲避开首轮裁员',
-      emotional_payoff: '父亲保住岗位却开始怀疑儿子',
-      ending_cliffhanger: '厂长拿出一张不该存在的旧照片',
-      why_this_works: '信息差立即转化为行动和家庭回报。',
-      risk_notes: [],
-    }
-    vi.spyOn(api, 'getAiChapterBriefJobResult').mockResolvedValue(proposal)
-    const adoptedChapter = {
-      ...workspace.chapters[0],
-      ...proposal,
-      revision: 1,
-    }
-    const updateBrief = vi.spyOn(api, 'updateChapterBrief').mockResolvedValue(adoptedChapter)
-    vi.mocked(api.getChapter).mockResolvedValue(adoptedChapter)
+    const outline = productionOutline(workspace.chapters[0])
+    vi.mocked(api.getCurrentChapterProduction).mockResolvedValue(
+      productionSnapshot(workspace.chapters[0], { outline }),
+    )
+    const legacyUpdate = vi.spyOn(api, 'updateChapterBrief')
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
@@ -1589,22 +1737,10 @@ describe('App', () => {
     await user.click(await screen.findByText('章节候选已生成'))
     await user.click(await screen.findByRole('button', { name: 'chapter_brief · aaaaaaaa' }))
     expect(await screen.findByText('{"title":"第一章 名单之前"}')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '继续采用' }))
-    expect(await screen.findByRole('heading', { name: proposal.title })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '确认并保存为章纲' }))
-
-    expect(updateBrief).toHaveBeenCalledWith(workspace.chapters[0].id, {
-      title: proposal.title,
-      reader_promise: proposal.reader_promise,
-      opening_hook: proposal.opening_hook,
-      state_change: proposal.state_change,
-      emotional_payoff: proposal.emotional_payoff,
-      ending_cliffhanger: proposal.ending_cliffhanger,
-      expected_revision: workspace.chapters[0].revision,
-    })
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: proposal.title })).toBeVisible()
-    })
+    await user.click(screen.getByRole('button', { name: '回到单章生产台' }))
+    expect(await screen.findByRole('dialog', { name: '本章候选生产台' })).toBeVisible()
+    expect(await screen.findByLabelText('开篇钩子')).toHaveValue(outline.current_version.content.opening_hook)
+    expect(legacyUpdate).not.toHaveBeenCalled()
   })
 
   it('blocks an old chapter draft in the task center and returns to the writing workspace', async () => {
@@ -1619,27 +1755,21 @@ describe('App', () => {
     }
     const completedJob: Job = {
       ...queuedJob('chapter_draft', currentWorkspace.chapters[0].id),
+      workflow: 'chapter_production_draft',
       state: 'succeeded',
       progress_current: 1,
       completed_calls: 1,
       current_step: '章节候选已生成',
     }
-    const oldRun: GenerationRun = {
-      id: '410c4506-c3b4-4f65-aabf-51ad9a17fb89',
-      chapter_id: currentWorkspace.chapters[0].id,
-      state: 'drafted',
-      expected_chapter_revision: 1,
-      candidate_content: '旧版本候选正文。',
-      error_message: null,
-      provider: 'openai',
-      model: 'gpt-5.6',
-      created_at: '2026-09-11T00:00:00Z',
-      updated_at: '2026-09-11T00:00:01Z',
-    }
+    const oldCandidate = productionCandidate(currentWorkspace.chapters[0], '旧版本候选正文。')
+    const outline = productionOutline(currentWorkspace.chapters[0])
     vi.spyOn(api, 'createProject').mockResolvedValue(currentWorkspace)
     vi.mocked(api.listJobs).mockResolvedValue([completedJob])
     vi.spyOn(api, 'getJob').mockResolvedValue(jobDetail(completedJob))
-    vi.spyOn(api, 'getAiChapterDraftJobResult').mockResolvedValue(oldRun)
+    vi.mocked(api.getCurrentChapterProduction).mockResolvedValue(productionSnapshot(
+      currentWorkspace.chapters[0],
+      { outline, candidate: oldCandidate, baseRevision: 1 },
+    ))
     const applyGeneration = vi.spyOn(api, 'applyGeneration')
     const user = userEvent.setup()
     render(<App />)
@@ -1647,58 +1777,51 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
 
     await user.click(screen.getByRole('button', { name: '打开任务中心' }))
-    await user.click(await screen.findByRole('button', { name: '继续采用' }))
+    await user.click(await screen.findByRole('button', { name: '回到单章生产台' }))
 
-    expect(await screen.findByText('候选基于旧版本')).toBeVisible()
-    expect(screen.getByRole('button', { name: '确认并写入正文' })).toBeDisabled()
+    expect(await screen.findByText('候选基于旧版本，作者编辑已保留。')).toBeVisible()
+    expect(screen.getByRole('button', { name: '确认采用这份候选' })).toBeDisabled()
     expect(applyGeneration).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole('button', { name: '返回创作台重新生成' }))
-    expect(screen.queryByRole('dialog', { name: '任务中心' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('章节正文')).toHaveValue('作者已经修改的正文。')
   })
 
-  it('turns an apply conflict into a recoverable stale candidate in the task center', async () => {
+  it('keeps a chapter-production candidate recoverable when adoption hits a revision conflict', async () => {
     const completedJob: Job = {
       ...queuedJob('chapter_draft', workspace.chapters[0].id),
+      workflow: 'chapter_production_draft',
       state: 'succeeded',
       progress_current: 1,
       completed_calls: 1,
       current_step: '章节候选已生成',
     }
-    const generatedRun: GenerationRun = {
-      id: '594f9bcc-fab3-47cf-a8f0-54cb7e2e90d9',
-      chapter_id: workspace.chapters[0].id,
-      state: 'drafted',
-      expected_chapter_revision: workspace.chapters[0].revision,
-      candidate_content: '提交采用时才发现过期的候选。',
-      error_message: null,
-      provider: 'openai',
-      model: 'gpt-5.6',
-      created_at: '2026-09-11T00:00:00Z',
-      updated_at: '2026-09-11T00:00:01Z',
-    }
+    const generatedCandidate = productionCandidate(
+      workspace.chapters[0],
+      '提交采用时才发现过期的候选。',
+    )
+    const outline = productionOutline(workspace.chapters[0])
     vi.spyOn(api, 'createProject').mockResolvedValue(workspace)
     vi.mocked(api.listJobs).mockResolvedValue([completedJob])
     vi.spyOn(api, 'getJob').mockResolvedValue(jobDetail(completedJob))
-    vi.spyOn(api, 'getAiChapterDraftJobResult').mockResolvedValue(generatedRun)
-    const applyGeneration = vi.spyOn(api, 'applyGeneration').mockRejectedValue(
-      new ApiError('generation_revision_conflict', 409),
+    vi.mocked(api.getCurrentChapterProduction).mockResolvedValue(productionSnapshot(
+      workspace.chapters[0],
+      { outline, candidate: generatedCandidate },
+    ))
+    const adopt = vi.spyOn(api, 'adoptChapterProductionCandidate').mockRejectedValue(
+      new ApiError('正式正文已变更', 409, 'chapter_changed'),
     )
     const user = userEvent.setup()
     render(<App />)
     await user.type(await screen.findByLabelText('作品名'), workspace.project.title)
     await user.click(screen.getByRole('button', { name: '创建作品并进入工作台' }))
     await user.click(screen.getByRole('button', { name: '打开任务中心' }))
-    await user.click(await screen.findByRole('button', { name: '继续采用' }))
+    await user.click(await screen.findByRole('button', { name: '回到单章生产台' }))
+    await user.click(await screen.findByRole('button', { name: '确认采用这份候选' }))
 
-    await user.click(await screen.findByRole('button', { name: '确认并写入正文' }))
-
-    expect(applyGeneration).toHaveBeenCalledWith(generatedRun.id, workspace.chapters[0].revision)
-    expect(await screen.findByText('候选基于旧版本')).toBeVisible()
-    expect(screen.getByRole('button', { name: '确认并写入正文' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: '关闭此候选' }))
-    expect(screen.queryByText(generatedRun.candidate_content!)).not.toBeInTheDocument()
+    expect(adopt).toHaveBeenCalledOnce()
+    expect(await screen.findByText('正式正文已变更；候选编辑已保留，请刷新后重新检查。')).toBeVisible()
+    expect(screen.getByRole('textbox', { name: '编辑正面交锋版候选副本' })).toHaveValue(
+      generatedCandidate.current_version.content,
+    )
   })
 
   it('imports another reference work, keeps raw analysis single-book, and preserves old v1 cards', async () => {

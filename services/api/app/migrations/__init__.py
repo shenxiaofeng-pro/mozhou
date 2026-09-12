@@ -31,6 +31,8 @@ from app.migrations import (
     v26,
     v27,
     v28,
+    v29,
+    v30,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -95,6 +97,16 @@ MIGRATIONS = (
         version=28,
         name="pattern_adaptation_job_routing",
         upgrade=v28.upgrade,
+    ),
+    Migration(
+        version=29,
+        name="unified_creative_context_and_plan_rebase",
+        upgrade=v29.upgrade,
+    ),
+    Migration(
+        version=30,
+        name="chapter_production_workbench",
+        upgrade=v30.upgrade,
     ),
 )
 

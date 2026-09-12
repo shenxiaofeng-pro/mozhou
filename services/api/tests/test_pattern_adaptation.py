@@ -467,7 +467,7 @@ def test_full_pattern_adaptation_job_adopt_and_guard_journey(tmp_path: Path) -> 
             params={"include_reference_assets": "true"},
         )
         assert archived.status_code == 200, archived.text
-        assert archived.json()["format_version"] == 15
+        assert archived.json()["format_version"] == 17
         restored = client.post(
             "/api/project-imports",
             content=json.dumps(archived.json(), ensure_ascii=False).encode(),

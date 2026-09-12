@@ -10,6 +10,11 @@ from app.context import (
     ContextPacketNotFoundError,
     ContextRepository,
     ContextTaskType,
+    CreativeContextCompileRequest,
+    CreativeContextPurpose,
+    CreativeContextService,
+    CreativeContextSubject,
+    CreativeContextSubjectKind,
     InvalidContextPacketError,
 )
 from app.models import (
@@ -194,6 +199,8 @@ class StreamingDraftGateway(Protocol):
 
 @runtime_checkable
 class CompiledContextGateway(Protocol):
+    def status(self) -> AiStatus: ...
+
     def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal: ...
 
     def draft_chapter_from_context(self, context_text: str) -> str: ...
@@ -206,6 +213,18 @@ class StreamingCompiledContextGateway(Protocol):
         context_text: str,
         on_delta: Callable[[str], None],
     ) -> str: ...
+
+
+def require_compiled_context_gateway(gateway: AiGateway) -> CompiledContextGateway:
+    """Reject gateways that cannot consume the audited CreativeContext payload."""
+    if not isinstance(gateway, CompiledContextGateway):
+        raise AiProviderError(
+            "AI 线路不支持统一创作上下文",
+            category=AiErrorCategory.UNSUPPORTED_CAPABILITY,
+            safe_message="当前模型线路不支持安全创作上下文，未调用模型",
+            retryable=False,
+        )
+    return gateway
 
 
 def consume_ai_call_metrics(gateway: AiGateway) -> ProviderCallMetrics | None:
@@ -385,8 +404,12 @@ class OpenAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> AiChapterBriefProposal:
-        return self.propose_brief_from_context(
-            build_chapter_context(workspace, chapter, author_intent)
+        del workspace, chapter, author_intent
+        raise AiProviderError(
+            "禁止跳过统一创作上下文",
+            category=AiErrorCategory.UNSUPPORTED_CAPABILITY,
+            safe_message="请通过上下文预检后再提交生成",
+            retryable=False,
         )
 
     def propose_brief_from_context(self, context_text: str) -> AiChapterBriefProposal:
@@ -413,8 +436,12 @@ class OpenAiGateway:
         chapter: Chapter,
         author_intent: str,
     ) -> str:
-        return self.draft_chapter_from_context(
-            build_chapter_context(workspace, chapter, author_intent)
+        del workspace, chapter, author_intent
+        raise AiProviderError(
+            "禁止跳过统一创作上下文",
+            category=AiErrorCategory.UNSUPPORTED_CAPABILITY,
+            safe_message="请通过上下文预检后再提交生成",
+            retryable=False,
         )
 
     def draft_chapter_from_context(self, context_text: str) -> str:
@@ -443,9 +470,12 @@ class OpenAiGateway:
         author_intent: str,
         on_delta: Callable[[str], None],
     ) -> str:
-        return self.draft_chapter_streaming_from_context(
-            build_chapter_context(workspace, chapter, author_intent),
-            on_delta,
+        del workspace, chapter, author_intent, on_delta
+        raise AiProviderError(
+            "禁止跳过统一创作上下文",
+            category=AiErrorCategory.UNSUPPORTED_CAPABILITY,
+            safe_message="请通过上下文预检后再提交生成",
+            retryable=False,
         )
 
     def draft_chapter_streaming_from_context(
@@ -979,11 +1009,17 @@ class AiWritingService:
         manager: AiGatewayManager,
         contexts: ContextRepository | None = None,
         compiler: ContextCompiler | None = None,
+        creative_context: CreativeContextService | None = None,
     ) -> None:
         self.repository = repository
         self.manager = manager
         self.contexts = contexts or ContextRepository(repository.database)
         self.compiler = compiler or ContextCompiler()
+        self.creative_context = creative_context or CreativeContextService(
+            repository,
+            self.contexts,
+            compiler=self.compiler,
+        )
 
     def propose_brief(
         self,
@@ -997,12 +1033,8 @@ class AiWritingService:
             request,
             ContextTaskType.CHAPTER_BRIEF,
         )
-        gateway = self.manager.gateway()
-        return (
-            gateway.propose_brief_from_context(packet.rendered_context)
-            if isinstance(gateway, CompiledContextGateway)
-            else gateway.propose_brief(workspace, chapter, request.author_intent)
-        )
+        gateway = require_compiled_context_gateway(self.manager.gateway())
+        return gateway.propose_brief_from_context(packet.rendered_context)
 
     def generate_draft(self, chapter_id: str, request: AiDraftRequest) -> GenerationRun:
         workspace, chapter = self._load_chapter(chapter_id, request.expected_revision)
@@ -1017,7 +1049,7 @@ class AiWritingService:
             request,
             ContextTaskType.CHAPTER_DRAFT,
         )
-        gateway = self.manager.gateway()
+        gateway = require_compiled_context_gateway(self.manager.gateway())
         status = gateway.status()
         if not status.configured:
             raise AiNotConfiguredError
@@ -1034,11 +1066,7 @@ class AiWritingService:
         )
         try:
             self.repository.require_generation_run_creative_safety(run.id)
-            candidate = (
-                gateway.draft_chapter_from_context(packet.rendered_context)
-                if isinstance(gateway, CompiledContextGateway)
-                else gateway.draft_chapter(workspace, chapter, request.author_intent)
-            )
+            candidate = gateway.draft_chapter_from_context(packet.rendered_context)
         except (AiNotConfiguredError, AiProviderError, OriginalityGateBlockedError):
             self.repository.transition_generation(
                 run.id,
@@ -1061,22 +1089,32 @@ class AiWritingService:
         request: AiChapterBriefRequest,
         task_type: ContextTaskType,
     ) -> ContextPacket:
-        compiled = self.compiler.compile(
+        compiled = self.creative_context.compile(
             workspace,
-            chapter,
-            author_intent=request.author_intent,
-            task_type=task_type,
-            token_budget=request.context_token_budget,
-            directives=self.contexts.list_directives(chapter.id),
+            CreativeContextCompileRequest(
+                purpose=(
+                    CreativeContextPurpose.BRIEF
+                    if task_type == ContextTaskType.CHAPTER_BRIEF
+                    else CreativeContextPurpose.DRAFT
+                ),
+                subject=CreativeContextSubject(
+                    kind=CreativeContextSubjectKind.CHAPTER,
+                    id=chapter.id,
+                    revision=chapter.revision,
+                ),
+                author_intent=request.author_intent,
+                token_budget=request.context_token_budget,
+            ),
         )
         if request.context_packet_id is None:
-            return self.contexts.put_packet(compiled)
+            return self.creative_context.require_current(compiled)
         try:
             previewed = self.contexts.get_packet(request.context_packet_id)
         except ContextPacketNotFoundError as error:
             raise InvalidContextPacketError("context_packet_not_found") from error
         if previewed.id != compiled.id or previewed.packet_sha256 != compiled.packet_sha256:
             raise InvalidContextPacketError("context_packet_changed")
+        self.creative_context.require_current(previewed)
         return previewed
 
     def _load_chapter(self, chapter_id: str, expected_revision: int) -> tuple[Workspace, Chapter]:

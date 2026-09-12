@@ -657,12 +657,12 @@ def test_reference_application_lifecycle_archives_and_reactivates_passed_bluepri
     assert archived.json()["lifecycle_state"] == "archived"
     assert archived.json()["lifecycle_revision"] == 1
     assert archived.json()["revision"] == 0
-    assert sync_unblocked.status_code == 200
+    assert sync_unblocked.status_code == 410
     assert preview_unblocked.status_code == 200
     assert director_unblocked.status_code == 200
     assert legacy_context["applied_reference_patterns"] == []
     assert all(item.kind != ContextItemKind.APPROVED_BLUEPRINT for item in packet.items)
-    assert archive["format_version"] == 15
+    assert archive["format_version"] == 17
     assert archive["tables"]["reference_pattern_applications"][0][
         "lifecycle_state"
     ] == "archived"
@@ -869,11 +869,11 @@ def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
         item["evidence_sha256"] and "密钥" not in item["summary"]
         for item in report.json()["evidence"]
     )
+    assert sync_blocked.status_code == 410
+    assert draft_sync_blocked.status_code == 410
     assert {
-        sync_blocked.status_code,
         preview_blocked.status_code,
         job_blocked.status_code,
-        draft_sync_blocked.status_code,
         draft_preview_blocked.status_code,
         draft_job_blocked.status_code,
     } == {409}

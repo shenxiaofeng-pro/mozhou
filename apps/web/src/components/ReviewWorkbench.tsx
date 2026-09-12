@@ -9,9 +9,11 @@ import type {
   ReviewOutboundPreview,
   TextChangeSet,
 } from '@mozhou/contracts'
+import { creativeContextCanSubmit } from '@mozhou/contracts'
 import { useEffect, useMemo, useState } from 'react'
 
 import { api } from '../api'
+import { ContextPacketPanel } from './ContextPacketPanel'
 
 interface ReviewWorkbenchProps {
   chapter: Chapter
@@ -190,6 +192,8 @@ export function ReviewWorkbench({
 
   async function startReview() {
     if (!preview) return
+    const contextPacket = preview.context_packet
+    if (contextPacket && !creativeContextCanSubmit(contextPacket)) return
     setBusy(true)
     setError(null)
     try {
@@ -254,6 +258,10 @@ export function ReviewWorkbench({
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
     ))
   }
+
+  const previewContextPacket = preview
+    ? preview.context_packet
+    : null
 
   async function applyChangeSet() {
     if (!activeChangeSet || !selectedChangeIds.length) return
@@ -391,9 +399,15 @@ export function ReviewWorkbench({
                 外发：{preview.external_dimensions.map((item) => dimensionLabels[item]).join('、') || '无'}。
                 审校只生成问题与候选修改，不直接改正文或 Canon。
               </small>
+              {previewContextPacket ? <ContextPacketPanel packet={previewContextPacket} /> : null}
               <div className="review-actions">
                 <button type="button" onClick={() => setPreview(null)}>返回调整</button>
-                <button className="review-primary" type="button" disabled={busy || running} onClick={() => { void startReview() }}>
+                <button
+                  className="review-primary"
+                  type="button"
+                  disabled={busy || running || Boolean(previewContextPacket && !creativeContextCanSubmit(previewContextPacket))}
+                  onClick={() => { void startReview() }}
+                >
                   确认范围并开始审校
                 </button>
               </div>

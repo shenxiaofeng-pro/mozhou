@@ -19,7 +19,6 @@ from starlette.responses import Response
 from app.ai import (
     AiGatewayManager,
     AiNotConfiguredError,
-    AiProviderError,
     AiWritingService,
     ReferenceAnalysisService,
 )
@@ -52,6 +51,9 @@ from app.beta import (
     CreateBetaFeedbackRequest,
 )
 from app.chapter_jobs import ChapterJobService
+from app.chapter_production.repository import ChapterProductionRepository
+from app.chapter_production.routes import chapter_production_router
+from app.chapter_production.service import ChapterProductionService
 from app.comic_drama import (
     AdoptComicSeasonRequest,
     ComicAiPreview,
@@ -77,10 +79,14 @@ from app.context import (
     ContextDirectiveRequest,
     ContextPacket,
     ContextRepository,
+    CreativeContextService,
     InvalidContextDirectiveError,
     InvalidContextPacketError,
     StaleContextDirectiveError,
 )
+from app.context.plan_repository import PlanRebaseRepository
+from app.context.plan_routes import plan_rebase_router
+from app.context.routes import creative_context_router
 from app.craft_patterns import (
     CraftPatternRepository,
     CraftPatternService,
@@ -369,6 +375,10 @@ def create_app(
         application.state.serial_service = SerialService(database)
         application.state.model_profiles = ModelProfileRepository(database)
         application.state.context_repository = ContextRepository(database)
+        application.state.creative_context_service = CreativeContextService(
+            application.state.repository,
+            application.state.context_repository,
+        )
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
         application.state.sandbox_ai_service = SandboxAiService(
@@ -410,6 +420,19 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
             application.state.context_repository,
+            creative_context=application.state.creative_context_service,
+        )
+        application.state.chapter_production_repository = ChapterProductionRepository(
+            database
+        )
+        application.state.chapter_production_service = ChapterProductionService(
+            application.state.repository,
+            application.state.chapter_production_repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+            application.state.context_repository,
+            application.state.creative_context_service,
         )
         application.state.director_service = DirectorService(
             application.state.repository,
@@ -418,6 +441,7 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
             application.state.context_repository,
+            creative_context=application.state.creative_context_service,
         )
         application.state.topic_decision_service = TopicDecisionService(
             database,
@@ -435,6 +459,13 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
             application.state.topic_decision_service,
+        )
+        application.state.plan_rebase_service = PlanRebaseRepository(
+            database,
+            application.state.pattern_adaptation_service,
+        )
+        application.state.director_service.plan_rebase = (
+            application.state.plan_rebase_service
         )
         application.state.repository.set_creative_safety_gate(
             application.state.pattern_adaptation_service
@@ -455,10 +486,14 @@ def create_app(
             application.state.job_repository,
             application.state.ai_manager,
             application.state.model_profiles,
+            application.state.context_repository,
+            application.state.creative_context_service,
         )
 
         def handle_review_job(context: JobExecutionContext, job: Job) -> None:
-            if job.workflow == REVIEW_WORKFLOW:
+            if application.state.chapter_production_service.handles(job):
+                application.state.chapter_production_service.handle(context, job)
+            elif job.workflow == REVIEW_WORKFLOW:
                 application.state.review_service.handle(context, job)
             else:
                 if job.workflow == "director_startup":
@@ -482,12 +517,24 @@ def create_app(
             else:
                 application.state.reference_job_service.handle(context, job)
 
+        def handle_chapter_brief_job(context: JobExecutionContext, job: Job) -> None:
+            if application.state.chapter_production_service.handles(job):
+                application.state.chapter_production_service.handle(context, job)
+            else:
+                application.state.chapter_job_service.handle_brief(context, job)
+
+        def handle_chapter_draft_job(context: JobExecutionContext, job: Job) -> None:
+            if application.state.chapter_production_service.handles(job):
+                application.state.chapter_production_service.handle(context, job)
+            else:
+                application.state.chapter_job_service.handle_draft(context, job)
+
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
             {
                 JobKind.REFERENCE_FUSION: handle_reference_job,
-                JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
-                JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
+                JobKind.CHAPTER_BRIEF: handle_chapter_brief_job,
+                JobKind.CHAPTER_DRAFT: handle_chapter_draft_job,
                 JobKind.REVIEW: handle_review_job,
                 JobKind.SANDBOX_AI_ROUND: application.state.sandbox_ai_service.handle,
                 JobKind.RESEARCH_EXTRACTION: application.state.research_service.handle,
@@ -517,6 +564,9 @@ def create_app(
     )
     application.include_router(writing_pattern_router)
     application.include_router(pattern_adaptation_router)
+    application.include_router(creative_context_router)
+    application.include_router(plan_rebase_router)
+    application.include_router(chapter_production_router)
 
     @application.exception_handler(OriginalityGateBlockedError)
     async def creative_safety_gate_error(
@@ -1448,24 +1498,12 @@ def create_app(
     def propose_ai_chapter_brief(
         chapter_id: UUID,
         body: AiChapterBriefRequest,
-        service: Annotated[AiWritingService, Depends(get_ai_writing_service)],
     ) -> AiChapterBriefProposal:
-        try:
-            return service.propose_brief(str(chapter_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="章节不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="章节已有新版本，请重新生成章纲") from error
-        except InvalidChapterStateError as error:
-            raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
-        except OriginalityGateBlockedError as error:
-            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
-        except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
-        except InvalidContextPacketError as error:
-            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
-        except AiProviderError as error:
-            raise HTTPException(status_code=502, detail="AI 暂时未能生成可用章纲") from error
+        del chapter_id, body
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="该同步入口已停用，请先预览上下文与费用，再提交章纲任务",
+        )
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-brief-preview",
@@ -1539,24 +1577,12 @@ def create_app(
     def generate_ai_chapter_draft(
         chapter_id: UUID,
         body: AiDraftRequest,
-        service: Annotated[AiWritingService, Depends(get_ai_writing_service)],
     ) -> GenerationRun:
-        try:
-            return service.generate_draft(str(chapter_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="章节不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="章节已有新版本，请重新生成正文") from error
-        except InvalidChapterStateError as error:
-            raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
-        except OriginalityGateBlockedError as error:
-            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
-        except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
-        except InvalidContextPacketError as error:
-            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
-        except AiProviderError as error:
-            raise HTTPException(status_code=502, detail="AI 暂时未能生成可用正文") from error
+        del chapter_id, body
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="该同步入口已停用，请先预览上下文与费用，再提交正文任务",
+        )
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-draft-preview",
@@ -4123,6 +4149,7 @@ def get_ai_writing_service(request: Request) -> AiWritingService:
         get_repository(request),
         get_ai_manager(request),
         get_context_repository(request),
+        creative_context=request.app.state.creative_context_service,
     )
 
 

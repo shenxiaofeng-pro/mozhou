@@ -838,7 +838,7 @@ def test_global_recipe_and_active_profile_round_trip_without_raw_source(
         exported = client.get(f"/api/projects/{target_id}/export")
         assert exported.status_code == 200, exported.text
         archive = exported.json()
-        assert archive["format_version"] == 15
+        assert archive["format_version"] == 17
         assert archive["tables"]["reference_works"] == []
         assert len(archive["tables"]["craft_pattern_assets"]) == 1
         assert len(archive["tables"]["writing_pattern_recipes"]) == 1

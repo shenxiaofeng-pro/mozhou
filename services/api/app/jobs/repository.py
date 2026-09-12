@@ -344,7 +344,14 @@ class JobRepository:
         if (
             (
                 job.workflow
-                in {"craft_pattern_analysis_v2", "craft_pattern_fusion_v2"}
+                in {
+                    "craft_pattern_analysis_v2",
+                    "craft_pattern_fusion_v2",
+                    "chapter_production_outline",
+                    "chapter_production_draft",
+                    "chapter_production_rewrite",
+                    "chapter_production_review",
+                }
                 and job.error_code == "restored_requires_resubmission"
             )
             or (job.kind == JobKind.REFERENCE_FUSION and not job.workflow)
