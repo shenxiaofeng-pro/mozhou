@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -1106,7 +1107,7 @@ def test_v18_migration_blocks_legacy_application_until_scene_check_runs(
         )
         assert passed.originality_status.value == "passed"
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute("DELETE FROM scene_originality_checks")
         connection.execute(
             "UPDATE originality_reports SET acknowledged_at = NULL WHERE id = ?",
@@ -1118,7 +1119,7 @@ def test_v18_migration_blocks_legacy_application_until_scene_check_runs(
 
     Database(database_path).initialize()
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         migrated_status = connection.execute(
             "SELECT originality_status FROM reference_pattern_applications WHERE id = ?",
             (application["id"],),

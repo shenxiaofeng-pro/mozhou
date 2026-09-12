@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -143,7 +144,7 @@ def _replace_context_packets_with_v28_schema(
     *,
     packet: dict[str, object],
 ) -> None:
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=OFF")
         connection.executescript(
             """

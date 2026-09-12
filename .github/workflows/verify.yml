@@ -19,11 +19,17 @@ jobs:
   quality:
     name: quality (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-2022]
+        include:
+          - os: macos-14
+            pytest_addopts: ""
+          - os: windows-2022
+            pytest_addopts: "-n 4 --dist=loadfile --tb=short --durations=20"
+    env:
+      PYTEST_ADDOPTS: ${{ matrix.pytest_addopts }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -68,7 +74,7 @@ jobs:
           pnpm audit --audit-level high
       - name: Audit Python dependencies
         run: |
-          uv export --project services/api --frozen --no-dev --format requirements-txt --output-file python-requirements.txt
+          uv export --project services/api --frozen --all-groups --no-emit-project --format requirements-txt --output-file python-requirements.txt
           uvx pip-audit --requirement python-requirements.txt
       - name: Audit Rust dependencies
         uses: rustsec/audit-check@v2
