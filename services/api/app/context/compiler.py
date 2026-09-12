@@ -5,6 +5,7 @@ from hashlib import sha256
 from uuid import NAMESPACE_URL, uuid5
 
 from app.context.models import (
+    ContextDependencySnapshot,
     ContextDirective,
     ContextDirectiveAction,
     ContextItem,
@@ -14,17 +15,23 @@ from app.context.models import (
     ContextTaskType,
     ContextTier,
     ContextTierUsage,
+    CreativeContextPurpose,
+    CreativeContextSubject,
+    CreativeContextSubjectKind,
 )
 from app.models import (
     Chapter,
     KnowledgeStatus,
     OriginalityStatus,
+    ReferenceApplicationLifecycleState,
     StoryThreadStatus,
     TimelineLayer,
+    TopicDecisionStatus,
     Workspace,
+    is_rebirth_genre,
 )
 
-CONTEXT_COMPILER_VERSION = "rule-compiler-v2"
+CONTEXT_COMPILER_VERSION = "rule-compiler-v3"
 
 TIER_ORDER = (
     ContextTier.HARD_CONSTRAINT,
@@ -233,12 +240,29 @@ class ContextCompiler:
         }
         packet_sha256 = _sha256(_canonical_json(hash_payload))
         packet_id = str(uuid5(NAMESPACE_URL, f"mozhou:context:{packet_sha256}"))
+        subject_sha256 = _sha256(_canonical_json(chapter.model_dump(mode="json")))
+        dependency_snapshot = ContextDependencySnapshot(subject_sha256=subject_sha256)
         return ContextPacket(
             id=packet_id,
             project_id=workspace.project.id,
             chapter_id=chapter.id,
             chapter_revision=chapter.revision,
             task_type=task_type,
+            purpose=(
+                CreativeContextPurpose.BRIEF
+                if task_type == ContextTaskType.CHAPTER_BRIEF
+                else CreativeContextPurpose.DRAFT
+            ),
+            subject=CreativeContextSubject(
+                kind=CreativeContextSubjectKind.CHAPTER,
+                id=chapter.id,
+                revision=chapter.revision,
+                content_sha256=subject_sha256,
+            ),
+            dependency_snapshot=dependency_snapshot,
+            dependency_fingerprint_sha256=_sha256(
+                _canonical_json(dependency_snapshot.canonical_payload())
+            ),
             compiler_version=self.compiler_version,
             token_budget=token_budget,
             used_tokens=used_tokens,
@@ -313,11 +337,15 @@ class ContextCompiler:
                     item_id=f"hard:project:{project.id}",
                     kind=ContextItemKind.PROJECT_ANCHOR,
                     tier=ContextTier.HARD_CONSTRAINT,
-                    label="作品与重生锚点",
+                    label=(
+                        "作品与重生锚点"
+                        if is_rebirth_genre(project.genre)
+                        else "作品与世界锚点"
+                    ),
                     content=_canonical_json(project.model_dump(mode="json")),
                     priority=9_990,
                     required=True,
-                    reason="题材、年代、地点和篇幅目标是本章硬约束",
+                    reason="题材、故事纪年、起始地域和篇幅目标是本章硬约束",
                     source_kind="project",
                     source_id=project.id,
                     source_label=project.title,
@@ -354,6 +382,40 @@ class ContextCompiler:
                 ),
             )
         )
+
+        topic = workspace.topic_decision
+        if (
+            topic is not None
+            and topic.status == TopicDecisionStatus.CONFIRMED
+            and topic.confirmed_revision == topic.revision
+        ):
+            topic_content = topic.content.model_dump(mode="json")
+            content_sha256 = _sha256(_canonical_json(topic_content))
+            candidates.append(
+                self._candidate(
+                    item_id=f"hard:topic-decision:{topic.id}:v{topic.revision}",
+                    kind=ContextItemKind.PROJECT_ANCHOR,
+                    tier=ContextTier.HARD_CONSTRAINT,
+                    label=f"已确认选题 v{topic.revision}",
+                    content=_canonical_json(
+                        {
+                            "revision": topic.revision,
+                            "content_sha256": content_sha256,
+                            "content": topic_content,
+                            "locked_fields": sorted(
+                                field.value for field, locked in topic.locks.items() if locked
+                            ),
+                        }
+                    ),
+                    priority=9_985,
+                    required=True,
+                    reason="只有作者已确认的当前选题才能约束本章写作",
+                    source_kind="topic_decision",
+                    source_id=topic.id,
+                    source_label=f"选题确认版 v{topic.revision}",
+                    updated_at=topic.updated_at,
+                )
+            )
 
         if workspace.book_blueprint is not None:
             book_blueprint = workspace.book_blueprint
@@ -681,7 +743,7 @@ class ContextCompiler:
                     priority=6_000 + (1_500 if relevant else 0),
                     required=is_valid and relevant,
                     reason=(
-                        "有效未来知识命中当前参与实体，作为重生认知硬约束"
+                        "有效未来/先验知识命中当前参与实体，作为认知硬约束"
                         if is_valid and relevant
                         else "只召回仍标记为有效的未来知识"
                     ),
@@ -720,7 +782,7 @@ class ContextCompiler:
                     priority=7_200
                     + {"high": 300, "medium": 200, "low": 100}[card.confidence.value],
                     required=False,
-                    reason="仅使用作者已确认且覆盖重生年代的现实资料",
+                    reason="仅使用作者已确认且覆盖作品故事纪年的资料",
                     source_kind="source_card",
                     source_id=card.id,
                     source_label=card.title,
@@ -730,12 +792,14 @@ class ContextCompiler:
                     force_exclusion=(
                         "资料尚未由作者确认"
                         if not card.confirmed
-                        else (None if applicable else "资料年代范围不覆盖作品重生锚点")
+                        else (None if applicable else "资料年代范围不覆盖作品纪年锚点")
                     ),
                 )
             )
 
         for application in workspace.reference_pattern_applications:
+            if application.lifecycle_state != ReferenceApplicationLifecycleState.ACTIVE:
+                continue
             passed = application.originality_status == OriginalityStatus.PASSED
             candidates.append(
                 self._candidate(

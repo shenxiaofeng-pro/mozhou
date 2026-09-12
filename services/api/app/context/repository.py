@@ -41,6 +41,10 @@ class ContextRepository:
         self.database = database
 
     def put_packet(self, packet: ContextPacket) -> ContextPacket:
+        try:
+            packet = ContextPacket.model_validate(packet.model_dump(mode="json"))
+        except (TypeError, ValueError) as error:
+            raise InvalidContextPacketError("context_packet_integrity_invalid") from error
         packet_json = json.dumps(
             packet.model_dump(mode="json"),
             ensure_ascii=False,
@@ -53,17 +57,40 @@ class ContextRepository:
                     """
                     INSERT INTO context_packets (
                         id, project_id, chapter_id, chapter_revision, task_type,
+                        purpose, subject_json, profile_fingerprint_sha256,
+                        dependency_snapshot_json, dependency_fingerprint_sha256,
+                        blocking_reasons_json,
                         compiler_version, token_budget, used_tokens, overflow_tokens,
                         packet_sha256, source_fingerprint_sha256, packet_json,
                         rendered_context, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         packet.id,
                         packet.project_id,
                         packet.chapter_id,
                         packet.chapter_revision,
-                        packet.task_type.value,
+                        packet.task_type.value if packet.task_type is not None else None,
+                        packet.purpose.value,
+                        json.dumps(
+                            packet.subject.model_dump(mode="json"),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        packet.profile_fingerprint_sha256,
+                        json.dumps(
+                            packet.dependency_snapshot.canonical_payload(),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        packet.dependency_fingerprint_sha256,
+                        json.dumps(
+                            packet.blocking_reasons,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
                         packet.compiler_version,
                         packet.token_budget,
                         packet.used_tokens,
@@ -88,12 +115,12 @@ class ContextRepository:
     def get_packet(self, packet_id: str) -> ContextPacket:
         with self.database.connect() as connection:
             row = connection.execute(
-                "SELECT packet_json FROM context_packets WHERE id = ?",
+                "SELECT * FROM context_packets WHERE id = ?",
                 (packet_id,),
             ).fetchone()
         if row is None:
             raise ContextPacketNotFoundError(packet_id)
-        return ContextPacket.model_validate_json(row["packet_json"])
+        return self._packet(row)
 
     def list_packets(self, chapter_id: str, *, limit: int = 20) -> list[ContextPacket]:
         if not 1 <= limit <= 100:
@@ -101,14 +128,82 @@ class ContextRepository:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT packet_json FROM context_packets
+                SELECT * FROM context_packets
                 WHERE chapter_id = ?
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
                 (chapter_id, limit),
             ).fetchall()
-        return [ContextPacket.model_validate_json(row["packet_json"]) for row in rows]
+        return [self._packet(row) for row in rows]
+
+    @staticmethod
+    def _packet(row: Row) -> ContextPacket:
+        try:
+            packet = ContextPacket.model_validate_json(str(row["packet_json"]))
+            subject = json.loads(str(row["subject_json"]))
+            dependency_snapshot = json.loads(str(row["dependency_snapshot_json"]))
+            blocking_reasons = json.loads(str(row["blocking_reasons_json"]))
+        except (TypeError, ValueError) as error:
+            raise InvalidContextPacketError("context_packet_integrity_invalid") from error
+
+        stored_values = {
+            "id": str(row["id"]),
+            "project_id": str(row["project_id"]),
+            "chapter_id": (
+                str(row["chapter_id"]) if row["chapter_id"] is not None else None
+            ),
+            "chapter_revision": (
+                int(row["chapter_revision"])
+                if row["chapter_revision"] is not None
+                else None
+            ),
+            "task_type": str(row["task_type"]) if row["task_type"] is not None else None,
+            "purpose": str(row["purpose"]),
+            "subject": subject,
+            "profile_fingerprint_sha256": (
+                str(row["profile_fingerprint_sha256"])
+                if row["profile_fingerprint_sha256"] is not None
+                else None
+            ),
+            "dependency_snapshot": dependency_snapshot,
+            "dependency_fingerprint_sha256": str(
+                row["dependency_fingerprint_sha256"]
+            ),
+            "blocking_reasons": blocking_reasons,
+            "compiler_version": str(row["compiler_version"]),
+            "token_budget": int(row["token_budget"]),
+            "used_tokens": int(row["used_tokens"]),
+            "overflow_tokens": int(row["overflow_tokens"]),
+            "packet_sha256": str(row["packet_sha256"]),
+            "source_fingerprint_sha256": str(row["source_fingerprint_sha256"]),
+            "rendered_context": str(row["rendered_context"]),
+            "created_at": str(row["created_at"]),
+        }
+        packet_values = {
+            "id": packet.id,
+            "project_id": packet.project_id,
+            "chapter_id": packet.chapter_id,
+            "chapter_revision": packet.chapter_revision,
+            "task_type": packet.task_type.value if packet.task_type is not None else None,
+            "purpose": packet.purpose.value,
+            "subject": packet.subject.model_dump(mode="json"),
+            "profile_fingerprint_sha256": packet.profile_fingerprint_sha256,
+            "dependency_snapshot": packet.dependency_snapshot.canonical_payload(),
+            "dependency_fingerprint_sha256": packet.dependency_fingerprint_sha256,
+            "blocking_reasons": packet.blocking_reasons,
+            "compiler_version": packet.compiler_version,
+            "token_budget": packet.token_budget,
+            "used_tokens": packet.used_tokens,
+            "overflow_tokens": packet.overflow_tokens,
+            "packet_sha256": packet.packet_sha256,
+            "source_fingerprint_sha256": packet.source_fingerprint_sha256,
+            "rendered_context": packet.rendered_context,
+            "created_at": packet.created_at,
+        }
+        if stored_values != packet_values:
+            raise InvalidContextPacketError("context_packet_storage_mismatch")
+        return packet
 
     def list_directives(self, chapter_id: str) -> list[ContextDirective]:
         with self.database.connect() as connection:

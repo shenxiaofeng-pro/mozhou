@@ -2,6 +2,7 @@ import json
 from sqlite3 import Connection, Row
 from uuid import uuid4
 
+from app.creative_safety import CreativeSafetyGate, CreativeSafetyProvenance
 from app.database import Database
 from app.director.rules import regeneration_impact
 from app.models import (
@@ -53,6 +54,18 @@ def _all_field_state[Value](value: Value) -> dict[BookBlueprintField, Value]:
 class DirectorRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self._creative_safety_gate: CreativeSafetyGate | None = None
+
+    def set_creative_safety_gate(self, gate: CreativeSafetyGate) -> None:
+        self._creative_safety_gate = gate
+
+    def _require_creative_safety(
+        self,
+        project_id: str,
+        expected: CreativeSafetyProvenance | None,
+    ) -> None:
+        if self._creative_safety_gate is not None:
+            self._creative_safety_gate.require_creative_safety(project_id, expected)
 
     def get_book_blueprint(self, project_id: str) -> BookBlueprint | None:
         with self.database.connect() as connection:
@@ -115,12 +128,15 @@ class DirectorRepository:
         idea: str,
         candidate: DirectorStartupCandidate,
         expected_blueprint_revision: int | None,
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> BookBlueprint:
         timestamp = _now_iso()
         blueprint_id = str(uuid4())
         locks = _all_field_state(False)
         versions = _all_field_state(1)
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_creative_safety(project_id, creative_safety)
             project = connection.execute(
                 "SELECT id FROM projects WHERE id = ?",
                 (project_id,),
@@ -238,45 +254,92 @@ class DirectorRepository:
         project_id: str,
         proposal: DirectorFieldProposal,
         expected_revision: int,
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> BookBlueprint:
-        current = self.require_book_blueprint(project_id)
-        if (
-            current.revision != expected_revision
-            or proposal.project_id != project_id
-            or proposal.blueprint_revision != expected_revision
-        ):
-            raise StaleDirectorRevisionError(str(current.revision))
-        field = proposal.target_field
-        if current.locks[field]:
-            raise InvalidDirectorChangeError("locked_field")
-        next_value = self._coerce_field_value(field, proposal.value)
-        content_payload = current.content.model_dump(mode="json")
-        if content_payload[field.value] == next_value:
-            raise InvalidDirectorChangeError("unchanged_proposal")
-        content_payload[field.value] = next_value
-        return self.update_book_blueprint(
-            project_id,
-            UpdateBookBlueprintRequest(
-                content=BookBlueprintContent.model_validate(content_payload),
-                changed_fields=[field],
-                expected_revision=expected_revision,
-            ),
-        )
+        timestamp = _now_iso()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_creative_safety(project_id, creative_safety)
+            row = connection.execute(
+                "SELECT * FROM book_blueprints WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if row is None:
+                raise DirectorNotFoundError(project_id)
+            current = self.parse_book_blueprint(row)
+            if (
+                current.revision != expected_revision
+                or proposal.project_id != project_id
+                or proposal.blueprint_revision != expected_revision
+            ):
+                raise StaleDirectorRevisionError(str(current.revision))
+            field = proposal.target_field
+            if current.locks[field]:
+                raise InvalidDirectorChangeError("locked_field")
+            next_value = self._coerce_field_value(field, proposal.value)
+            content_payload = current.content.model_dump(mode="json")
+            if content_payload[field.value] == next_value:
+                raise InvalidDirectorChangeError("unchanged_proposal")
+            content_payload[field.value] = next_value
+            content = BookBlueprintContent.model_validate(content_payload)
+            versions = dict(current.field_versions)
+            versions[field] += 1
+            stale = set(current.stale_fields)
+            stale.discard(field)
+            impact = regeneration_impact(current, field)
+            stale.update(
+                dependant
+                for dependant in impact.downstream_affected
+                if not current.locks[dependant]
+            )
+            result = connection.execute(
+                """
+                UPDATE book_blueprints
+                SET content_json = ?, field_versions_json = ?, stale_fields_json = ?,
+                    plan_stale = ?, revision = revision + 1, updated_at = ?
+                WHERE project_id = ? AND revision = ?
+                """,
+                (
+                    content.model_dump_json(),
+                    _json({item.value: value for item, value in versions.items()}),
+                    _json([item.value for item in BookBlueprintField if item in stale]),
+                    int(current.plan_stale or impact.will_mark_plan_stale),
+                    timestamp,
+                    project_id,
+                    expected_revision,
+                ),
+            )
+            if result.rowcount != 1:
+                raise StaleDirectorRevisionError(str(current.revision))
+            self._sync_project(connection, project_id, content, timestamp)
+            updated = connection.execute(
+                "SELECT * FROM book_blueprints WHERE project_id = ?", (project_id,)
+            ).fetchone()
+        if updated is None:
+            raise DirectorNotFoundError(project_id)
+        return self.parse_book_blueprint(updated)
 
     def apply_expansion(
         self,
         project_id: str,
         proposal: DirectorExpansionDraft,
         expected_blueprint_revision: int,
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> tuple[BookBlueprint, list[VolumePlan], list[RollingChapterPlan]]:
-        blueprint = self.require_book_blueprint(project_id)
-        if blueprint.revision != expected_blueprint_revision:
-            raise StaleDirectorRevisionError(str(blueprint.revision))
-        if blueprint.stale_fields:
-            raise InvalidDirectorChangeError("blueprint_has_stale_fields")
         timestamp = _now_iso()
         volumes_by_number: dict[int, str] = {}
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_creative_safety(project_id, creative_safety)
+            blueprint_row = connection.execute(
+                "SELECT * FROM book_blueprints WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if blueprint_row is None:
+                raise DirectorNotFoundError(project_id)
+            blueprint = self.parse_book_blueprint(blueprint_row)
+            if blueprint.revision != expected_blueprint_revision:
+                raise StaleDirectorRevisionError(str(blueprint.revision))
+            if blueprint.stale_fields:
+                raise InvalidDirectorChangeError("blueprint_has_stale_fields")
             for volume_content in proposal.volumes:
                 existing = connection.execute(
                     "SELECT * FROM volume_plans WHERE project_id = ? AND volume_number = ?",
@@ -388,7 +451,7 @@ class DirectorRepository:
             result = connection.execute(
                 """
                 UPDATE book_blueprints
-                SET plan_stale = 0, revision = revision + 1, updated_at = ?
+                SET plan_stale = 0, updated_at = ?
                 WHERE project_id = ? AND revision = ?
                 """,
                 (timestamp, project_id, expected_blueprint_revision),

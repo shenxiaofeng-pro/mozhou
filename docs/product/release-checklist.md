@@ -12,6 +12,7 @@
 
 - [ ] 完整 `pnpm run verify`：仓库守卫、lint、类型、脚本、Web/API、规模基准、生产构建、sidecar、Rust。
 - [ ] npm/Python/Rust 依赖审计无未处置高危漏洞。
+- [ ] M36 本地安全门通过：输入白名单、参数化 SQL/受审动态标识符、上传/ZIP、密钥日志、loopback 令牌与归档 fail-closed，证据见 [M36 安全审查](m36-security-review.md)。
 - [ ] 限制性许可证门通过，生成 CycloneDX `mozhou.cdx.json` 与 `NOTICE.txt`。
 - [ ] macOS `.app` 深度签名验证、DMG 公证装订与镜像校验通过。
 - [ ] Windows EXE/MSI Authenticode 全链验证通过，安装包内含独立 API sidecar。
@@ -41,3 +42,5 @@
 ## 5. 回滚
 
 签名、公证、安全、安装、迁移或数据保留任一项失败时，不创建公开 MVP Release。保留上一稳定安装包和升级前数据库备份；新版本数据库不允许由旧版本静默写入。
+
+工程门通过不等于真实作者验证通过。封测发布说明必须分开列出两个状态；没有 5–10 名作者每人连续至少 10 章的记录时，“作者验证”只能标为待验收。

@@ -8,6 +8,7 @@ import type {
 import { useState } from 'react'
 
 import { api } from '../api'
+import { isRebirthGenre } from '../genre'
 
 interface SourceLibraryPanelProps {
   workspace: WorkspaceSummary
@@ -38,6 +39,7 @@ export function SourceLibraryPanel({ workspace, onWorkspaceChanged }: SourceLibr
   const [isCreating, setIsCreating] = useState(false)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const rebirthStory = isRebirthGenre(workspace.project.genre)
   const confirmedCount = workspace.source_cards.filter((card) => card.confirmed).length
 
   function replaceCard(updated: SourceCard) {
@@ -92,10 +94,10 @@ export function SourceLibraryPanel({ workspace, onWorkspaceChanged }: SourceLibr
   return (
     <section className="source-library-card" aria-labelledby="source-library-title">
       <div className="pulse-heading">
-        <h3 id="source-library-title">现实资料卡</h3>
+        <h3 id="source-library-title">{rebirthStory ? '现实资料卡' : '考据与设定资料卡'}</h3>
         <span>{confirmedCount} / {workspace.source_cards.length} 已确认</span>
       </div>
-      <p className="source-library-intro">先保存来源和适用年代，再由作者确认能否作为现实锚点。</p>
+      <p className="source-library-intro">先保存来源和适用年代，再由作者确认能否作为{rebirthStory ? '现实' : '世界规则'}锚点。</p>
       <div className="source-card-list">
         {workspace.source_cards.map((card) => (
           <article key={card.id} data-confirmed={card.confirmed}>
@@ -115,7 +117,7 @@ export function SourceLibraryPanel({ workspace, onWorkspaceChanged }: SourceLibr
               onClick={() => toggleConfirmation(card)}
               disabled={processingId === card.id}
             >
-              {processingId === card.id ? '正在更新…' : card.confirmed ? '撤回确认' : '确认为现实锚点'}
+              {processingId === card.id ? '正在更新…' : card.confirmed ? '撤回确认' : `确认为${rebirthStory ? '现实' : '资料'}锚点`}
             </button>
           </article>
         ))}

@@ -20,7 +20,7 @@ const project: Project = {
 
 const report: BetaEvaluationReport = {
   format: 'mozhou-closed-beta-report',
-  format_version: 1,
+  format_version: 2,
   generated_at: '2026-08-11T00:00:00Z',
   project_id: project.id,
   template_ids: ['urban-rebirth', 'reality-anchor'],
@@ -36,6 +36,16 @@ const report: BetaEvaluationReport = {
     ai_applied_count: 1,
     ai_adoption_rate: 0.5,
     mean_manual_modification_ratio: 0.25,
+    mean_ai_text_retention_rate: 0.75,
+    manual_adjustment_type_counts: {
+      accepted_as_is: 0,
+      light_edit: 1,
+      substantial_edit: 0,
+      rewrite: 0,
+      partial_adoption: 0,
+    },
+    longest_consecutive_written_chapters: 3,
+    ten_chapter_sequence_completed: false,
     review_finding_count: 4,
     review_accepted_count: 3,
     review_acceptance_rate: 0.75,
@@ -47,6 +57,9 @@ const report: BetaEvaluationReport = {
     open_critical_findings: 0,
     originality_blocked_count: 1,
   },
+  subjective_ratings: [
+    { category: 'ai_quality', context: 'writing', response_count: 2, mean_rating: 4 },
+  ],
   feedback: [],
   privacy_notice: '报告不含作品名、正文、Prompt、文件路径或密钥。',
 }
@@ -76,6 +89,10 @@ describe('BetaEvaluationDialog', () => {
 
     expect(await screen.findByRole('heading', { name: `《${project.title}》十章闭环` })).toBeVisible()
     expect(screen.getByText('候选采用率').nextElementSibling).toHaveTextContent('50%')
+    expect(screen.getByText('AI 正文保留率').nextElementSibling).toHaveTextContent('75%')
+    expect(screen.getByText('最长连续完成').nextElementSibling).toHaveTextContent('3 章')
+    expect(screen.getByRole('heading', { name: '作者主观评分' })).toBeVisible()
+    expect(screen.getByText('4.0 / 5（2 次）')).toBeVisible()
     await user.selectOptions(screen.getByLabelText('评分'), '5')
     await user.type(screen.getByLabelText('具体反馈（可选）'), '这条流程已经顺畅。')
     await user.click(screen.getByRole('button', { name: '保存反馈' }))

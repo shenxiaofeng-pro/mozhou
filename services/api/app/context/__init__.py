@@ -1,6 +1,8 @@
 from app.context.compiler import CONTEXT_COMPILER_VERSION, ContextCompiler, estimate_tokens
 from app.context.models import (
     CompileContextRequest,
+    ContextDependencyRef,
+    ContextDependencySnapshot,
     ContextDirective,
     ContextDirectiveAction,
     ContextDirectiveRequest,
@@ -11,6 +13,10 @@ from app.context.models import (
     ContextTaskType,
     ContextTier,
     ContextTierUsage,
+    CreativeContextCompileRequest,
+    CreativeContextPurpose,
+    CreativeContextSubject,
+    CreativeContextSubjectKind,
 )
 from app.context.repository import (
     ContextDirectiveNotFoundError,
@@ -20,11 +26,20 @@ from app.context.repository import (
     InvalidContextPacketError,
     StaleContextDirectiveError,
 )
+from app.context.service import (
+    CREATIVE_CONTEXT_COMPILER_VERSION,
+    CreativeContextBlockedError,
+    CreativeContextChangedError,
+    CreativeContextService,
+)
 
 __all__ = [
     "CONTEXT_COMPILER_VERSION",
+    "CREATIVE_CONTEXT_COMPILER_VERSION",
     "CompileContextRequest",
     "ContextCompiler",
+    "ContextDependencyRef",
+    "ContextDependencySnapshot",
     "ContextDirective",
     "ContextDirectiveAction",
     "ContextDirectiveNotFoundError",
@@ -38,6 +53,13 @@ __all__ = [
     "ContextTaskType",
     "ContextTier",
     "ContextTierUsage",
+    "CreativeContextBlockedError",
+    "CreativeContextChangedError",
+    "CreativeContextCompileRequest",
+    "CreativeContextPurpose",
+    "CreativeContextService",
+    "CreativeContextSubject",
+    "CreativeContextSubjectKind",
     "InvalidContextDirectiveError",
     "InvalidContextPacketError",
     "StaleContextDirectiveError",

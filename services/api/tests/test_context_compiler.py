@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from time import perf_counter
 
@@ -30,6 +31,10 @@ from app.models import (
     StoryThreadStatus,
     TimelineEvent,
     TimelineLayer,
+    TopicDecision,
+    TopicDecisionContent,
+    TopicDecisionField,
+    TopicDecisionStatus,
     Workspace,
 )
 from app.repository import ProjectRepository
@@ -81,6 +86,51 @@ def _current(workspace: Workspace) -> Chapter:
     return workspace.chapters[-1]
 
 
+def _topic_decision(
+    workspace: Workspace,
+    *,
+    revision: int = 2,
+    confirmed_revision: int | None = 2,
+) -> TopicDecision:
+    status = (
+        TopicDecisionStatus.DRAFT
+        if confirmed_revision is None
+        else TopicDecisionStatus.CONFIRMED
+        if confirmed_revision == revision
+        else TopicDecisionStatus.PENDING_RECONFIRMATION
+    )
+    return TopicDecision(
+        id="topic-context",
+        project_id=workspace.project.id,
+        content=TopicDecisionContent(
+            target_platform="番茄小说",
+            target_audience="喜欢都市重生与家庭事业双线的读者",
+            subgenre="都市重生·实业成长",
+            premise="林川回到九八年，从挽救父亲的竹木厂开始改变家乡。",
+            core_desire="保住家庭，再重建地方产业信用。",
+            long_term_promise="用每次可验证的小胜利撬动时代机会。",
+            first_three_chapter_promise="三章内揭示违约危机、拿到首单并引出真正对手。",
+            constraints=["经济与技术条件必须符合1998年"],
+            forbidden_elements=["不出现无代价超能力"],
+            reference_purpose="参考多本作品的节奏与冲突因果，不复用具体表达。",
+            reality_anchor="1998年福建南平的竹木产业与地方信贷环境。",
+            first_ten_chapter_goal="十章内让竹木厂活下来，并建立第一个长期产业矛盾。",
+        ),
+        status=status,
+        locks={field: field == TopicDecisionField.CORE_DESIRE for field in TopicDecisionField},
+        field_versions={field: 1 for field in TopicDecisionField},
+        rejection_reasons={TopicDecisionField.PREMISE: "不要以投机起家"},
+        source_template_id="urban-rebirth",
+        source_job_id="private-topic-job",
+        source_candidate_ids=["private-rejected-candidate"],
+        revision=revision,
+        confirmed_revision=confirmed_revision,
+        plan_stale=False,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
 def test_context_packet_is_deterministic_and_historical_items_have_traceable_ranges() -> None:
     workspace = _workspace(previous_chapters=20)
     compiler = ContextCompiler()
@@ -117,6 +167,89 @@ def test_context_packet_is_deterministic_and_historical_items_have_traceable_ran
     assert all(item.source_refs[0].character_end is not None for item in historical)
 
 
+def test_only_current_confirmed_topic_enters_context_without_candidate_metadata() -> None:
+    workspace = _workspace(previous_chapters=2)
+    workspace = workspace.model_copy(update={"topic_decision": _topic_decision(workspace)})
+
+    packet = ContextCompiler().compile(
+        workspace,
+        _current(workspace),
+        author_intent="先把家庭危机写实",
+        task_type=ContextTaskType.CHAPTER_DRAFT,
+        token_budget=6000,
+    )
+
+    topic_item = next(
+        item
+        for item in packet.items
+        if item.source_refs[0].kind == "topic_decision"
+    )
+    topic_payload = json.loads(topic_item.content)
+    assert topic_item.required and topic_item.included
+    assert topic_payload["revision"] == 2
+    assert len(topic_payload["content_sha256"]) == 64
+    assert topic_payload["content"]["first_ten_chapter_goal"].startswith("十章内")
+    assert topic_payload["locked_fields"] == ["core_desire"]
+    serialized = packet.model_dump_json()
+    assert "private-topic-job" not in serialized
+    assert "private-rejected-candidate" not in serialized
+    assert "不要以投机起家" not in serialized
+
+
+def test_draft_or_stale_confirmed_topic_never_enters_context() -> None:
+    workspace = _workspace(previous_chapters=2)
+    compiler = ContextCompiler()
+
+    for topic in (
+        _topic_decision(workspace, revision=0, confirmed_revision=None),
+        _topic_decision(workspace, revision=3, confirmed_revision=2),
+    ):
+        packet = compiler.compile(
+            workspace.model_copy(update={"topic_decision": topic}),
+            _current(workspace),
+            author_intent="",
+            task_type=ContextTaskType.CHAPTER_BRIEF,
+            token_budget=5000,
+        )
+        assert all(
+            source.kind != "topic_decision"
+            for item in packet.items
+            for source in item.source_refs
+        )
+        assert "林川回到九八年" not in packet.rendered_context
+
+
+def test_confirmed_topic_revision_changes_context_fingerprint() -> None:
+    workspace = _workspace(previous_chapters=2)
+    compiler = ContextCompiler()
+
+    before = compiler.compile(
+        workspace.model_copy(update={"topic_decision": _topic_decision(workspace)}),
+        _current(workspace),
+        author_intent="",
+        task_type=ContextTaskType.CHAPTER_BRIEF,
+        token_budget=5000,
+    )
+    after = compiler.compile(
+        workspace.model_copy(
+            update={
+                "topic_decision": _topic_decision(
+                    workspace,
+                    revision=3,
+                    confirmed_revision=3,
+                )
+            }
+        ),
+        _current(workspace),
+        author_intent="",
+        task_type=ContextTaskType.CHAPTER_BRIEF,
+        token_budget=5000,
+    )
+
+    assert before.source_fingerprint_sha256 != after.source_fingerprint_sha256
+    assert before.packet_sha256 != after.packet_sha256
+
+
 def test_context_budget_never_silently_drops_hard_constraints() -> None:
     workspace = _workspace(previous_chapters=2)
     compiler = ContextCompiler()
@@ -134,6 +267,33 @@ def test_context_budget_never_silently_drops_hard_constraints() -> None:
     assert all(item.included for item in required)
     assert packet.overflow_tokens > 0
     assert packet.used_tokens == packet.token_budget + packet.overflow_tokens
+
+
+def test_fantasy_context_uses_world_anchor_without_implying_rebirth() -> None:
+    workspace = _workspace(previous_chapters=2)
+    workspace = workspace.model_copy(
+        update={
+            "project": workspace.project.model_copy(
+                update={
+                    "genre": Genre.EASTERN_FANTASY,
+                    "rebirth_year": 728,
+                    "rebirth_location": "九州云泽",
+                }
+            )
+        }
+    )
+
+    packet = ContextCompiler().compile(
+        workspace,
+        _current(workspace),
+        author_intent="让主角承担越境借力的代价",
+        task_type=ContextTaskType.CHAPTER_BRIEF,
+        token_budget=4000,
+    )
+
+    anchor = next(item for item in packet.items if item.kind == ContextItemKind.PROJECT_ANCHOR)
+    assert anchor.label == "作品与世界锚点"
+    assert "重生" not in anchor.selection_reason
 
 
 def test_latest_facts_win_budget_and_same_name_entities_keep_distinct_sources() -> None:

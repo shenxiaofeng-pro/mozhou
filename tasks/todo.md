@@ -1,5 +1,139 @@
 # 当前任务
 
+## AI 主写、作者主导闭环（M28–M36）
+
+- [x] M28 稿件安全与参考模式恢复能力
+  - Acceptance：旧候选绝不覆盖新稿；失败参考应用可停用，AI 可恢复。
+  - Verify：专项 API/Web/迁移/归档测试与完整 `pnpm run verify`。
+- [x] M29 AI-first 人工选题台
+  - Acceptance：选题可持久化、比较、锁定和确认；新项目默认进入选题任务。
+  - Verify：TopicDecision API/Prompt/Web/浏览器测试。
+- [x] M30 长篇拆解与写作模式 v2
+  - Acceptance：单书与 300 万字阶段卡可用；技法带章节/字符证据与费用预览。
+  - Verify：长篇恢复、证据安全、缓存、导入和 UI 测试。
+- [ ] M31 多书模式配方与 AI 原创迁移
+  - Acceptance：跨项目配方、三套原创迁移和最终蓝图版本门禁完成。
+  - Verify：配方编译、原创性、Provider、Web 黄金旅程。
+- [ ] M32 统一 CreativeContext 与计划重基
+  - Acceptance：所有写作阶段使用相同模式指纹；依赖变化显式失效和重基。
+  - Verify：多预算 ContextPacket、计划依赖和隔离测试。
+- [ ] M33 ChapterProduction 与候选调整工作台
+  - Acceptance：单一 AI 主写入口；候选审校、对照、局部采用、重生成和撤销安全。
+  - Verify：生产状态机、版本冲突、Web/浏览器长正文测试。
+- [ ] M34 定稿 Canon 与作者偏好反馈闭环
+  - Acceptance：最终正文事实和作者确认偏好进入下一章；未确认项保持隔离。
+  - Verify：四题材事实、偏好、原子回滚和上下文测试。
+- [ ] M35 连续作者工作台与下一章动作
+  - Acceptance：四阶段、单一下一步、URL 恢复、定稿直达下一章和键盘可达。
+  - Verify：next_action、Web 黄金旅程、1280/1040/760 浏览器。
+- [ ] M36 四题材质量、完整 E2E 与封闭测试门
+  - Acceptance：工程闭环全绿；真实作者验证与工程完成状态分开记录。
+  - Verify：`pnpm run verify`、release preflight、桌面/浏览器、安全与封闭测试协议。
+
+## 东方玄幻与西方奇幻（M24–M27）
+
+- [x] M24 四题材契约与无损兼容
+  - Acceptance：创建/导入/查询/归档接受四题材，未知 genre 拒绝，旧库与 v10 归档不迁移。
+  - Verify：API、契约和归档专项测试。
+  - Files：models、contracts、archive tests。
+- [x] M25 题材感知 AI、上下文与审校
+  - Acceptance：新题材不强加重生逻辑，东方玄幻检查修炼规则，西方奇幻检查魔法/阵营规则。
+  - Verify：Prompt、假模型、导演、上下文和审校测试。
+  - Files：ai、fake_model、context、continuity、review。
+- [x] M26 四题材 UI 与起航模板
+  - Acceptance：所有创建/导入/显示入口支持四题材，非重生题材显示故事纪年/起始地域，两类新模板可用。
+  - Verify：beta、CreateProjectForm 和共享题材 helper 测试；真实浏览器多视口。
+  - Files：beta、genre.ts、相关 React 组件和测试。
+- [x] M27 最终验收
+  - Acceptance：完整 verify、浏览器和文档通过，工作树干净。
+  - Verify：`pnpm run verify`、安全扫描、1280/1040/760 浏览器。
+
+## 已完成：AI 漫剧改编工作台（M18–M23）
+
+- [x] M18 漫剧领域、schema v22 与归档 v10
+  - Acceptance：连续小说来源可冻结，季/集/场/版本独立保存，旧库和旧归档无损升级。
+  - Verify：数据库、领域和归档专项测试。
+  - Files：migration、database、archive、comic_drama、contracts、API。
+- [x] M19 AI 季纲与分集候选
+  - Acceptance：外发/费用确认、幂等 Job/Artifact、严格来源校验和候选采用完成。
+  - Verify：季纲任务专项测试。
+  - Files：AI gateway、provider task、job runtime、comic service/API。
+- [x] M20 逐集剧本与双批准门
+  - Acceptance：大纲未批准不能生成剧本，剧本未批准不物化场次，旧 revision 被阻断。
+  - Verify：状态机、任务恢复和小说域零写入专项测试。
+  - Files：comic service、AI、API/contracts。
+- [x] M21 审校、资产与制作包
+  - Acceptance：审校可解释，资产可追踪，MD/JSON/DOCX 只含批准剧集。
+  - Verify：规则和导出回环专项测试。
+  - Files：comic audit/export、API。
+- [x] M22 漫剧工作台 UI
+  - Acceptance：作者能从选源完成至少一集批准并导出，760px 核心路径可达。
+  - Verify：组件测试与真实浏览器。
+  - Files：ComicDramaWorkbenchPage、App、WorkspaceShell、api、styles。
+- [x] M23 最终验收
+  - Acceptance：完整 Definition of Done 通过，文档和测试基线更新，工作树干净。
+  - Verify：`pnpm run verify`、安全检查与浏览器控制台。
+
+## 码字日历体验优化
+
+- [x] 连续创作口径
+  - Acceptance：今天未写保留截至昨天的连续天数，负向字数变化计入创作日，候选稿仍排除。
+  - Verify：`uv run --project services/api --no-sync pytest services/api/tests/test_author_productivity.py`。
+  - Files：`author_productivity.py`、`test_author_productivity.py`。
+- [x] 本周优先日历
+  - Acceptance：近 7 天及今天首屏可见，过去 35 天紧凑显示，术语改为“字数变化/以修改为主”，辅助文字至少 12px。
+  - Verify：AuthorToolsDialog 组件测试、1280/1040/760 浏览器截图与尺寸检查。
+  - Files：`AuthorToolsDialog.tsx`、`AuthorToolsDialog.test.tsx`、`styles.css`。
+- [x] 作者行动与弹窗键盘体验
+  - Acceptance：可回到正文、打开既有日目标设置；支持焦点进入/恢复、Escape、焦点循环、tab 语义和加载状态。
+  - Verify：组件测试与真实键盘冒烟。
+  - Files：`AuthorToolsDialog.tsx`、`WorkspaceShell.tsx`、对应测试和样式。
+- [x] 最终验收
+  - Acceptance：完整 Definition of Done 通过，PROGRESS 与测试基线更新，浏览器控制台无 warning/error。
+  - Verify：`pnpm run verify` 与真实浏览器。
+
+## 历史任务：PLAN M13–M17 作者智能扩展
+
+### M13 场景语义与情节图原创性检查
+
+- [x] v18 场景图检查、发现与版本化阈值数据模型。
+- [x] 多书节点/边/顺序/角色职能确定性比较与黄金集。
+- [x] high/medium 门禁、局部重检、归档和报告隐私。
+- [x] 拆书实验室报告 UI、真实浏览器与完整 verify。
+
+### M14 AI 增强剧情沙盘
+
+- [x] AI 沙盘结构化契约、Prompt 与 provider adapter 能力。
+- [x] 外发/费用预览、可恢复单轮 Job、取消和 Artifact 重放。
+- [x] 服务端动作裁决、确定性回退和候选隔离回归。
+- [x] AI/规则模式 UI、本地兼容协议浏览器验收与完整 verify。
+
+### M15 资料研究员 Agent
+
+- [x] v20 研究会话、来源快照、发现、冲突和候选模型。
+- [x] 本地提取、模型归纳、引用范围复核、缓存与恢复。
+- [x] 候选资料卡逐条批准和 ContextPacket 隔离。
+- [x] 研究台 UI、注入/伪造引用安全测试、浏览器与完整 verify。
+
+### M16 DOCX/EPUB 导入导出
+
+- [x] ZIP/XML/XHTML 安全解析器与攻击夹具。
+- [x] DOCX/EPUB 稿件预览、人工校正和事务导入。
+- [x] DOCX/EPUB 生成器、往返一致性和二进制下载。
+- [x] macOS/Windows CI、真实浏览器与完整 verify。
+
+### M17 作者效率与关系图谱
+
+- [x] v21 批注、灵感、显式人物关系模型和 42 天日历。
+- [x] 批注锚点/过期、灵感候选门、人物/伏笔图谱服务。
+- [x] 连载台、批注、灵感箱、图谱 UI 与快捷键。
+- [x] 性能/可访问性/窄屏浏览器与最终完整 verify。
+
+### 最终收尾
+
+- [x] 更新 PROGRESS、能力矩阵、README、ADR 与遗留风险。
+- [x] 安全审查、依赖/密钥扫描、全量构建测试；远端三项 CI 继续由既有分支保护在推送/PR 时执行。
+
 ## PLAN M2：可恢复 AI 任务运行时
 
 - [x] 冻结任务状态机、幂等键、租约与重启恢复 ADR。

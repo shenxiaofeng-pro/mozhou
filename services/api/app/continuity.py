@@ -12,6 +12,7 @@ from app.models import (
     ResumeCardItem,
     Workspace,
     WorkspaceSummary,
+    is_rebirth_genre,
 )
 
 ChapterView = Chapter | ChapterSummary
@@ -32,7 +33,10 @@ def enrich_serial_control[WorkspaceType: (Workspace, WorkspaceSummary)](
     return workspace.model_copy(
         update={
             "continuity_issues": issues,
-            "resume_card": build_resume_card(workspace, issues),
+            "resume_card": build_resume_card(
+                workspace,
+                issues,
+            ),
         }
     )
 
@@ -123,12 +127,17 @@ def build_continuity_issues(workspace: WorkspaceView) -> list[ContinuityIssue]:
     for card in workspace.source_cards:
         year = workspace.project.rebirth_year
         if card.confirmed and not card.applicable_year_start <= year <= card.applicable_year_end:
+            issue_title = (
+                "现实锚点不覆盖重生年份"
+                if is_rebirth_genre(workspace.project.genre)
+                else "资料年代不覆盖故事纪年"
+            )
             issues.append(
                 _issue(
                     f"source-year:{card.id}",
                     ContinuityIssueKind.SOURCE_YEAR_MISMATCH,
                     ContinuitySeverity.INFO,
-                    "现实锚点不覆盖重生年份",
+                    issue_title,
                     f"{card.title} 适用于 {card.applicable_year_start}–{card.applicable_year_end} 年。",
                     [card.source_reference],
                 )
@@ -200,6 +209,7 @@ def build_resume_card(
         ][:6],
         pending_reviews=pending_reviews,
         warning_count=sum(issue.severity == ContinuitySeverity.WARNING for issue in resolved_issues),
+        next_action=workspace.author_next_action,
     )
 
 

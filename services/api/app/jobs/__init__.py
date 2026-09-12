@@ -17,6 +17,7 @@ from app.jobs.repository import (
     JobIdempotencyConflictError,
     JobNotFoundError,
     JobRepository,
+    JobRequiresNewPreflightError,
 )
 from app.jobs.runtime import JobExecutionContext, JobExecutionError, JobRuntime
 
@@ -36,6 +37,7 @@ __all__ = [
     "JobKind",
     "JobNotFoundError",
     "JobRepository",
+    "JobRequiresNewPreflightError",
     "JobRuntime",
     "JobState",
 ]

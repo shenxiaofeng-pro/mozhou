@@ -118,6 +118,113 @@
         "future_knowledge:future-invalid-urban",
         "source_card:source-rumour-urban"
       ]
+    },
+    {
+      "name": "eastern_fantasy_25_chapters",
+      "genre": "eastern_fantasy",
+      "rebirth_year": 728,
+      "rebirth_location": "九州云泽",
+      "previous_chapters": 25,
+      "chapter_seed": "云泽宗门的灵脉、境界与资源代价持续变化。",
+      "current_title": "沈砚押寿元护灵脉",
+      "current_state_change": "沈砚耗尽三枚灵石突破筑基，却损失一年寿元",
+      "current_cliffhanger": "师姐发现灵脉中有被封印的妖丹",
+      "author_intent": "沈砚核对筑基境界、灵石消耗、寿元代价和师姐发现的灵脉封印",
+      "entities": [
+        {"id": "entity-shen", "kind": "character", "name": "沈砚", "current_state": "刚入筑基，寿元减少一年"},
+        {"id": "entity-spirit-stones", "kind": "resource", "name": "灵石", "current_state": "三枚灵石已耗尽，本卷暂无补给"},
+        {"id": "entity-irrelevant-east", "kind": "character", "name": "钟离", "current_state": "留在东岭外门值守"}
+      ],
+      "facts": [
+        {"id": "fact-realm-old", "chapter": 8, "content": "沈砚仍在炼气九层。"},
+        {"id": "fact-realm-current", "chapter": 25, "content": "沈砚已突破筑基，代价是损失一年寿元。"},
+        {"id": "fact-irrelevant-east", "chapter": 6, "content": "钟离留在东岭外门。"}
+      ],
+      "threads": [
+        {"id": "thread-sealed-core", "status": "open", "title": "灵脉中被封印的妖丹", "summary": "师姐怀疑妖丹与宗门灵石短缺有关", "planted": 24},
+        {"id": "thread-resolved-east", "status": "resolved", "title": "旧剑的来历", "summary": "第十八章已证实", "planted": 12}
+      ],
+      "future_knowledge": [],
+      "timeline": [
+        {"id": "timeline-foundation", "layer": "novel", "event_year": 728, "title": "沈砚破境筑基", "summary": "三枚灵石耗尽且寿元减少", "source_chapter": 25}
+      ],
+      "sources": [
+        {"id": "source-realm-rule", "confirmed": true, "title": "云泽筑基规则", "excerpt": "冲击筑基需记录灵石消耗与寿元代价。"},
+        {"id": "source-rumour-east", "confirmed": false, "title": "未确认的魔修传闻", "excerpt": "尚无可用证据。"}
+      ],
+      "token_budget": 8000,
+      "expected_relevant_sources": [
+        "entity:entity-shen",
+        "entity:entity-spirit-stones",
+        "fact:fact-realm-current",
+        "thread:thread-sealed-core",
+        "source_card:source-realm-rule"
+      ],
+      "expected_hard_sources": [
+        "entity:entity-shen",
+        "entity:entity-spirit-stones",
+        "fact:fact-realm-current",
+        "thread:thread-sealed-core"
+      ],
+      "must_exclude_sources": [
+        "thread:thread-resolved-east",
+        "source_card:source-rumour-east"
+      ],
+      "expect_divergence_note": false
+    },
+    {
+      "name": "western_fantasy_18_chapters",
+      "genre": "western_fantasy",
+      "rebirth_year": 1243,
+      "rebirth_location": "阿尔登北境",
+      "previous_chapters": 18,
+      "chapter_seed": "北境的魔法、阵营、种族与魔晶供应维持着脆弱平衡。",
+      "current_title": "艾琳交出记忆启动血契",
+      "current_state_change": "艾琳消耗一段记忆完成禁咒，银盾骑士团因此改变立场",
+      "current_cliffhanger": "艾琳的半精灵血脉被教会使者认出",
+      "author_intent": "艾琳要核对血契魔法、失去的记忆、魔晶余量、骑士团阵营和半精灵血脉",
+      "entities": [
+        {"id": "entity-erin", "kind": "character", "name": "艾琳", "current_state": "已启动一次血契禁咒，失去童年的一段记忆"},
+        {"id": "entity-magic-crystal", "kind": "resource", "name": "魔晶", "current_state": "仅剩两块，公会已停止供应"},
+        {"id": "entity-irrelevant-west", "kind": "character", "name": "罗兰", "current_state": "留守南方港口"}
+      ],
+      "facts": [
+        {"id": "fact-magic-old", "chapter": 5, "content": "艾琳尚未使用血契魔法。"},
+        {"id": "fact-magic-current", "chapter": 18, "content": "艾琳已施放血契禁咒，代价是失去一段童年记忆。"},
+        {"id": "fact-irrelevant-west", "chapter": 4, "content": "罗兰留守南方港口。"}
+      ],
+      "threads": [
+        {"id": "thread-bloodline", "status": "open", "title": "艾琳的半精灵血脉暴露", "summary": "教会使者可能利用血脉改变骑士团阵营", "planted": 17},
+        {"id": "thread-resolved-west", "status": "resolved", "title": "丢失的魔法书", "summary": "第十二章已找回", "planted": 8}
+      ],
+      "future_knowledge": [],
+      "timeline": [
+        {"id": "timeline-blood-pact", "layer": "novel", "event_year": 1243, "title": "艾琳启动血契禁咒", "summary": "童年记忆永久缺失", "source_chapter": 18}
+      ],
+      "sources": [
+        {"id": "source-magic-rule", "confirmed": true, "title": "阿尔登血契魔法守则", "excerpt": "血契魔法每次施放必须记录记忆代价和魔晶消耗。"},
+        {"id": "source-rumour-west", "confirmed": false, "title": "尚未核验的龙裔传说", "excerpt": "传说未获史料佐证。"}
+      ],
+      "token_budget": 8000,
+      "expected_relevant_sources": [
+        "entity:entity-erin",
+        "entity:entity-magic-crystal",
+        "fact:fact-magic-current",
+        "thread:thread-bloodline",
+        "timeline:timeline-blood-pact",
+        "source_card:source-magic-rule"
+      ],
+      "expected_hard_sources": [
+        "entity:entity-erin",
+        "entity:entity-magic-crystal",
+        "fact:fact-magic-current",
+        "thread:thread-bloodline"
+      ],
+      "must_exclude_sources": [
+        "thread:thread-resolved-west",
+        "source_card:source-rumour-west"
+      ],
+      "expect_divergence_note": false
     }
   ]
 }

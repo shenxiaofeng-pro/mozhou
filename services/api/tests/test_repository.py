@@ -1,3 +1,4 @@
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -198,7 +199,15 @@ def test_chapter_state_machine_records_events_and_locks_approved_text(
     ):
         chapter = repository.transition_chapter(
             chapter.id,
-            TransitionChapterRequest(target_status=target, expected_revision=chapter.revision),
+            TransitionChapterRequest(
+                target_status=target,
+                expected_revision=chapter.revision,
+                expected_content_sha256=(
+                    sha256(chapter.content.encode()).hexdigest()
+                    if target == ChapterStatus.APPROVED
+                    else None
+                ),
+            ),
         )
 
     assert chapter.status == ChapterStatus.APPROVED
@@ -253,7 +262,15 @@ def approve_first_chapter(repository: ProjectRepository):
     ):
         chapter = repository.transition_chapter(
             chapter.id,
-            TransitionChapterRequest(target_status=target, expected_revision=chapter.revision),
+            TransitionChapterRequest(
+                target_status=target,
+                expected_revision=chapter.revision,
+                expected_content_sha256=(
+                    sha256(chapter.content.encode()).hexdigest()
+                    if target == ChapterStatus.APPROVED
+                    else None
+                ),
+            ),
         )
     return workspace.project, chapter
 

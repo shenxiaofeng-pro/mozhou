@@ -7,6 +7,7 @@ import type {
 import { useRef, useState } from 'react'
 
 import { api } from '../api'
+import { genreDefaults, genreOptions, getStoryAnchorLabels } from '../genre'
 
 interface ManuscriptImportDialogProps {
   onClose: () => void
@@ -21,14 +22,22 @@ export function ManuscriptImportDialog({ onClose, onImported }: ManuscriptImport
   const [preview, setPreview] = useState<ManuscriptImportPreview | null>(null)
   const [title, setTitle] = useState('')
   const [genre, setGenre] = useState<Genre>('historical_rebirth')
-  const [rebirthYear, setRebirthYear] = useState(1992)
-  const [rebirthLocation, setRebirthLocation] = useState('南平')
+  const [rebirthYear, setRebirthYear] = useState(genreDefaults.historical_rebirth.storyYear)
+  const [rebirthLocation, setRebirthLocation] = useState(genreDefaults.historical_rebirth.storyLocation)
   const [chapterTargetWords, setChapterTargetWords] = useState(3000)
   const [safetyBufferChapters, setSafetyBufferChapters] = useState(5)
   const [preambleAction, setPreambleAction] = useState<'prepend' | 'omit'>('prepend')
   const [warningsConfirmed, setWarningsConfirmed] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const anchorLabels = getStoryAnchorLabels(genre)
+
+  function selectGenre(nextGenre: Genre) {
+    const defaults = genreDefaults[nextGenre]
+    setGenre(nextGenre)
+    setRebirthYear(defaults.storyYear)
+    setRebirthLocation(defaults.storyLocation)
+  }
 
   function selectFile(next: File | undefined) {
     setError(null)
@@ -38,9 +47,9 @@ export function ManuscriptImportDialog({ onClose, onImported }: ManuscriptImport
       setFile(null)
       return
     }
-    if (!/\.(?:txt|md|markdown)$/i.test(next.name)) {
+    if (!/\.(?:txt|md|markdown|docx|epub)$/i.test(next.name)) {
       setFile(null)
-      setError('请选择 TXT 或 Markdown 稿件')
+      setError('请选择 TXT、Markdown、DOCX 或 EPUB 稿件')
       return
     }
     if (next.size > maxManuscriptBytes) {
@@ -134,8 +143,8 @@ export function ManuscriptImportDialog({ onClose, onImported }: ManuscriptImport
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,.md,.markdown,text/plain,text/markdown"
-            aria-label="选择 TXT 或 Markdown 稿件"
+            accept=".txt,.md,.markdown,.docx,.epub,text/plain,text/markdown,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            aria-label="选择 TXT、Markdown、DOCX 或 EPUB 稿件"
             disabled={isBusy}
             onChange={(event) => selectFile(event.target.files?.[0])}
           />
@@ -151,9 +160,9 @@ export function ManuscriptImportDialog({ onClose, onImported }: ManuscriptImport
           <div className="manuscript-import-preview">
             <section className="manuscript-import-settings" aria-label="作品信息">
               <label><span>书名</span><input value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} /></label>
-              <label><span>类型</span><select value={genre} onChange={(event) => setGenre(event.target.value as Genre)}><option value="historical_rebirth">历史重生</option><option value="urban_rebirth">都市重生</option></select></label>
-              <label><span>重生年份</span><input type="number" min="1900" max="2100" value={rebirthYear} onChange={(event) => setRebirthYear(Number(event.target.value))} /></label>
-              <label><span>重生地点</span><input value={rebirthLocation} maxLength={120} onChange={(event) => setRebirthLocation(event.target.value)} /></label>
+              <label><span>类型</span><select value={genre} onChange={(event) => selectGenre(event.target.value as Genre)}>{genreOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+              <label><span>{anchorLabels.year}</span><input type="number" min="-3000" max="2030" value={rebirthYear} onChange={(event) => setRebirthYear(Number(event.target.value))} /></label>
+              <label><span>{anchorLabels.location}</span><input value={rebirthLocation} maxLength={100} onChange={(event) => setRebirthLocation(event.target.value)} /></label>
               <label><span>单章目标</span><input type="number" min="500" max="20000" step="100" value={chapterTargetWords} onChange={(event) => setChapterTargetWords(Number(event.target.value))} /></label>
               <label><span>安全存稿</span><input type="number" min="0" max="100" value={safetyBufferChapters} onChange={(event) => setSafetyBufferChapters(Number(event.target.value))} /></label>
             </section>

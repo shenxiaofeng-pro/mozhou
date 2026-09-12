@@ -2,6 +2,7 @@ import type { Project, RecoveryPointSummary, Workspace } from '@mozhou/contracts
 import { type ChangeEvent, useState } from 'react'
 
 import { api } from '../api'
+import { genreLabels } from '../genre'
 import { BetaEvaluationDialog } from './BetaEvaluationDialog'
 import { ManuscriptImportDialog } from './ManuscriptImportDialog'
 import { NarrativeSandboxDialog } from './NarrativeSandboxDialog'
@@ -33,11 +34,6 @@ const updatedAtFormatter = new Intl.DateTimeFormat('zh-CN', {
   day: 'numeric',
 })
 
-const genreLabels = {
-  historical_rebirth: '历史重生',
-  urban_rebirth: '都市重生',
-} as const
-
 export function ProjectLibraryPage({
   projects,
   openingProjectId,
@@ -58,6 +54,7 @@ export function ProjectLibraryPage({
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
   const [betaProject, setBetaProject] = useState<Project | null>(null)
   const [sandboxProject, setSandboxProject] = useState<Project | null>(null)
+  const [exportFormats, setExportFormats] = useState<Record<string, 'markdown' | 'docx' | 'epub'>>({})
 
   const reportError = (failure: unknown, fallback: string) => {
     setOperationError(failure instanceof Error ? failure.message : fallback)
@@ -125,8 +122,9 @@ export function ProjectLibraryPage({
     setOperationError(null)
     setNotice(null)
     try {
-      const exported = await api.exportManuscript(project.id)
-      const blob = new Blob([exported.content], { type: 'text/markdown;charset=utf-8' })
+      const format = exportFormats[project.id] ?? 'markdown'
+      const exported = format === 'markdown' ? await api.exportManuscript(project.id) : await api.exportManuscriptBinary(project.id, format)
+      const blob = 'content' in exported ? new Blob([exported.content], { type: 'text/markdown;charset=utf-8' }) : exported.blob
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -135,7 +133,7 @@ export function ProjectLibraryPage({
       anchor.click()
       anchor.remove()
       URL.revokeObjectURL(url)
-      setNotice(`《${project.title}》正文已按 UTF-8 Markdown 导出。`)
+      setNotice(`《${project.title}》正文已导出为 ${format === 'markdown' ? 'UTF-8 Markdown' : format.toUpperCase()}。`)
       void api.recordBetaEvent(project.id, 'manuscript_export').catch(() => undefined)
     } catch (failure) {
       reportError(failure, '正文导出失败')
@@ -217,7 +215,7 @@ export function ProjectLibraryPage({
         <div>
           <p>MANUSCRIPT DOCK / 作品书架</p>
           <h1 id="project-library-title">你的作品，都在这里</h1>
-          <span>继续上次停下的章节，或者钉住一个新的重生时刻。</span>
+          <span>继续上次停下的章节，或者钉住一个新的故事起点。</span>
         </div>
         <div className="project-library-hero-actions">
           <button type="button" onClick={onCreate}>新建一部作品</button>
@@ -260,9 +258,12 @@ export function ProjectLibraryPage({
               </dl>
             </div>
             <div className="project-volume-actions">
+              <select aria-label={`选择《${project.title}》正文导出格式`} value={exportFormats[project.id] ?? 'markdown'} onChange={(event) => setExportFormats((current) => ({ ...current, [project.id]: event.target.value as 'markdown' | 'docx' | 'epub' }))}>
+                <option value="markdown">Markdown</option><option value="docx">DOCX</option><option value="epub">EPUB</option>
+              </select>
               <button
                 type="button"
-                aria-label={`导出《${project.title}》Markdown 正文`}
+                aria-label={`导出《${project.title}》正文`}
                 disabled={busyAction !== null}
                 onClick={() => { void exportManuscript(project) }}
               >

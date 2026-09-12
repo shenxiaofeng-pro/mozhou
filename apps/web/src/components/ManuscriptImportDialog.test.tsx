@@ -40,13 +40,16 @@ describe('ManuscriptImportDialog', () => {
 
     render(<ManuscriptImportDialog onClose={vi.fn()} onImported={imported} />)
     const file = new File(['旧稿'], '旧稿.txt', { type: 'text/plain' })
-    fireEvent.change(screen.getByLabelText('选择 TXT 或 Markdown 稿件'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('选择 TXT、Markdown、DOCX 或 EPUB 稿件'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: '识别卷章结构' }))
 
     expect(await screen.findByDisplayValue('旧城再起')).toBeInTheDocument()
     expect(confirm).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '确认并创建作品' })).toBeDisabled()
 
+    fireEvent.change(screen.getByLabelText('类型'), { target: { value: 'eastern_fantasy' } })
+    expect(screen.getByLabelText('故事纪年')).toHaveValue(728)
+    expect(screen.getByLabelText('起始地域')).toHaveValue('九州·云泽')
     fireEvent.change(screen.getByDisplayValue('旧城再起'), { target: { value: '南平新局' } })
     fireEvent.change(screen.getByLabelText('第 1 卷标题'), { target: { value: '闽北风云' } })
     fireEvent.change(screen.getByLabelText('第 1 卷第 1 章标题'), { target: { value: '回到九二' } })
@@ -55,6 +58,9 @@ describe('ManuscriptImportDialog', () => {
 
     await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
       title: '南平新局',
+      genre: 'eastern_fantasy',
+      rebirth_year: 728,
+      rebirth_location: '九州·云泽',
       unrecognized_action: 'prepend_first_chapter',
       confirm_warnings: true,
       volumes: [expect.objectContaining({

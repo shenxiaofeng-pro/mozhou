@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from pathlib import Path
-from time import monotonic, sleep
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.ai import AiGatewayManager
 from app.database import Database
 from app.jobs.models import Job, JobKind, JobState
-from app.jobs.repository import JobRepository
+from app.jobs.repository import JobRepository, JobRequiresNewPreflightError
 from app.jobs.runtime import JobRuntime
 from app.main import create_app
 from app.models import (
@@ -264,17 +263,11 @@ def test_reference_job_reuses_every_artifact_before_failed_call(
     assert failed.state == JobState.FAILED
     assert len(failed.artifacts) == fail_once_at - 1
 
-    jobs.retry_job(job.id)
-    assert runtime.run_once() is True
-
-    completed = jobs.get_job_detail(job.id)
-    workspace = repository.get_workspace(project_id)
-    assert completed.state == JobState.SUCCEEDED
-    assert completed.progress_current == completed.progress_total == 43
-    assert len(completed.artifacts) == 43
-    assert gateway.call_count == 44
-    assert len(workspace.reference_pattern_cards) == 1
-    assert workspace.reference_pattern_cards[0].source_job_id == job.id
+    with pytest.raises(JobRequiresNewPreflightError):
+        jobs.retry_job(job.id)
+    assert runtime.run_once() is False
+    assert jobs.get_job(job.id).state == JobState.FAILED
+    assert repository.get_workspace(project_id).reference_pattern_cards == []
 
 
 def test_reference_job_reuses_fusion_artifact_if_card_materialization_crashes(
@@ -318,17 +311,15 @@ def test_reference_job_reuses_fusion_artifact_if_card_materialization_crashes(
 
     runtime.run_once()
     failed = jobs.get_job_detail(job.id)
-    calls_after_failure = gateway.call_count
     assert failed.state == JobState.FAILED
     assert len(failed.artifacts) == 7
     assert repository.get_workspace(project_id).reference_pattern_cards == []
 
-    jobs.retry_job(job.id)
-    runtime.run_once()
-
-    assert jobs.get_job(job.id).state == JobState.SUCCEEDED
-    assert gateway.call_count == calls_after_failure
-    assert len(repository.get_workspace(project_id).reference_pattern_cards) == 1
+    with pytest.raises(JobRequiresNewPreflightError):
+        jobs.retry_job(job.id)
+    assert runtime.run_once() is False
+    assert jobs.get_job(job.id).state == JobState.FAILED
+    assert repository.get_workspace(project_id).reference_pattern_cards == []
 
 
 def test_reference_job_cancel_stops_before_next_provider_call(tmp_path: Path) -> None:
@@ -378,7 +369,7 @@ def test_reference_job_submission_is_idempotent_and_never_copies_source_text(
     assert all("甲甲甲甲" not in payload and "乙乙乙乙" not in payload for payload in task_payloads)
 
 
-def test_reference_analysis_job_api_finishes_in_background(tmp_path: Path) -> None:
+def test_reference_analysis_job_api_is_read_only_and_creates_no_job(tmp_path: Path) -> None:
     manager = AiGatewayManager(RecoverableReferenceGateway())
     with TestClient(create_app(tmp_path / "api.db", ai_manager=manager)) as client:
         workspace = client.post(
@@ -413,17 +404,10 @@ def test_reference_analysis_job_api_finishes_in_background(tmp_path: Path) -> No
                 "confirm_external_processing": True,
             },
         )
-        # Windows CI can spend several seconds flushing the SQLite-heavy fake
-        # Map/Reduce plan even though no network is involved.
-        deadline = monotonic() + 15
-        detail = submitted.json()
-        while detail["state"] not in {"succeeded", "failed", "cancelled"} and monotonic() < deadline:
-            sleep(0.01)
-            detail = client.get(f"/api/jobs/{detail['id']}").json()
-
         summary = client.get(f"/api/projects/{project_id}/summary").json()
+        jobs = client.get(f"/api/projects/{project_id}/jobs").json()
 
-    assert submitted.status_code == 202
-    assert detail["state"] == "succeeded"
-    assert detail["progress_current"] == detail["progress_total"] == 7
-    assert summary["reference_pattern_cards"][0]["source_job_id"] == detail["id"]
+    assert submitted.status_code == 410
+    assert submitted.json()["detail"]["code"] == "reference_v1_read_only"
+    assert jobs == []
+    assert summary["reference_pattern_cards"] == []

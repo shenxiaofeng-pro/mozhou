@@ -1,3 +1,4 @@
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock
 from time import sleep
@@ -11,6 +12,8 @@ from app.models import (
     AiProvider,
     AiStatus,
     ApplyTextChangeSetRequest,
+    Chapter,
+    ChapterStatus,
     CreateChapterRequest,
     CreateProjectRequest,
     CreateTextChangeSetRequest,
@@ -23,6 +26,7 @@ from app.models import (
     ReviewFindingDraftSet,
     ReviewSeverity,
     RollbackChapterVersionRequest,
+    TransitionChapterRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
 )
@@ -145,6 +149,26 @@ def _review_fixture(tmp_path: Path) -> tuple[
         UpdateChapterRequest(content=manuscript, expected_revision=chapter.revision),
     )
     return repository, reviews, jobs, service, runtime, gateway, chapter.id
+
+
+def _approve_review_fixture(repository: ProjectRepository, chapter_id: str) -> Chapter:
+    chapter = repository.get_chapter(chapter_id)
+    for target in (ChapterStatus.DRAFTED, ChapterStatus.REVIEWING):
+        chapter = repository.transition_chapter(
+            chapter.id,
+            TransitionChapterRequest(
+                target_status=target,
+                expected_revision=chapter.revision,
+            ),
+        )
+    return repository.transition_chapter(
+        chapter.id,
+        TransitionChapterRequest(
+            target_status=ChapterStatus.APPROVED,
+            expected_revision=chapter.revision,
+            expected_content_sha256=sha256(chapter.content.encode()).hexdigest(),
+        ),
+    )
 
 
 def test_seven_dimension_review_keeps_successes_and_reruns_one_failure(
@@ -273,6 +297,49 @@ def test_three_and_ten_chapter_windows_freeze_exact_scope(tmp_path: Path) -> Non
     assert "第7章独有正文标记" not in three_context.payload
 
 
+def test_review_worker_rejects_prior_window_change_before_provider_call(
+    tmp_path: Path,
+) -> None:
+    repository, _reviews, jobs, service, runtime, gateway, chapter_id = _review_fixture(
+        tmp_path
+    )
+    first = repository.get_chapter(chapter_id)
+    target = repository.create_chapter(
+        first.project_id,
+        CreateChapterRequest(expected_last_chapter_number=1, title="第二章 窗口门禁"),
+    )
+    target = repository.update_chapter(
+        target.id,
+        UpdateChapterRequest(
+            content="老陈突然改口叫他沈总。",
+            expected_revision=target.revision,
+        ),
+    )
+    job = service.submit(
+        target.id,
+        ReviewChapterRequest(
+            expected_revision=target.revision,
+            window_size=2,
+            dimensions=[ReviewDimension.CHARACTER],
+            confirm_external_processing=True,
+        ),
+    )
+    repository.update_chapter(
+        first.id,
+        UpdateChapterRequest(
+            content=first.content + "\n作者在提交后改写了前置正文。",
+            expected_revision=first.revision,
+        ),
+    )
+
+    assert runtime.run_once()
+
+    failed = jobs.get_job(job.id)
+    assert failed.state.value == "failed"
+    assert failed.error_code == "creative_context_changed"
+    assert gateway.calls == []
+
+
 def test_partial_change_set_and_rollback_create_new_versions(tmp_path: Path) -> None:
     repository, reviews, _jobs, _service, _runtime, _gateway, chapter_id = (
         _review_fixture(tmp_path)
@@ -378,3 +445,98 @@ def test_partial_change_set_and_rollback_create_new_versions(tmp_path: Path) -> 
         "change_set_apply",
         "rollback",
     }
+
+
+def test_change_set_created_after_approval_still_requires_reopening_chapter(
+    tmp_path: Path,
+) -> None:
+    repository, reviews, _jobs, _service, _runtime, _gateway, chapter_id = (
+        _review_fixture(tmp_path)
+    )
+    approved = _approve_review_fixture(repository, chapter_id)
+    evidence_text = "老陈突然改口叫他沈总。"
+    start = approved.content.index(evidence_text)
+    finding = make_finding(
+        job_id="approved-change-set-fixture",
+        project_id=approved.project_id,
+        chapter_id=approved.id,
+        chapter_revision=approved.revision,
+        dimension=ReviewDimension.CHARACTER,
+        severity=ReviewSeverity.WARNING,
+        code="approved_title_mismatch",
+        title="称谓突变",
+        evidence=[
+            ReviewEvidence(
+                kind=ReviewEvidenceKind.BODY,
+                chapter_id=approved.id,
+                start_char=start,
+                end_char=start + len(evidence_text),
+                excerpt=evidence_text,
+                label="第 1 章正文",
+            )
+        ],
+        explanation="称谓没有关系变化支撑。",
+        suggestion="改回此前称谓。",
+        suggested_replacement="老陈仍旧叫他小沈。",
+        confidence=0.96,
+    ).model_copy(update={"review_job_id": None})
+    reviews.save_findings([finding])
+    change_set = reviews.create_text_change_set(
+        approved.id,
+        CreateTextChangeSetRequest(finding_ids=[finding.id]),
+    )
+
+    with pytest.raises(StaleReviewRevisionError):
+        reviews.apply_text_change_set(
+            change_set.id,
+            ApplyTextChangeSetRequest(
+                selected_change_ids=[change_set.changes[0].id],
+                expected_set_revision=change_set.revision,
+                expected_chapter_revision=approved.revision,
+            ),
+        )
+
+    unchanged = repository.get_chapter(approved.id)
+    assert unchanged.content == approved.content
+    assert unchanged.status == ChapterStatus.APPROVED
+    assert unchanged.revision == approved.revision
+    assert reviews.get_text_change_set(change_set.id).state.value == "candidate"
+
+
+def test_approved_chapter_must_be_reopened_before_version_rollback(
+    tmp_path: Path,
+) -> None:
+    repository, reviews, _jobs, _service, _runtime, _gateway, chapter_id = (
+        _review_fixture(tmp_path)
+    )
+    approved = _approve_review_fixture(repository, chapter_id)
+    target = next(
+        version
+        for version in reviews.list_chapter_versions(approved.id)
+        if version.source.value == "initial"
+    )
+
+    with pytest.raises(StaleReviewRevisionError):
+        reviews.rollback_chapter_version(
+            approved.id,
+            target.id,
+            RollbackChapterVersionRequest(expected_revision=approved.revision),
+        )
+
+    unchanged = repository.get_chapter(approved.id)
+    assert unchanged.status == ChapterStatus.APPROVED
+    assert unchanged.content == approved.content
+    reopened = repository.transition_chapter(
+        approved.id,
+        TransitionChapterRequest(
+            target_status=ChapterStatus.DRAFTED,
+            expected_revision=approved.revision,
+        ),
+    )
+    rolled_back = reviews.rollback_chapter_version(
+        reopened.id,
+        target.id,
+        RollbackChapterVersionRequest(expected_revision=reopened.revision),
+    )
+    assert rolled_back.status == ChapterStatus.DRAFTED
+    assert rolled_back.content == target.content

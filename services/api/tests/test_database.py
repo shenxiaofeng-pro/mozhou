@@ -14,7 +14,17 @@ from app.database import (
     DatabaseMigrationError,
     UnsupportedDatabaseVersionError,
 )
-from app.migrations import MIGRATIONS, Migration, v9, v12
+from app.jobs import JobKind, JobRepository
+from app.migrations import MIGRATIONS, Migration, v9, v12, v21
+from app.models import CreateProjectRequest, Genre
+from app.providers import (
+    AiTaskType,
+    CreateModelProfileRequest,
+    ModelProfileRepository,
+    ProviderKind,
+    UpdateAiTaskDefaultRequest,
+)
+from app.repository import ProjectRepository
 
 
 def test_database_initializes_required_tables(tmp_path: Path) -> None:
@@ -31,14 +41,42 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
     assert [row["name"] for row in rows] == [
         "ai_provider_profiles",
         "ai_task_defaults",
+        "author_ideas",
+        "author_preference_candidates",
+        "author_preference_sources",
+        "author_preferences",
         "beta_events",
         "beta_feedback",
         "book_blueprints",
+        "canon_decision_batches",
+        "canon_delta_candidates",
+        "canon_reconciliations",
+        "canon_records",
+        "chapter_annotations",
+        "chapter_approvals",
+        "chapter_candidate_merge_sources",
+        "chapter_candidate_reviews",
+        "chapter_draft_candidate_locks",
+        "chapter_draft_candidate_versions",
+        "chapter_draft_candidates",
         "chapter_events",
+        "chapter_outline_candidate_versions",
+        "chapter_outline_candidates",
+        "chapter_preflight_checks",
+        "chapter_production_events",
+        "chapter_productions",
         "chapter_versions",
+        "chapter_writing_outcomes",
         "chapters",
+        "comic_episodes",
+        "comic_projects",
+        "comic_scenes",
+        "comic_versions",
         "context_directives",
         "context_packets",
+        "craft_pattern_assets",
+        "craft_pattern_job_outputs",
+        "creative_plan_dependencies",
         "directory_events",
         "fact_change_sets",
         "fact_changes",
@@ -52,8 +90,11 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "manuscript_scenes",
         "manuscript_volumes",
         "originality_reports",
+        "plan_rebase_candidates",
+        "project_craft_pattern_assets",
         "project_recovery_points",
         "project_reference_works",
+        "project_writing_pattern_profiles",
         "projects",
         "reference_analysis_cache",
         "reference_analysis_cache_sources",
@@ -62,26 +103,374 @@ def test_database_initializes_required_tables(tmp_path: Path) -> None:
         "reference_pattern_cards",
         "reference_segments",
         "reference_works",
+        "research_findings",
+        "research_sessions",
+        "research_sources",
         "review_findings",
         "rolling_chapter_plans",
+        "rolling_plan_replenishments",
         "run_events",
         "sandbox_branches",
         "sandbox_candidates",
         "sandbox_rounds",
         "sandbox_runs",
         "sandbox_snapshots",
+        "scene_originality_checks",
+        "scene_originality_findings",
         "schema_migrations",
         "serial_daily_goals",
         "source_cards",
         "source_documents",
         "story_entities",
         "story_facts",
+        "story_relationships",
         "story_threads",
         "text_change_sets",
         "text_changes",
         "timeline_events",
+        "topic_decision_candidate_sets",
+        "topic_decision_candidates",
+        "topic_decision_versions",
+        "topic_decisions",
         "volume_plans",
+        "writing_pattern_adaptation_candidate_versions",
+        "writing_pattern_adaptation_candidates",
+        "writing_pattern_adaptation_proposals",
+        "writing_pattern_adoptions",
+        "writing_pattern_originality_findings",
+        "writing_pattern_originality_reports",
+        "writing_pattern_profile_versions",
+        "writing_pattern_recipe_sources",
+        "writing_pattern_recipe_versions",
+        "writing_pattern_recipes",
     ]
+
+
+def test_database_upgrades_v21_to_latest_without_losing_existing_jobs(tmp_path: Path) -> None:
+    database_path = tmp_path / "v21.db"
+    database = Database(database_path)
+    database.initialize()
+    repository = ProjectRepository(database)
+    workspace = repository.create_project(
+        CreateProjectRequest(
+            title="旧库漫剧升级",
+            genre=Genre.URBAN_REBIRTH,
+            rebirth_year=1998,
+            rebirth_location="南平",
+        )
+    )
+    jobs = JobRepository(database)
+    job, _ = jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.RESEARCH_EXTRACTION,
+        idempotency_key="pre-v22-job",
+        input_payload={"source": "existing"},
+        provider="local",
+        model="rules-v1",
+    )
+    with database.connect() as connection:
+        for table in ("comic_scenes", "comic_versions", "comic_episodes", "comic_projects"):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 22")
+        connection.execute("PRAGMA user_version=21")
+
+    database.initialize()
+
+    with database.connect() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 31
+        assert (
+            connection.execute("SELECT id FROM jobs WHERE id = ?", (job.id,)).fetchone()[0]
+            == job.id
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'comic_%'"
+            ).fetchone()[0]
+            == 4
+        )
+
+
+def test_database_upgrades_v22_reference_applications_to_active_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "v22-reference-applications.db"
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE reference_pattern_applications (
+                id TEXT PRIMARY KEY,
+                originality_status TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO reference_pattern_applications (
+                id, originality_status, revision
+            ) VALUES ('application-1', 'blocked', 4);
+            PRAGMA user_version=22;
+            """
+        )
+
+    monkeypatch.setattr(database_module, "MIGRATIONS", MIGRATIONS[:23])
+    monkeypatch.setattr(database_module, "CURRENT_SCHEMA_VERSION", 23)
+    database = Database(database_path)
+    database.initialize()
+    database.initialize()
+
+    with database.connect() as connection:
+        migrated = connection.execute(
+            """
+            SELECT lifecycle_state, lifecycle_revision, originality_status, revision
+            FROM reference_pattern_applications WHERE id = 'application-1'
+            """
+        ).fetchone()
+        migration_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 23"
+        ).fetchone()[0]
+        schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert migrated is not None
+    assert tuple(migrated) == ("active", 0, "blocked", 4)
+    assert migration_count == 1
+    assert schema_version == 23
+    backups = list((tmp_path / "backups").glob("mozhou-before-v23-*.db"))
+    assert len(backups) == 1
+
+
+def test_database_upgrades_v23_projects_to_nonblocking_topic_drafts(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "v23-topic-decisions.db"
+    database = Database(database_path)
+    database.initialize()
+    repository = ProjectRepository(database)
+    with_blueprint = repository.create_project(
+        CreateProjectRequest(
+            title="旧库有蓝图",
+            genre=Genre.URBAN_REBIRTH,
+            rebirth_year=1998,
+            rebirth_location="南平",
+        )
+    )
+    without_blueprint = repository.create_project(
+        CreateProjectRequest(
+            title="旧库无蓝图",
+            genre=Genre.EASTERN_FANTASY,
+            rebirth_year=728,
+            rebirth_location="九州·云泽",
+        )
+    )
+    timestamp = "2026-09-01T00:00:00+00:00"
+    blueprint_content = {
+        "title": "旧蓝图",
+        "genre": "urban_rebirth",
+        "rebirth_year": 1998,
+        "rebirth_location": "南平",
+        "target_audience": "男频年代创业读者",
+        "core_selling_points": ["真实产业升级"],
+        "core_desire": "先救家人，再重建产业信用",
+        "divergence_point": "抢在违约前救下第一张订单",
+        "long_term_promise": "每卷完成一次产业跃迁",
+        "ending_direction": "完成代际和解",
+        "protagonist_arc": "从补偿走向责任",
+        "resource_growth": "从信息差到组织能力",
+        "relationship_design": "家人是价值锚",
+    }
+    with database.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO book_blueprints (
+                id, project_id, idea, content_json, locks_json, field_versions_json,
+                stale_fields_json, plan_stale, source_candidate_id, revision,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, NULL, 0, ?, ?)
+            """,
+            (
+                "legacy-blueprint",
+                with_blueprint.project.id,
+                "一张订单改变家庭命运",
+                json.dumps(blueprint_content, ensure_ascii=False),
+                json.dumps({field: False for field in blueprint_content}),
+                json.dumps({field: 1 for field in blueprint_content}),
+                timestamp,
+                timestamp,
+            ),
+        )
+        for table in (
+            "topic_decision_candidates",
+            "topic_decision_candidate_sets",
+            "topic_decision_versions",
+            "topic_decisions",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 24")
+        connection.execute("PRAGMA user_version=23")
+
+    database.initialize()
+    database.initialize()
+
+    with database.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT project_id, content_json, confirmed_revision, onboarding_required
+            FROM topic_decisions ORDER BY project_id
+            """
+        ).fetchall()
+        migration_count = connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 24"
+        ).fetchone()[0]
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 31
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    by_project = {row["project_id"]: row for row in rows}
+    migrated_blueprint = json.loads(by_project[with_blueprint.project.id]["content_json"])
+    migrated_plain = json.loads(by_project[without_blueprint.project.id]["content_json"])
+    assert migrated_blueprint["premise"] == "一张订单改变家庭命运"
+    assert migrated_blueprint["core_desire"] == blueprint_content["core_desire"]
+    assert migrated_blueprint["target_audience"] == blueprint_content["target_audience"]
+    assert migrated_plain["premise"] == "旧库无蓝图"
+    assert migrated_plain["subgenre"] == "东方玄幻"
+    assert all(row["confirmed_revision"] is None for row in rows)
+    assert all(row["onboarding_required"] == 0 for row in rows)
+    assert migration_count == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v31-*.db"))) == 1
+
+    assert repository.get_workspace(with_blueprint.project.id).next_action == "continue_writing"
+    assert repository.get_workspace(without_blueprint.project.id).next_action == "plan_book"
+
+    created, was_created = JobRepository(database).create_job(
+        project_id=with_blueprint.project.id,
+        kind=JobKind.TOPIC_DECISION,
+        workflow="topic_candidates",
+        idempotency_key="v24-topic-job",
+        input_payload={"based_on_revision": 0},
+        provider="test",
+        model="test",
+    )
+    assert was_created is True
+    assert created.kind == JobKind.TOPIC_DECISION
+
+
+def test_database_upgrades_v24_with_append_only_craft_pattern_tables(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "v24-craft-patterns.db"
+    database = Database(database_path)
+    database.initialize()
+    repository = ProjectRepository(database)
+    workspace = repository.create_project(
+        CreateProjectRequest(
+            title="v24 原稿",
+            genre=Genre.EASTERN_FANTASY,
+            rebirth_year=728,
+            rebirth_location="九州·云泽",
+        )
+    )
+    with database.connect() as connection:
+        connection.execute("DROP TABLE craft_pattern_job_outputs")
+        connection.execute("DROP TABLE project_craft_pattern_assets")
+        connection.execute("DROP TABLE craft_pattern_assets")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 25")
+        connection.execute("PRAGMA user_version=24")
+
+    database.initialize()
+    database.initialize()
+
+    with database.connect() as connection:
+        names = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert {
+            "craft_pattern_assets",
+            "craft_pattern_job_outputs",
+            "project_craft_pattern_assets",
+        } <= names
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 31
+        assert (
+            connection.execute(
+                "SELECT title FROM projects WHERE id = ?",
+                (workspace.project.id,),
+            ).fetchone()[0]
+            == "v24 原稿"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 25"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v31-*.db"))) == 1
+
+
+def test_database_upgrades_v25_with_immutable_writing_pattern_tables(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "v25-writing-patterns.db"
+    database = Database(database_path)
+    database.initialize()
+    workspace = ProjectRepository(database).create_project(
+        CreateProjectRequest(
+            title="v25 原稿",
+            genre=Genre.WESTERN_FANTASY,
+            rebirth_year=1260,
+            rebirth_location="北境港城",
+        )
+    )
+    with database.connect() as connection:
+        for table in (
+            "project_writing_pattern_profiles",
+            "writing_pattern_profile_versions",
+            "writing_pattern_recipe_sources",
+            "writing_pattern_recipe_versions",
+            "writing_pattern_recipes",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 26")
+        connection.execute("PRAGMA user_version=25")
+
+    database.initialize()
+    database.initialize()
+
+    with database.connect() as connection:
+        names = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert {
+            "writing_pattern_recipes",
+            "writing_pattern_recipe_versions",
+            "writing_pattern_recipe_sources",
+            "writing_pattern_profile_versions",
+            "project_writing_pattern_profiles",
+        } <= names
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 31
+        assert (
+            connection.execute(
+                "SELECT title FROM projects WHERE id = ?",
+                (workspace.project.id,),
+            ).fetchone()[0]
+            == "v25 原稿"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 26"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v31-*.db"))) == 1
 
 
 def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -> None:
@@ -90,7 +479,9 @@ def test_database_adds_brief_columns_to_existing_chapter_table(tmp_path: Path) -
         connection.execute(
             "CREATE TABLE chapters (id TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '')"
         )
-        connection.execute("INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿"))
+        connection.execute(
+            "INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿")
+        )
         connection.commit()
 
     database = Database(database_path)
@@ -143,21 +534,21 @@ def test_database_upgrade_creates_one_backup_and_records_schema_version(tmp_path
     database = Database(database_path)
     database.initialize()
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v17-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v31-*.db"))
     assert len(backups) == 1
     assert list((tmp_path / "backups").iterdir()) == backups
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (17,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (31,)
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("SELECT value FROM markers").fetchone() == ("升级前内容",)
 
     database.initialize()
 
-    assert list((tmp_path / "backups").glob("mozhou-before-v17-*.db")) == backups
+    assert list((tmp_path / "backups").glob("mozhou-before-v31-*.db")) == backups
 
 
 @pytest.mark.parametrize("source_version", [1, 2])
-def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
+def test_database_runs_v1_and_v2_fixtures_to_latest_without_losing_data(
     tmp_path: Path,
     source_version: int,
 ) -> None:
@@ -193,7 +584,9 @@ def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
                 )
                 """
             )
-        connection.execute("INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿"))
+        connection.execute(
+            "INSERT INTO chapters (id, content) VALUES (?, ?)", ("chapter-1", "原稿")
+        )
         connection.execute("INSERT INTO generation_runs (id) VALUES (?)", ("run-1",))
         connection.execute(f"PRAGMA user_version={source_version}")
         connection.commit()
@@ -204,16 +597,14 @@ def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
         chapter = connection.execute(
             "SELECT content, opening_hook, state_change, ending_cliffhanger FROM chapters"
         ).fetchone()
-        generation = connection.execute(
-            "SELECT provider, model FROM generation_runs"
-        ).fetchone()
+        generation = connection.execute("SELECT provider, model FROM generation_runs").fetchone()
         history = connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
         ).fetchall()
         assert connection.execute("SELECT value FROM markers").fetchone() == (
             f"v{source_version} 原稿",
         )
-        assert connection.execute("PRAGMA user_version").fetchone() == (17,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (31,)
 
     assert chapter == ("原稿", "", "", "")
     assert generation == ("demo", "replay-v1")
@@ -235,8 +626,161 @@ def test_database_runs_v1_and_v2_fixtures_to_v17_without_losing_data(
         (15, "manuscript_hierarchy_and_serial_goals"),
         (16, "closed_beta_evaluation"),
         (17, "narrative_sandbox"),
+        (18, "scene_plot_graph_originality"),
+        (19, "ai_narrative_sandbox"),
+        (20, "research_agent"),
+        (21, "document_formats_and_author_productivity"),
+        (22, "ai_comic_drama_workbench"),
+        (23, "reference_application_lifecycle"),
+        (24, "topic_decisions"),
+        (25, "craft_pattern_v2"),
+        (26, "writing_pattern_recipes"),
+        (27, "pattern_adaptation_originality_gate"),
+        (28, "pattern_adaptation_job_routing"),
+        (29, "unified_creative_context_and_plan_rebase"),
+        (30, "chapter_production_workbench"),
+        (31, "canon_reconciliation_and_author_preferences"),
     ]
-    assert len(list((tmp_path / "backups").glob("mozhou-before-v17-*.db"))) == 1
+    assert len(list((tmp_path / "backups").glob("mozhou-before-v31-*.db"))) == 1
+
+
+def test_v19_rebuilds_job_constraints_without_losing_v18_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "v18-jobs.db"
+    with monkeypatch.context() as migration_patch:
+        migration_patch.setattr(database_module, "MIGRATIONS", MIGRATIONS[:18])
+        Database(database_path).initialize()
+    database = Database(database_path)
+    workspace = ProjectRepository(database).create_project(
+        CreateProjectRequest(
+            title="迁移验证",
+            genre=Genre.URBAN_REBIRTH,
+            rebirth_year=1992,
+            rebirth_location="南平",
+            chapter_target_words=3000,
+            safety_buffer_chapters=3,
+        )
+    )
+    legacy_job, _ = JobRepository(database).create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.REVIEW,
+        idempotency_key="legacy-review",
+        input_payload={"legacy": True},
+        provider="local",
+        model="rules-v1",
+    )
+
+    Database(database_path).initialize()
+
+    jobs = JobRepository(Database(database_path))
+    assert jobs.get_job(legacy_job.id).kind == JobKind.REVIEW
+    created, was_created = jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.SANDBOX_AI_ROUND,
+        workflow="sandbox_ai_round_v1",
+        idempotency_key="new-ai-round",
+        input_payload={"run_id": "test"},
+        provider="test",
+        model="test",
+    )
+    assert was_created is True
+    assert created.kind == JobKind.SANDBOX_AI_ROUND
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (31,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        for table in ("generation_runs", "fact_change_sets", "text_change_sets"):
+            columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert "creative_safety_json" in columns
+
+
+def test_v28_adds_dedicated_pattern_routes_without_losing_v27_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "v27-pattern-routing.db"
+    with monkeypatch.context() as migration_patch:
+        migration_patch.setattr(database_module, "MIGRATIONS", MIGRATIONS[:27])
+        Database(database_path).initialize()
+    database = Database(database_path)
+    workspace = ProjectRepository(database).create_project(
+        CreateProjectRequest(
+            title="模式迁移路由升级",
+            genre=Genre.EASTERN_FANTASY,
+            rebirth_year=2000,
+            rebirth_location="架空大陆",
+        )
+    )
+    jobs = JobRepository(database)
+    legacy_job, _ = jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.REVIEW,
+        workflow="chapter_review",
+        idempotency_key="review-before-v28",
+        input_payload={"legacy": True},
+        provider="local",
+        model="rules-v1",
+    )
+    legacy_chunk, _ = jobs.ensure_chunk(
+        legacy_job.id,
+        kind=JobKind.REVIEW,
+        ordinal=0,
+        idempotency_key="review-chunk-before-v28",
+        input_payload={"legacy": True},
+    )
+    profiles = ModelProfileRepository(database)
+    profile = profiles.create_profile(
+        CreateModelProfileRequest(
+            name="模式迁移专线",
+            provider=ProviderKind.OPENAI_COMPATIBLE,
+            base_url="https://models.example.com/v1",
+            model="adaptation-model",
+        )
+    )
+    review_default = profiles.set_task_default(
+        AiTaskType.REVIEW,
+        UpdateAiTaskDefaultRequest(profile_id=profile.id),
+    )
+
+    Database(database_path).initialize()
+
+    migrated_jobs = JobRepository(Database(database_path))
+    assert migrated_jobs.get_job(legacy_job.id).kind == JobKind.REVIEW
+    assert migrated_jobs.list_chunks(legacy_job.id)[0].id == legacy_chunk.id
+    migrated_profiles = ModelProfileRepository(Database(database_path))
+    assert migrated_profiles.get_task_default(AiTaskType.REVIEW) == review_default
+    pattern_default = migrated_profiles.set_task_default(
+        AiTaskType.PATTERN_ADAPTATION,
+        UpdateAiTaskDefaultRequest(profile_id=profile.id),
+    )
+    assert pattern_default.task_type == AiTaskType.PATTERN_ADAPTATION
+    pattern_job, created = migrated_jobs.create_job(
+        project_id=workspace.project.id,
+        kind=JobKind.PATTERN_ADAPTATION,
+        workflow="pattern_adaptation",
+        idempotency_key="pattern-after-v28",
+        input_payload={"profile_fingerprint_sha256": "a" * 64},
+        provider="openai_compatible",
+        provider_profile_id=profile.id,
+        model=profile.model,
+    )
+    pattern_chunk, chunk_created = migrated_jobs.ensure_chunk(
+        pattern_job.id,
+        kind=JobKind.PATTERN_ADAPTATION,
+        ordinal=0,
+        idempotency_key="pattern-chunk-after-v28",
+        input_payload={"candidate_count": 3},
+    )
+    assert created is True
+    assert chunk_created is True
+    assert pattern_job.kind == JobKind.PATTERN_ADAPTATION
+    assert pattern_chunk.kind == JobKind.PATTERN_ADAPTATION
+    with closing(sqlite3.connect(database_path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (31,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_v9_migrates_project_reference_text_to_global_asset_without_loss() -> None:
@@ -315,6 +859,78 @@ def test_v9_migrates_project_reference_text_to_global_asset_without_loss() -> No
     assert tuple(migrated_content) == ("原文四字",)
 
 
+def test_v21_maps_populated_v20_document_columns_by_name() -> None:
+    """v10 appended reference provenance columns, so SELECT * would shift every later value."""
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.executescript(
+            """
+            CREATE TABLE projects (id TEXT PRIMARY KEY);
+            CREATE TABLE chapters (id TEXT PRIMARY KEY);
+            CREATE TABLE story_entities (id TEXT PRIMARY KEY);
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE source_documents (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, source_filename TEXT NOT NULL,
+                source_format TEXT NOT NULL, source_sha256 TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL, source_encoding TEXT NOT NULL,
+                encoding_confidence REAL NOT NULL, import_state TEXT NOT NULL,
+                source_spans_json TEXT NOT NULL, duplicate_of_id TEXT, content TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE reference_works (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, source_filename TEXT NOT NULL,
+                source_format TEXT NOT NULL, rights_basis TEXT NOT NULL,
+                total_characters INTEGER NOT NULL, segment_target_characters INTEGER NOT NULL,
+                content_sha256 TEXT NOT NULL, source_encoding TEXT NOT NULL,
+                encoding_confidence REAL NOT NULL, import_state TEXT NOT NULL,
+                duplicate_of_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL, source_spans_json TEXT NOT NULL
+            );
+            INSERT INTO source_documents VALUES (
+                'document-1', '南平工业志', 'industry.pdf', 'pdf',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                'pdf-text', 1.0, 'ready', '[]', NULL, '每件成本十二元',
+                '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'
+            );
+            INSERT INTO reference_works VALUES (
+                'work-1', '厂城旧梦', 'factory.md', 'markdown', 'self_owned', 8, 500000,
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                'utf-8', 1.0, 'ready', NULL,
+                '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z',
+                'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', '[]'
+            );
+            """
+        )
+
+        v21.upgrade(connection, SCHEMA)
+        document = connection.execute(
+            "SELECT source_format, source_encoding, import_state, content FROM source_documents"
+        ).fetchone()
+        work = connection.execute(
+            """SELECT source_format, source_sha256, source_encoding, encoding_confidence,
+                      import_state, source_spans_json, duplicate_of_id
+               FROM reference_works"""
+        ).fetchone()
+
+    assert document is not None
+    assert tuple(document) == ("pdf", "pdf-text", "ready", "每件成本十二元")
+    assert work is not None
+    assert tuple(work) == (
+        "markdown",
+        "d" * 64,
+        "utf-8",
+        1.0,
+        "ready",
+        "[]",
+        None,
+    )
+
+
 def test_v12_turns_legacy_application_into_unchecked_versioned_blueprint() -> None:
     dimension = {
         "summary": "先保住家庭收入",
@@ -385,10 +1001,15 @@ def test_v12_turns_legacy_application_into_unchecked_versioned_blueprint() -> No
                 "project-1",
                 "card-1",
                 '["era"]',
-                json.dumps({"era": {
-                    "summary": dimension["summary"],
-                    "transferable_logic": dimension["transferable_logic"],
-                }}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "era": {
+                            "summary": dimension["summary"],
+                            "transferable_logic": dimension["transferable_logic"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
                 "重组为师徒竞争",
                 "迁移旧蓝图",
                 "2026-08-10T00:00:00Z",
@@ -413,9 +1034,7 @@ def test_v12_turns_legacy_application_into_unchecked_versioned_blueprint() -> No
     assert migrated is not None
     blueprint = json.loads(migrated["blueprint_json"])
     assert blueprint["dimensions"]["era"]["mode"] == "preserve"
-    assert blueprint["dimensions"]["era"]["source"]["source_segment_ids"] == [
-        "segment-1"
-    ]
+    assert blueprint["dimensions"]["era"]["source"]["source_segment_ids"] == ["segment-1"]
     assert migrated["originality_status"] == "needs_check"
     assert migrated["revision"] == 0
     assert migrated["updated_at"] == "2026-08-10T00:00:00Z"
@@ -457,20 +1076,19 @@ def test_failed_migration_keeps_original_database_and_readable_backup(
     assert sha256(database_path.read_bytes()).hexdigest() == original_sha256
     with closing(sqlite3.connect(database_path)) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (1,)
-        assert connection.execute("SELECT value FROM markers").fetchone() == (
-            "不可丢失的原稿",
+        assert connection.execute("SELECT value FROM markers").fetchone() == ("不可丢失的原稿",)
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
+            ).fetchone()
+            is None
         )
-        assert connection.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'should_never_reach_original'"
-        ).fetchone() is None
 
-    backups = list((tmp_path / "backups").glob("mozhou-before-v17-*.db"))
+    backups = list((tmp_path / "backups").glob("mozhou-before-v31-*.db"))
     assert len(backups) == 1
     with closing(sqlite3.connect(backups[0])) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
-        assert connection.execute("SELECT value FROM markers").fetchone() == (
-            "不可丢失的原稿",
-        )
+        assert connection.execute("SELECT value FROM markers").fetchone() == ("不可丢失的原稿",)
     assert not list(tmp_path.glob(".mozhou-migrate-*.db*"))
 
 

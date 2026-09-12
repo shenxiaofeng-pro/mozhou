@@ -11,6 +11,24 @@ const packet: ContextPacket = {
   chapter_id: '19c7daae-21f2-42f6-9520-daec63e4a726',
   chapter_revision: 3,
   task_type: 'chapter_draft',
+  purpose: 'draft',
+  subject: {
+    kind: 'chapter',
+    id: '19c7daae-21f2-42f6-9520-daec63e4a726',
+    revision: 3,
+    content_sha256: 'b'.repeat(64),
+  },
+  profile_fingerprint_sha256: null,
+  dependency_snapshot: {
+    schema_version: 1,
+    topic: null,
+    writing_pattern_profile: null,
+    writing_pattern_source_availability: null,
+    base_blueprint: null,
+    subject_sha256: 'b'.repeat(64),
+  },
+  dependency_fingerprint_sha256: 'f'.repeat(64),
+  blocking_reasons: [],
   compiler_version: 'rule-compiler-v1',
   token_budget: 8000,
   used_tokens: 6200,
@@ -148,7 +166,7 @@ it('allows an author-pinned item to be cleared after it becomes required', async
       packet={{ ...packet, items: [packet.items[0], pinnedItem, packet.items[2]] }}
       directives={[{
         id: 'directive-pin',
-        chapter_id: packet.chapter_id,
+        chapter_id: packet.chapter_id!,
         project_id: packet.project_id,
         source_kind: 'fact',
         source_id: 'fact-cash',
@@ -165,4 +183,43 @@ it('allows an author-pinned item to be cleared after it becomes required', async
 
   await user.click(screen.getByRole('button', { name: '取消固定' }))
   expect(onClearDirective).toHaveBeenCalledWith(pinnedItem)
+})
+
+it('never renders reference titles, source text, evidence coordinates or identifiers', () => {
+  const protectedItem = {
+    ...packet.items[1],
+    id: 'writing-pattern-profile:secret-id',
+    kind: 'writing_pattern_profile' as const,
+    label: '《秘密畅销书》模式',
+    content: '这是绝不能出现在界面中的参考原句。',
+    selection_reason: '来自《秘密畅销书》第十二章',
+    source_refs: [{
+      ...packet.items[1].source_refs[0],
+      kind: 'writing_pattern_profile',
+      source_id: 'secret-profile-id',
+      label: '《秘密畅销书》证据',
+      character_start: 100,
+      character_end: 220,
+    }],
+    conflict_notes: ['秘密证据句'],
+  }
+
+  render(
+    <ContextPacketPanel
+      packet={{ ...packet, items: [protectedItem], conflict_notes: ['秘密作品冲突'] }}
+      directives={[]}
+      busy={false}
+      onSetDirective={vi.fn()}
+      onClearDirective={vi.fn()}
+    />,
+  )
+
+  expect(screen.getByText('写作模式规则')).toBeVisible()
+  expect(screen.getByText(/不会显示参考作品原文/)).toBeVisible()
+  expect(screen.queryByText(/秘密畅销书/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/绝不能出现在/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/秘密证据句/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/秘密作品冲突/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/字符 100/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/secret-profile-id/)).not.toBeInTheDocument()
 })

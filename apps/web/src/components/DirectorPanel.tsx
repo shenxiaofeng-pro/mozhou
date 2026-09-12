@@ -7,11 +7,13 @@ import type {
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
-import { api } from '../api'
+import { ApiError, api } from '../api'
+import { getStoryAnchorLabels } from '../genre'
 import { AiCoauthorPanel } from './AiCoauthorPanel'
 import { BookDirectorPanel } from './BookDirectorPanel'
+import { ChapterFeedbackPanel } from './ChapterFeedbackPanel'
 import { FactTimelinePanel } from './FactTimelinePanel'
 import { FutureKnowledgePanel } from './FutureKnowledgePanel'
 import { RhythmWindowPanel } from './RhythmWindowPanel'
@@ -28,6 +30,7 @@ interface DirectorPanelProps {
   canUpdateChapter: boolean
   onChapterUpdated: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+  onOpenChapterProduction?: () => void
 }
 
 type BriefField = 'title' | 'reader_promise' | 'opening_hook' | 'state_change' | 'emotional_payoff' | 'ending_cliffhanger'
@@ -46,6 +49,11 @@ const primaryTransitions: Record<ChapterStatus, { target: ChapterStatus, label: 
   approved: { target: 'drafted', label: '重新打开修改' },
 }
 
+async function sha256Text(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 export function DirectorPanel({
   project,
   workspace,
@@ -54,6 +62,7 @@ export function DirectorPanel({
   canUpdateChapter,
   onChapterUpdated,
   onWorkspaceChanged,
+  onOpenChapterProduction,
 }: DirectorPanelProps) {
   const [brief, setBrief] = useState(() => ({
     title: chapter.title,
@@ -65,10 +74,12 @@ export function DirectorPanel({
   }))
   const [contextReady, setContextReady] = useState(false)
   const [run, setRun] = useState<GenerationRun | null>(null)
+  const [staleRunId, setStaleRunId] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [isSavingBrief, setIsSavingBrief] = useState(false)
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const anchorLabels = getStoryAnchorLabels(project.genre)
   const briefComplete = brief.opening_hook.trim().length > 0
     && brief.state_change.trim().length > 0
     && brief.ending_cliffhanger.trim().length > 0
@@ -85,6 +96,15 @@ export function DirectorPanel({
     || brief.ending_cliffhanger !== (chapter.ending_cliffhanger ?? '')
   const isApproved = chapter.status === 'approved'
   const canGenerate = chapter.status === 'planned' || chapter.status === 'drafted'
+  const candidateIsStale = Boolean(
+    run
+    && run.state !== 'applied'
+    && (
+      staleRunId === run.id
+      || run.expected_chapter_revision !== chapter.revision
+      || isApproved
+    ),
+  )
   const primaryTransition = primaryTransitions[chapter.status]
   const transitionNeedsPlan = primaryTransition.target === 'reviewing' || primaryTransition.target === 'approved'
   const transitionDisabled = !canUpdateChapter
@@ -97,6 +117,7 @@ export function DirectorPanel({
     setBrief((current) => ({ ...current, [field]: value }))
     setContextReady(false)
     setRun(null)
+    setStaleRunId(null)
   }
 
   async function saveBrief() {
@@ -111,6 +132,7 @@ export function DirectorPanel({
       onChapterUpdated(updated)
       setContextReady(false)
       setRun(null)
+      setStaleRunId(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '章纲保存失败')
     } finally {
@@ -125,9 +147,13 @@ export function DirectorPanel({
       onChapterUpdated(await api.transitionChapter(chapter.id, {
         target_status: targetStatus,
         expected_revision: chapter.revision,
+        ...(targetStatus === 'approved'
+          ? { expected_content_sha256: await sha256Text(chapter.content) }
+          : {}),
       }))
       setContextReady(false)
       setRun(null)
+      setStaleRunId(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '章节状态更新失败')
     } finally {
@@ -139,7 +165,9 @@ export function DirectorPanel({
     setIsRunning(true)
     setError(null)
     try {
-      setRun(await api.startGeneration(chapter.id, chapter.revision))
+      const nextRun = await api.startGeneration(chapter.id, chapter.revision)
+      setRun(nextRun)
+      setStaleRunId(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '假模型运行失败')
     } finally {
@@ -148,14 +176,19 @@ export function DirectorPanel({
   }
 
   async function applyCandidate() {
-    if (!run) return
+    if (!run || candidateIsStale) return
     setIsRunning(true)
     setError(null)
     try {
       onChapterUpdated(await api.applyGeneration(run.id, chapter.revision))
       setRun((current) => current ? { ...current, state: 'applied' } : current)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '候选稿采用失败')
+      if (caught instanceof ApiError && caught.status === 409) {
+        setStaleRunId(run.id)
+        setError(null)
+      } else {
+        setError(caught instanceof Error ? caught.message : '候选稿采用失败')
+      }
     } finally {
       setIsRunning(false)
     }
@@ -172,6 +205,19 @@ export function DirectorPanel({
     })
     setContextReady(false)
     setRun(null)
+    setStaleRunId(null)
+  }
+
+  const showDraftCandidate = useCallback((nextRun: GenerationRun) => {
+    setRun(nextRun)
+    setStaleRunId(null)
+    setError(null)
+  }, [])
+
+  function closeCandidate() {
+    setRun(null)
+    setStaleRunId(null)
+    setError(null)
   }
 
   return (
@@ -180,29 +226,43 @@ export function DirectorPanel({
         <p className="section-kicker">本章导演台</p>
         <h2>先确定这一章改变什么</h2>
       </header>
-      <BookDirectorPanel
-        project={project}
-        workspace={workspace}
-        chapter={chapter}
-        canUseChapter={canGenerate && canUpdateChapter}
-        onWorkspaceChanged={onWorkspaceChanged}
-        onAdoptBrief={adoptAiProposal}
-        onDraftGenerated={setRun}
-      />
-      <ReviewWorkbench
-        key={`${chapter.id}:${chapter.revision}`}
-        chapter={chapter}
-        canReview={canUpdateChapter && wordCount > 0}
-        onChapterUpdated={onChapterUpdated}
-      />
+      {onOpenChapterProduction ? (
+        <section className="chapter-production-compatibility" aria-labelledby="chapter-production-compatibility-title">
+          <p className="section-kicker">UNIFIED CHAPTER FLOW</p>
+          <h3 id="chapter-production-compatibility-title">单章 AI 入口已合并</h3>
+          <p>原“AI 共创”、“一键单章链”和“示范候选稿”已并入同一个工作台，统一使用费用确认、候选隔离和版本门禁。</p>
+          <button type="button" onClick={onOpenChapterProduction}>前往单章生产工作台</button>
+        </section>
+      ) : null}
+      <section id="director-stage-book" className="director-stage-target" tabIndex={-1} aria-label="选题与整书阶段">
+        <BookDirectorPanel
+          project={project}
+          workspace={workspace}
+          chapter={chapter}
+          canUseChapter={canGenerate && canUpdateChapter}
+          onWorkspaceChanged={onWorkspaceChanged}
+          onAdoptBrief={adoptAiProposal}
+          onDraftGenerated={showDraftCandidate}
+          onOpenChapterProduction={onOpenChapterProduction}
+        />
+      </section>
+      <section id="director-stage-review" className="director-stage-target" tabIndex={-1} aria-label="审校定稿阶段">
+        <ReviewWorkbench
+          key={`${chapter.id}:${chapter.revision}`}
+          chapter={chapter}
+          canReview={canUpdateChapter && wordCount > 0}
+          onChapterUpdated={onChapterUpdated}
+        />
+      </section>
       <AiCoauthorPanel
         chapter={chapter}
         canUseAi={canGenerate && canUpdateChapter}
         canGenerateDraft={canGenerate && canUpdateChapter && savedBriefComplete && !briefDirty}
         onAdoptProposal={adoptAiProposal}
-        onDraftGenerated={setRun}
+        onDraftGenerated={showDraftCandidate}
+        onOpenChapterProduction={onOpenChapterProduction}
       />
-      <section className="chapter-brief">
+      {!onOpenChapterProduction ? <section className="chapter-brief">
         <div className="brief-fields">
           <label>
             章节标题
@@ -293,16 +353,16 @@ export function DirectorPanel({
                 ? '准备章节上下文'
                 : '先完成并保存章纲'}
         </button>
-      </section>
+      </section> : null}
 
-      {contextReady ? (
+      {contextReady && !onOpenChapterProduction ? (
         <section className="context-preview" aria-labelledby="context-title">
           <div className="pulse-heading">
             <h3 id="context-title">本次使用的上下文</h3>
             <span>本地预览</span>
           </div>
           <ul>
-            <li><span>重生锚点</span><strong>{project.rebirth_year} · {project.rebirth_location}</strong></li>
+            <li><span>{anchorLabels.anchor}</span><strong>{project.rebirth_year} · {project.rebirth_location}</strong></li>
             <li><span>当前正文</span><strong>{wordCount} 字 · revision {chapter.revision}</strong></li>
             <li><span>章节目标</span><strong>{chapter.state_change || '尚未设置'}</strong></li>
             <li><span>运行模型</span><strong>内置假模型 · ¥0</strong></li>
@@ -313,18 +373,31 @@ export function DirectorPanel({
         </section>
       ) : null}
 
-      {run?.candidate_content ? (
+      {run?.candidate_content && !onOpenChapterProduction ? (
         <section className="candidate-card" aria-labelledby="candidate-title">
           <div className="pulse-heading">
             <h3 id="candidate-title">候选正文</h3>
-            <span>{run.state === 'applied' ? '已采用' : `${run.provider} · ${run.model}`}</span>
+            <span>{run.state === 'applied' ? '已采用' : candidateIsStale ? '旧版本' : `${run.provider} · ${run.model}`}</span>
           </div>
           <p>{run.candidate_content}</p>
+          {candidateIsStale ? (
+            <div id="candidate-stale-explanation" className="agent-error" role="alert">
+              <strong>候选基于旧版本</strong>
+              <p>生成后正文已被修改或定稿，这份候选不能再覆盖当前稿件。</p>
+              <div className="state-actions">
+                <button type="button" onClick={generateCandidate} disabled={isRunning || !canGenerate}>
+                  {isRunning ? '正在重新生成…' : '基于当前正文重新生成'}
+                </button>
+                <button type="button" onClick={closeCandidate} disabled={isRunning}>关闭此候选</button>
+              </div>
+            </div>
+          ) : null}
           <button
             className="primary-action"
             type="button"
             onClick={applyCandidate}
-            disabled={isRunning || run.state === 'applied'}
+            disabled={isRunning || run.state === 'applied' || candidateIsStale}
+            aria-describedby={candidateIsStale ? 'candidate-stale-explanation' : undefined}
           >
             {run.state === 'applied' ? '已写入草稿' : '采用并写入编辑器'}
           </button>
@@ -364,6 +437,12 @@ export function DirectorPanel({
           </button>
         </div>
       </section>
+
+      <ChapterFeedbackPanel
+        project={project}
+        chapter={chapter}
+        onWorkspaceChanged={onWorkspaceChanged}
+      />
 
       <RhythmWindowPanel chapters={workspace.chapters} activeChapterId={chapter.id} />
 

@@ -1,13 +1,21 @@
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.ai import AiGatewayManager, build_chapter_context
+from app.context import ContextCompiler, ContextItemKind, ContextTaskType
+from app.database import Database
 from app.main import create_app
 from app.models import (
+    AcknowledgeOriginalityReportRequest,
+    AiChapterBriefProposal,
     AiProvider,
     AiStatus,
+    ApplyReferencePatternRequest,
     ReferenceDimensionSynthesis,
     ReferenceSynthesisProposal,
     Workspace,
@@ -52,6 +60,24 @@ class ReferenceAnalysisStubGateway:
             differences=["一个偏家庭生存，一个偏商业扩张"],
             relationship_recomposition="新作改为师徒与竞争者的三角制衡。",
             originality_risks=["避免沿用相同产业、专名和四场景顺序"],
+        )
+
+    def propose_brief(
+        self,
+        workspace: Workspace,
+        chapter: object,
+        author_intent: str,
+    ) -> AiChapterBriefProposal:
+        del workspace, chapter, author_intent
+        return AiChapterBriefProposal(
+            title="第一章 机会窗口",
+            reader_promise="主角完成第一次命运改写",
+            opening_hook="停产名单提前出现",
+            state_change="主角为家人争取到新机会",
+            emotional_payoff="家人暂时摆脱危机",
+            ending_cliffhanger="竞争者已经注意到主角",
+            why_this_works="信息差立即转化为行动和回报。",
+            risk_notes=[],
         )
 
 
@@ -291,15 +317,9 @@ def test_ai_synthesizes_six_dimensions_from_segments_across_multiple_books(
         )
         reloaded = client.get(f"/api/projects/{project_id}")
 
-    assert proposal.status_code == 200
-    assert proposal.json()["id"]
-    assert proposal.json()["era"]["source_segment_ids"] == segment_ids
-    assert proposal.json()["resource_system"]["summary"] == "资源从知识、人脉逐步转化为组织能力。"
-    assert proposal.json()["key_scene_sequence"]["summary"].startswith("发现机会")
-    assert "content" not in proposal.text
-    assert [card["id"] for card in reloaded.json()["reference_pattern_cards"]] == [
-        proposal.json()["id"]
-    ]
+    assert proposal.status_code == 410
+    assert proposal.json()["detail"]["code"] == "reference_v1_read_only"
+    assert reloaded.json()["reference_pattern_cards"] == []
     assert "时代机会与家庭欲望" not in reloaded.text
     assert "资源积累与竞争因果" not in reloaded.text
 
@@ -346,8 +366,8 @@ def test_reference_synthesis_requires_consent_and_multiple_works(tmp_path: Path)
             },
         )
 
-    assert without_consent.status_code == 400
-    assert one_work_only.status_code == 400
+    assert without_consent.status_code == 410
+    assert one_work_only.status_code == 410
     assert without_consent.json() == one_work_only.json()
 
 
@@ -376,14 +396,7 @@ def test_author_applies_selected_pattern_dimensions_to_current_project(tmp_path:
                 },
             ).json()
             segment_ids.append(work["segments"][0]["id"])
-        card = client.post(
-            f"/api/projects/{project_id}/reference-synthesis-proposals",
-            json={
-                "selected_segment_ids": segment_ids,
-                "author_focus": "重点比较重生后的资源增长",
-                "confirm_external_processing": True,
-            },
-        ).json()
+        card = _seed_v1_card(client, project_id, segment_ids)
 
         applied = client.post(
             f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
@@ -435,24 +448,49 @@ def test_author_applies_selected_pattern_dimensions_to_current_project(tmp_path:
         "",
     ))
 
-    assert applied.status_code == 201
-    assert duplicate.status_code == 409
+    assert {applied.status_code, duplicate.status_code, cross_project.status_code} == {410}
     assert unconfirmed.status_code == 422
-    assert cross_project.status_code == 404
-    assert applied.json()["selected_dimensions"] == ["era", "resource_system"]
-    assert set(applied.json()["dimensions"]) == {"era", "resource_system"}
-    assert applied.json()["dimensions"]["resource_system"]["summary"].startswith("资源从知识")
-    assert reloaded.json()["reference_pattern_applications"] == [applied.json()]
-    assert "合成内容1" not in applied.text
-    assert context["applied_reference_patterns"][0]["selected_dimensions"] == [
-        "era",
-        "resource_system",
-    ]
-    assert context["applied_reference_patterns"][0]["dimensions"]["era"]["summary"]
-    assert "source_segment_ids" not in json.dumps(
-        context["applied_reference_patterns"],
-        ensure_ascii=False,
+    assert all(
+        response.json()["detail"]["code"] == "reference_v1_read_only"
+        for response in (applied, duplicate, cross_project)
     )
+    assert reloaded.json()["reference_pattern_applications"] == []
+    assert context["applied_reference_patterns"] == []
+
+
+def _seed_v1_card(
+    client: TestClient,
+    project_id: str,
+    segment_ids: list[str],
+) -> dict[str, object]:
+    repository = client.app.state.repository
+    segments = repository.get_reference_segments_for_analysis(project_id, segment_ids)
+    proposal = ReferenceAnalysisStubGateway().synthesize_references(
+        segments,
+        "重点比较重生后的资源增长",
+    )
+    return repository.save_reference_pattern_card(
+        project_id,
+        segment_ids,
+        "重点比较重生后的资源增长",
+        proposal,
+        "openai",
+        "legacy-fixture",
+    ).model_dump(mode="json")
+
+
+def _seed_v1_application(
+    client: TestClient,
+    project_id: str,
+    card: dict[str, object],
+    body: dict[str, object],
+) -> dict[str, object]:
+    request = ApplyReferencePatternRequest.model_validate(body)
+    return client.app.state.repository.apply_reference_pattern(
+        project_id,
+        str(card["id"]),
+        request,
+    ).model_dump(mode="json")
 
 
 def _create_pattern_fixture(
@@ -468,6 +506,8 @@ def _create_pattern_fixture(
             "genre": "urban_rebirth",
             "rebirth_year": 1998,
             "rebirth_location": "福建南平",
+            "template_id": "urban-rebirth",
+            "topic_seed": f"{title}：主角重生后改写家庭与产业命运。",
         },
     ).json()
     project_id = workspace["project"]["id"]
@@ -483,14 +523,7 @@ def _create_pattern_fixture(
             },
         ).json()
         segment_ids.append(work["segments"][0]["id"])
-    card = client.post(
-        f"/api/projects/{project_id}/reference-synthesis-proposals",
-        json={
-            "selected_segment_ids": segment_ids,
-            "author_focus": "重点比较重生后的资源增长",
-            "confirm_external_processing": True,
-        },
-    ).json()
+    card = _seed_v1_card(client, project_id, segment_ids)
     return workspace, card, project_id
 
 
@@ -536,6 +569,213 @@ def _blueprint(
     }
 
 
+def test_reference_application_lifecycle_archives_and_reactivates_passed_blueprint(
+    tmp_path: Path,
+) -> None:
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "lifecycle.db", ai_manager=manager)) as client:
+        workspace, card, project_id = _create_pattern_fixture(
+            client,
+            title="参考应用生命周期",
+            source_phrase="普通的时代机会参考内容",
+        )
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
+                "selected_dimensions": ["era"],
+                "application_note": "仅保留抽象机会窗口",
+                "confirm_original_adaptation": True,
+                "blueprint": _blueprint(card, ["era"]),
+            },
+        )
+        endpoint = (
+            f"/api/projects/{project_id}/reference-pattern-applications/"
+            f"{application['id']}/lifecycle"
+        )
+
+        archived = client.patch(
+            endpoint,
+            json={"lifecycle_state": "archived", "expected_lifecycle_revision": 0},
+        )
+        chapter_id = workspace["chapters"][0]["id"]
+        sync_unblocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-proposals",
+            json={"expected_revision": 0, "author_intent": "先保住家人的生计"},
+        )
+        preview_unblocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-preview",
+            json={"expected_revision": 0, "author_intent": "先保住家人的生计"},
+        )
+        confirmed_topic = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": workspace["topic_decision"]["revision"]},
+        ).json()
+        director_unblocked = client.post(
+            f"/api/projects/{project_id}/director/startup-preview",
+            json={
+                "idea": "回到九八年改写家庭命运",
+                "candidate_count": 3,
+                "expected_topic_revision": confirmed_topic["revision"],
+            },
+        )
+        archived_workspace = Workspace.model_validate(
+            client.get(f"/api/projects/{project_id}").json()
+        )
+        legacy_context = json.loads(
+            build_chapter_context(
+                archived_workspace,
+                archived_workspace.chapters[0],
+                "",
+            )
+        )
+        packet = ContextCompiler().compile(
+            archived_workspace,
+            archived_workspace.chapters[0],
+            author_intent="先保住家人的生计",
+            task_type=ContextTaskType.CHAPTER_BRIEF,
+            token_budget=8_000,
+        )
+        archive = client.get(
+            f"/api/projects/{project_id}/export?include_reference_assets=true"
+        ).json()
+        restored_response = client.post("/api/project-imports", json=archive)
+        restored_archived = restored_response.json()["reference_pattern_applications"][0]
+        stale = client.patch(
+            endpoint,
+            json={"lifecycle_state": "draft", "expected_lifecycle_revision": 0},
+        )
+        reactivated = client.patch(
+            endpoint,
+            json={"lifecycle_state": "active", "expected_lifecycle_revision": 1},
+        )
+        reloaded = client.get(f"/api/projects/{project_id}").json()
+
+    assert application["originality_status"] == "passed"
+    assert application["lifecycle_state"] == "active"
+    assert archived.status_code == 200
+    assert archived.json()["lifecycle_state"] == "archived"
+    assert archived.json()["lifecycle_revision"] == 1
+    assert archived.json()["revision"] == 0
+    assert sync_unblocked.status_code == 410
+    assert preview_unblocked.status_code == 200
+    assert director_unblocked.status_code == 200
+    assert legacy_context["applied_reference_patterns"] == []
+    assert all(item.kind != ContextItemKind.APPROVED_BLUEPRINT for item in packet.items)
+    assert archive["format_version"] == 18
+    assert archive["tables"]["reference_pattern_applications"][0][
+        "lifecycle_state"
+    ] == "archived"
+    assert restored_response.status_code == 201
+    assert restored_archived["lifecycle_state"] == "archived"
+    assert restored_archived["lifecycle_revision"] == 1
+    assert restored_archived["revision"] == 0
+    assert stale.status_code == 409
+    assert reactivated.status_code == 200
+    assert reactivated.json()["lifecycle_state"] == "active"
+    assert reactivated.json()["lifecycle_revision"] == 2
+    assert reactivated.json()["revision"] == 0
+    assert reloaded["reference_pattern_applications"][0]["lifecycle_state"] == "active"
+
+
+def test_blocked_reference_application_cannot_be_reactivated(
+    tmp_path: Path,
+) -> None:
+    source_phrase = "雨夜里的旧码头藏着改变整座城市命运与所有人生选择的唯一密钥"
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "blocked-lifecycle.db", ai_manager=manager)) as client:
+        _, card, project_id = _create_pattern_fixture(
+            client,
+            title="高风险应用归档",
+            source_phrase=source_phrase,
+        )
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
+                "selected_dimensions": ["era", "core_desire", "conflict_causality"],
+                "application_note": "先暂停这个高风险方案",
+                "confirm_original_adaptation": True,
+                "blueprint": _blueprint(
+                    card,
+                    ["era", "core_desire", "conflict_causality"],
+                    era_summary=source_phrase,
+                ),
+            },
+        )
+        endpoint = (
+            f"/api/projects/{project_id}/reference-pattern-applications/"
+            f"{application['id']}/lifecycle"
+        )
+        archived = client.patch(
+            endpoint,
+            json={"lifecycle_state": "archived", "expected_lifecycle_revision": 0},
+        )
+        rejected = client.patch(
+            endpoint,
+            json={"lifecycle_state": "active", "expected_lifecycle_revision": 1},
+        )
+        reloaded = client.get(f"/api/projects/{project_id}").json()[
+            "reference_pattern_applications"
+        ][0]
+
+    assert application["originality_status"] == "blocked"
+    assert archived.status_code == 200
+    assert rejected.status_code == 409
+    assert reloaded["lifecycle_state"] == "archived"
+    assert reloaded["lifecycle_revision"] == 1
+    assert reloaded["revision"] == application["revision"]
+
+
+@pytest.mark.parametrize("missing_check", ["originality_reports", "scene_originality_checks"])
+def test_passed_reference_application_requires_current_checks_before_reactivation(
+    tmp_path: Path,
+    missing_check: str,
+) -> None:
+    database_path = tmp_path / f"missing-{missing_check}.db"
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(database_path, ai_manager=manager)) as client:
+        _, card, project_id = _create_pattern_fixture(
+            client,
+            title="检查版本匹配",
+            source_phrase="普通的时代机会参考内容",
+        )
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
+                "selected_dimensions": ["era"],
+                "application_note": "校验当前检查版本",
+                "confirm_original_adaptation": True,
+                "blueprint": _blueprint(card, ["era"]),
+            },
+        )
+        endpoint = (
+            f"/api/projects/{project_id}/reference-pattern-applications/"
+            f"{application['id']}/lifecycle"
+        )
+        archived = client.patch(
+            endpoint,
+            json={"lifecycle_state": "archived", "expected_lifecycle_revision": 0},
+        )
+        with Database(database_path).connect() as connection:
+            connection.execute(
+                f"DELETE FROM {missing_check} WHERE application_id = ?",
+                (application["id"],),
+            )
+        rejected = client.patch(
+            endpoint,
+            json={"lifecycle_state": "active", "expected_lifecycle_revision": 1},
+        )
+
+    assert application["originality_status"] == "passed"
+    assert archived.status_code == 200
+    assert rejected.status_code == 409
+
+
 def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
     tmp_path: Path,
 ) -> None:
@@ -549,16 +789,17 @@ def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
         )
         dimensions = ["era", "core_desire", "conflict_causality"]
         blueprint = _blueprint(card, dimensions, era_summary=source_phrase)
-        applied = client.post(
-            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
-            json={
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
                 "selected_dimensions": dimensions,
                 "application_note": "进行风险验证",
                 "confirm_original_adaptation": True,
                 "blueprint": blueprint,
             },
         )
-        application = applied.json()
         report = client.get(
             f"/api/originality-reports/{application['latest_report_id']}"
         )
@@ -610,19 +851,16 @@ def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
                 "expected_revision": 0,
             },
         )
-        updated_report = client.get(
-            f"/api/originality-reports/{updated.json()['latest_report_id']}"
-        )
         archive = client.get(
             f"/api/projects/{project_id}/export?include_reference_assets=true"
         ).json()
         restored = client.post("/api/project-imports", json=archive)
+        assert restored.status_code == 201, restored.text
         restored_application = restored.json()["reference_pattern_applications"][0]
         restored_report = client.get(
             f"/api/originality-reports/{restored_application['latest_report_id']}"
         )
 
-    assert applied.status_code == 201
     assert application["risk_level"] == "high"
     assert application["originality_status"] == "blocked"
     assert report.status_code == 200
@@ -632,22 +870,20 @@ def test_high_risk_blueprint_blocks_writing_until_changed_dimension_passes(
         item["evidence_sha256"] and "密钥" not in item["summary"]
         for item in report.json()["evidence"]
     )
+    assert sync_blocked.status_code == 410
+    assert draft_sync_blocked.status_code == 410
     assert {
-        sync_blocked.status_code,
         preview_blocked.status_code,
         job_blocked.status_code,
-        draft_sync_blocked.status_code,
         draft_preview_blocked.status_code,
         draft_job_blocked.status_code,
     } == {409}
-    assert acknowledge_blocked.status_code == 409
-    assert updated.status_code == 200
-    assert updated.json()["originality_status"] == "passed"
-    assert updated.json()["blueprint"]["dimensions"]["era"]["version"] == 2
-    assert updated.json()["blueprint"]["dimensions"]["core_desire"]["version"] == 1
-    assert updated_report.json()["checked_dimensions"] == ["era"]
+    assert acknowledge_blocked.status_code == 410
+    assert updated.status_code == 410
+    assert acknowledge_blocked.json()["detail"]["code"] == "reference_v1_read_only"
+    assert updated.json()["detail"]["code"] == "reference_v1_read_only"
     assert restored.status_code == 201
-    assert restored_application["originality_status"] == "passed"
+    assert restored_application["originality_status"] == "blocked"
     assert restored_report.status_code == 200
     assert restored_report.json()["application_id"] == restored_application["id"]
     assert source_phrase not in restored_report.text
@@ -671,15 +907,17 @@ def test_medium_risk_requires_report_acknowledgement_before_writing(
             "key_scene_sequence",
             "ending",
         ]
-        applied = client.post(
-            f"/api/projects/{project_id}/reference-pattern-cards/{card['id']}/applications",
-            json={
+        applied = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
                 "selected_dimensions": dimensions,
                 "application_note": "检查多维组合",
                 "confirm_original_adaptation": True,
                 "blueprint": _blueprint(card, dimensions),
             },
-        ).json()
+        )
         chapter_id = workspace["chapters"][0]["id"]
         blocked = client.post(
             f"/api/chapters/{chapter_id}/ai-brief-preview",
@@ -704,11 +942,10 @@ def test_medium_risk_requires_report_acknowledgement_before_writing(
     assert applied["risk_level"] == "medium"
     assert applied["originality_status"] == "review_required"
     assert blocked.status_code == 409
-    assert premature_acknowledgement.status_code == 409
     assert opened_report.json()["viewed_at"] is not None
-    assert acknowledged.status_code == 200
-    assert acknowledged.json()["originality_status"] == "passed"
-    assert acknowledged.json()["revision"] == 0
+    assert premature_acknowledgement.status_code == 410
+    assert acknowledged.status_code == 410
+    assert acknowledged.json()["detail"]["code"] == "reference_v1_read_only"
     assert viewed_report.json()["viewed_at"] is not None
     reloaded_workspace = Workspace.model_validate(reloaded)
     context = json.loads(build_chapter_context(
@@ -716,4 +953,190 @@ def test_medium_risk_requires_report_acknowledgement_before_writing(
         reloaded_workspace.chapters[0],
         "",
     ))
-    assert len(context["applied_reference_patterns"]) == 1
+    assert context["applied_reference_patterns"] == []
+
+
+def test_scene_plot_graph_blocks_reworded_same_sequence(tmp_path: Path) -> None:
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "scene-high.db", ai_manager=manager)) as client:
+        workspace, card, project_id = _create_pattern_fixture(
+            client,
+            title="场景图高风险",
+            source_phrase="普通行业背景，不包含候选场景原句",
+        )
+        blueprint = _blueprint(card, ["key_scene_sequence"])
+        state = blueprint["dimensions"]["key_scene_sequence"]
+        state["mode"] = "reconstruct"
+        state["source_beats"] = [
+            "主角调查仓库并查明名单去向",
+            "主角从父亲手中获得关键账本",
+            "主角在大会上当众揭露厂长",
+            "厂长下属倒戈并公开证据完成反击",
+        ]
+        state["key_beats"] = [
+            "主人公追查库房，摸清名册流向",
+            "主人公从家人处拿到关键文件",
+            "主人公在会上公开主管的问题",
+            "领导的下属反水并公布凭证完成抗衡",
+        ]
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
+                "selected_dimensions": ["key_scene_sequence"],
+                "application_note": "检测场景语义",
+                "confirm_original_adaptation": True,
+                "blueprint": blueprint,
+            },
+        )
+        scene_check = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-checks"
+        )
+        chapter_id = workspace["chapters"][0]["id"]
+        blocked = client.post(
+            f"/api/chapters/{chapter_id}/ai-brief-preview",
+            json={"expected_revision": 0, "author_intent": "继续创作"},
+        )
+        acknowledgement = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+
+    assert application["originality_status"] == "blocked"
+    assert application["risk_level"] == "high"
+    assert application["threshold_version"] == "scene-plot-graph-v2"
+    assert scene_check.status_code == 200
+    assert scene_check.json()["risk_level"] == "high"
+    assert scene_check.json()["source_work_count"] == 2
+    assert "普通行业背景" not in scene_check.text
+    assert blocked.status_code == 409
+    assert acknowledgement.status_code == 410
+
+
+def test_scene_plot_graph_medium_requires_view_then_ack(tmp_path: Path) -> None:
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(tmp_path / "scene-medium.db", ai_manager=manager)) as client:
+        _, card, project_id = _create_pattern_fixture(
+            client,
+            title="场景图中风险",
+            source_phrase="普通行业背景",
+        )
+        blueprint = _blueprint(card, ["key_scene_sequence"])
+        state = blueprint["dimensions"]["key_scene_sequence"]
+        state["mode"] = "reconstruct"
+        state["source_beats"] = [
+            "调查市场价格",
+            "获得一份合同",
+            "与竞争者谈判",
+            "公开交易结果",
+        ]
+        state["key_beats"] = [
+            "核查市场行情",
+            "拜访一位新客户",
+            "解决仓储故障",
+            "公布交易成果",
+        ]
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
+                "selected_dimensions": ["key_scene_sequence"],
+                "application_note": "检测中风险",
+                "confirm_original_adaptation": True,
+                "blueprint": blueprint,
+            },
+        )
+        latest = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-checks"
+        ).json()
+        premature = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+        viewed = client.get(f"/api/scene-originality-checks/{latest['id']}")
+        acknowledged = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-acknowledgements",
+            json={"expected_revision": 0},
+        )
+
+    assert latest["risk_level"] == "medium"
+    assert latest["viewed_at"] is None
+    assert premature.status_code == 410
+    assert viewed.json()["viewed_at"] is not None
+    assert acknowledged.status_code == 410
+    assert acknowledged.json()["detail"]["code"] == "reference_v1_read_only"
+
+
+def test_v18_migration_blocks_legacy_application_until_scene_check_runs(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-v17.db"
+    manager = AiGatewayManager(ReferenceAnalysisStubGateway())
+    with TestClient(create_app(database_path, ai_manager=manager)) as client:
+        _, card, project_id = _create_pattern_fixture(
+            client,
+            title="旧版蓝图补检",
+            source_phrase="普通的时代机会参考内容",
+        )
+        dimensions = [item for item in (
+            "era",
+            "core_desire",
+            "conflict_causality",
+            "resource_system",
+            "key_scene_sequence",
+            "ending",
+        )]
+        application = _seed_v1_application(
+            client,
+            project_id,
+            card,
+            {
+                "selected_dimensions": dimensions,
+                "application_note": "模拟已确认的 v17 蓝图",
+                "confirm_original_adaptation": True,
+                "blueprint": _blueprint(card, dimensions),
+            },
+        )
+        client.get(f"/api/originality-reports/{application['latest_report_id']}")
+        passed = client.app.state.repository.acknowledge_originality_report(
+            project_id,
+            str(application["id"]),
+            AcknowledgeOriginalityReportRequest(expected_revision=0),
+        )
+        assert passed.originality_status.value == "passed"
+
+    with closing(sqlite3.connect(database_path)) as connection, connection:
+        connection.execute("DELETE FROM scene_originality_checks")
+        connection.execute(
+            "UPDATE originality_reports SET acknowledged_at = NULL WHERE id = ?",
+            (application["latest_report_id"],),
+        )
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 18")
+        connection.execute("PRAGMA user_version=17")
+        connection.commit()
+
+    Database(database_path).initialize()
+
+    with closing(sqlite3.connect(database_path)) as connection, connection:
+        migrated_status = connection.execute(
+            "SELECT originality_status FROM reference_pattern_applications WHERE id = ?",
+            (application["id"],),
+        ).fetchone()
+        inferred_ack = connection.execute(
+            "SELECT acknowledged_at FROM originality_reports WHERE id = ?",
+            (application["latest_report_id"],),
+        ).fetchone()
+    with TestClient(create_app(database_path, ai_manager=manager)) as client:
+        before = client.get(f"/api/projects/{project_id}").json()
+        check = client.post(
+            f"/api/projects/{project_id}/reference-blueprints/{application['id']}/scene-originality-checks"
+        )
+        after = client.get(f"/api/projects/{project_id}").json()
+
+    assert migrated_status == ("needs_check",)
+    assert inferred_ack is not None and inferred_ack[0] is not None
+    assert before["reference_pattern_applications"][0]["originality_status"] == "needs_check"
+    assert check.status_code == 404
+    assert after["reference_pattern_applications"][0]["originality_status"] == "needs_check"

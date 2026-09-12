@@ -71,6 +71,7 @@ class ProviderAdapter(Protocol):
         instructions: str,
         input_text: str,
         output_model: type[StructuredOutput],
+        max_output_tokens: int | None = None,
     ) -> ProviderResult[StructuredOutput]: ...
 
 

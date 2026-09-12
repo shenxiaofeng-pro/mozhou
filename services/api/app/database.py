@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.migrations import MIGRATIONS
+from app.pattern_adaptation.schema import PATTERN_ADAPTATION_SCHEMA_SQL
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1].version
 
@@ -64,6 +65,9 @@ CREATE TABLE IF NOT EXISTS generation_runs (
     error_message TEXT,
     provider TEXT NOT NULL DEFAULT 'demo',
     model TEXT NOT NULL DEFAULT 'replay-v1',
+    creative_safety_json TEXT CHECK(
+        creative_safety_json IS NULL OR json_valid(creative_safety_json)
+    ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -118,6 +122,9 @@ CREATE TABLE IF NOT EXISTS fact_change_sets (
     chapter_revision INTEGER NOT NULL CHECK(chapter_revision >= 0),
     state TEXT NOT NULL CHECK(state IN ('candidate', 'applied', 'rejected')),
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    creative_safety_json TEXT CHECK(
+        creative_safety_json IS NULL OR json_valid(creative_safety_json)
+    ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(chapter_id, chapter_revision)
@@ -321,10 +328,196 @@ CREATE TABLE IF NOT EXISTS reference_pattern_cards (
 CREATE INDEX IF NOT EXISTS idx_reference_pattern_cards_project_created
 ON reference_pattern_cards(project_id, created_at, id);
 
+CREATE TABLE IF NOT EXISTS craft_pattern_assets (
+    id TEXT PRIMARY KEY,
+    series_id TEXT NOT NULL CHECK(length(series_id) = 64),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+    asset_type TEXT NOT NULL CHECK(asset_type IN ('stage', 'book_evolution', 'fusion_material')),
+    version INTEGER NOT NULL CHECK(version > 0),
+    generation_fingerprint_sha256 TEXT NOT NULL UNIQUE
+        CHECK(length(generation_fingerprint_sha256) = 64),
+    source_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+    source_work_ids_json TEXT NOT NULL CHECK(json_valid(source_work_ids_json)),
+    source_segment_ids_json TEXT NOT NULL CHECK(json_valid(source_segment_ids_json)),
+    source_asset_version_ids_json TEXT NOT NULL CHECK(json_valid(source_asset_version_ids_json)),
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+    summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 1000),
+    author_focus TEXT NOT NULL CHECK(length(author_focus) <= 1000),
+    craft_items_json TEXT NOT NULL CHECK(length(craft_items_json) BETWEEN 2 AND 200000),
+    provider TEXT NOT NULL CHECK(length(provider) BETWEEN 1 AND 40),
+    provider_profile_id TEXT,
+    profile_revision INTEGER CHECK(profile_revision IS NULL OR profile_revision >= 0),
+    model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 100),
+    prompt_version TEXT NOT NULL CHECK(length(prompt_version) BETWEEN 1 AND 100),
+    evidence_validator_version TEXT NOT NULL
+        CHECK(length(evidence_validator_version) BETWEEN 1 AND 100),
+    source_fingerprint_sha256 TEXT NOT NULL CHECK(length(source_fingerprint_sha256) = 64),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(series_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_craft_pattern_assets_series_version
+ON craft_pattern_assets(series_id, version DESC);
+
+CREATE INDEX IF NOT EXISTS idx_craft_pattern_assets_type_created
+ON craft_pattern_assets(asset_type, created_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS project_craft_pattern_assets (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    asset_version_id TEXT NOT NULL REFERENCES craft_pattern_assets(id) ON DELETE CASCADE,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, asset_version_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_craft_pattern_assets_project_lifecycle
+ON project_craft_pattern_assets(project_id, lifecycle_state, updated_at DESC, id);
+
+CREATE INDEX IF NOT EXISTS idx_project_craft_pattern_assets_asset
+ON project_craft_pattern_assets(asset_version_id, project_id);
+
+CREATE TABLE IF NOT EXISTS craft_pattern_job_outputs (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    asset_version_id TEXT NOT NULL REFERENCES craft_pattern_assets(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    created_at TEXT NOT NULL,
+    UNIQUE(job_id, asset_version_id),
+    UNIQUE(job_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_craft_pattern_job_outputs_asset
+ON craft_pattern_job_outputs(asset_version_id, job_id);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_recipes (
+    id TEXT PRIMARY KEY,
+    created_from_project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_recipes_lifecycle_updated
+ON writing_pattern_recipes(lifecycle_state, updated_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_recipe_versions (
+    id TEXT PRIMARY KEY,
+    recipe_id TEXT NOT NULL REFERENCES writing_pattern_recipes(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK(version > 0),
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+    description TEXT NOT NULL DEFAULT '' CHECK(length(description) <= 1000),
+    conflict_decisions_json TEXT NOT NULL CHECK(json_valid(conflict_decisions_json)),
+    conflicts_json TEXT NOT NULL CHECK(json_valid(conflicts_json)),
+    source_asset_count INTEGER NOT NULL CHECK(source_asset_count BETWEEN 1 AND 500),
+    source_work_count INTEGER NOT NULL CHECK(source_work_count BETWEEN 1 AND 5),
+    safety_basis TEXT NOT NULL CHECK(safety_basis IN ('source_verified', 'abstract_only')),
+    source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256) = 64),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(recipe_id, version),
+    UNIQUE(recipe_id, content_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_recipe_versions_recipe_version
+ON writing_pattern_recipe_versions(recipe_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_recipe_sources (
+    id TEXT PRIMARY KEY,
+    recipe_version_id TEXT NOT NULL
+        REFERENCES writing_pattern_recipe_versions(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    entry_key TEXT NOT NULL CHECK(length(entry_key) = 64),
+    asset_version_id TEXT NOT NULL REFERENCES craft_pattern_assets(id) ON DELETE RESTRICT,
+    asset_series_id TEXT NOT NULL CHECK(length(asset_series_id) = 64),
+    asset_version INTEGER NOT NULL CHECK(asset_version > 0),
+    asset_content_sha256 TEXT NOT NULL CHECK(length(asset_content_sha256) = 64),
+    asset_type TEXT NOT NULL CHECK(asset_type IN ('stage', 'book_evolution', 'fusion_material')),
+    dimension TEXT NOT NULL CHECK(dimension IN (
+        'era', 'core_desire', 'conflict_causality', 'resource_system',
+        'key_scene_sequence', 'ending', 'hook_mechanics',
+        'promise_payoff_cadence', 'emotional_rhythm', 'information_reveal',
+        'foreshadowing_cycle', 'scene_design', 'pov_narrative_distance',
+        'expression_parameters', 'power_progression'
+    )),
+    pattern_name TEXT NOT NULL CHECK(length(pattern_name) BETWEEN 1 AND 120),
+    transferable_rule TEXT NOT NULL CHECK(length(transferable_rule) BETWEEN 1 AND 1000),
+    adaptation_risk TEXT NOT NULL CHECK(length(adaptation_risk) BETWEEN 1 AND 600),
+    purpose TEXT NOT NULL CHECK(purpose IN ('learn', 'counterexample')),
+    strategy TEXT NOT NULL CHECK(strategy IN ('preserve_function', 'transform', 'avoid')),
+    weight INTEGER NOT NULL CHECK(weight BETWEEN 1 AND 100),
+    applicable_stages_json TEXT NOT NULL CHECK(json_valid(applicable_stages_json)),
+    chapter_start INTEGER CHECK(chapter_start IS NULL OR chapter_start > 0),
+    chapter_end INTEGER CHECK(chapter_end IS NULL OR chapter_end >= chapter_start),
+    note TEXT NOT NULL DEFAULT '' CHECK(length(note) <= 1000),
+    source_work_fingerprints_json TEXT NOT NULL
+        CHECK(json_valid(source_work_fingerprints_json)),
+    source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256) = 64),
+    UNIQUE(recipe_version_id, ordinal),
+    UNIQUE(recipe_version_id, entry_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_recipe_sources_asset
+ON writing_pattern_recipe_sources(asset_version_id, recipe_version_id);
+
+CREATE TABLE IF NOT EXISTS writing_pattern_profile_versions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    recipe_version_id TEXT NOT NULL
+        REFERENCES writing_pattern_recipe_versions(id) ON DELETE RESTRICT,
+    recipe_content_sha256 TEXT NOT NULL CHECK(length(recipe_content_sha256) = 64),
+    topic_decision_version_id TEXT NOT NULL
+        REFERENCES topic_decision_versions(id) ON DELETE CASCADE,
+    topic_revision INTEGER NOT NULL CHECK(topic_revision > 0),
+    topic_content_sha256 TEXT NOT NULL CHECK(length(topic_content_sha256) = 64),
+    compiler_version TEXT NOT NULL CHECK(length(compiler_version) BETWEEN 1 AND 80),
+    safety_basis TEXT NOT NULL CHECK(safety_basis IN ('source_verified', 'abstract_only')),
+    source_snapshot_sha256 TEXT NOT NULL CHECK(length(source_snapshot_sha256) = 64),
+    profile_json TEXT NOT NULL CHECK(length(profile_json) BETWEEN 2 AND 500000),
+    conflicts_json TEXT NOT NULL CHECK(json_valid(conflicts_json)),
+    decisions_json TEXT NOT NULL CHECK(json_valid(decisions_json)),
+    excluded_entry_keys_json TEXT NOT NULL CHECK(json_valid(excluded_entry_keys_json)),
+    profile_fingerprint_sha256 TEXT NOT NULL CHECK(length(profile_fingerprint_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, profile_fingerprint_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_writing_pattern_profile_versions_project_created
+ON writing_pattern_profile_versions(project_id, created_at DESC, id);
+
+CREATE TABLE IF NOT EXISTS project_writing_pattern_profiles (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    profile_version_id TEXT NOT NULL
+        REFERENCES writing_pattern_profile_versions(id) ON DELETE CASCADE,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, profile_version_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_writing_pattern_profiles_one_active
+ON project_writing_pattern_profiles(project_id)
+WHERE lifecycle_state = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_project_writing_pattern_profiles_project_updated
+ON project_writing_pattern_profiles(project_id, updated_at DESC, id);
+
 CREATE TABLE IF NOT EXISTS reference_pattern_applications (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     pattern_card_id TEXT NOT NULL REFERENCES reference_pattern_cards(id) ON DELETE CASCADE,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_state IN ('draft', 'active', 'archived')),
+    lifecycle_revision INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_revision >= 0),
     selected_dimensions_json TEXT NOT NULL,
     dimensions_json TEXT NOT NULL CHECK(length(dimensions_json) BETWEEN 2 AND 20000),
     relationship_recomposition TEXT NOT NULL CHECK(length(relationship_recomposition) BETWEEN 1 AND 1200),
@@ -369,12 +562,48 @@ CREATE TABLE IF NOT EXISTS originality_reports (
     source_segment_ids_json TEXT NOT NULL CHECK(length(source_segment_ids_json) BETWEEN 2 AND 5000),
     input_sha256 TEXT NOT NULL CHECK(length(input_sha256) = 64),
     viewed_at TEXT,
+    acknowledged_at TEXT,
     created_at TEXT NOT NULL,
     UNIQUE(application_id, blueprint_revision)
 );
 
 CREATE INDEX IF NOT EXISTS idx_originality_reports_application
 ON originality_reports(application_id, blueprint_revision DESC);
+
+CREATE TABLE IF NOT EXISTS scene_originality_checks (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES reference_pattern_applications(id) ON DELETE CASCADE,
+    blueprint_revision INTEGER NOT NULL CHECK(blueprint_revision >= 0),
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low', 'medium', 'high')),
+    score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 100),
+    threshold_version TEXT NOT NULL CHECK(length(threshold_version) BETWEEN 1 AND 80),
+    candidate_graph_json TEXT NOT NULL CHECK(json_valid(candidate_graph_json)),
+    source_segment_ids_json TEXT NOT NULL CHECK(json_valid(source_segment_ids_json)),
+    source_work_count INTEGER NOT NULL CHECK(source_work_count BETWEEN 1 AND 12),
+    input_sha256 TEXT NOT NULL CHECK(length(input_sha256) = 64),
+    viewed_at TEXT,
+    acknowledged_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(application_id, blueprint_revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scene_originality_checks_application
+ON scene_originality_checks(application_id, blueprint_revision DESC);
+
+CREATE TABLE IF NOT EXISTS scene_originality_findings (
+    id TEXT PRIMARY KEY,
+    check_id TEXT NOT NULL REFERENCES scene_originality_checks(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+    signal TEXT NOT NULL CHECK(signal IN ('semantic_scene', 'ordered_sequence', 'causal_graph', 'character_function_graph', 'multi_source_convergence')),
+    score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 100),
+    summary TEXT NOT NULL CHECK(length(summary) BETWEEN 1 AND 300),
+    source_segment_ids_json TEXT NOT NULL CHECK(json_valid(source_segment_ids_json)),
+    evidence_sha256 TEXT NOT NULL CHECK(length(evidence_sha256) = 64),
+    UNIQUE(check_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scene_originality_findings_check
+ON scene_originality_findings(check_id, ordinal);
 
 CREATE TABLE IF NOT EXISTS book_blueprints (
     id TEXT PRIMARY KEY,
@@ -390,6 +619,85 @@ CREATE TABLE IF NOT EXISTS book_blueprints (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS topic_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    locks_json TEXT NOT NULL CHECK(json_valid(locks_json)),
+    field_versions_json TEXT NOT NULL CHECK(json_valid(field_versions_json)),
+    rejection_reasons_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(rejection_reasons_json)),
+    source_template_id TEXT CHECK(source_template_id IS NULL OR length(source_template_id) BETWEEN 1 AND 80),
+    source_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+    source_candidate_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_candidate_ids_json)),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    confirmed_revision INTEGER CHECK(confirmed_revision IS NULL OR confirmed_revision >= 0),
+    plan_stale INTEGER NOT NULL DEFAULT 0 CHECK(plan_stale IN (0, 1)),
+    onboarding_required INTEGER NOT NULL DEFAULT 1 CHECK(onboarding_required IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(confirmed_revision IS NULL OR confirmed_revision <= revision)
+);
+
+CREATE TABLE IF NOT EXISTS topic_decision_versions (
+    id TEXT PRIMARY KEY,
+    topic_decision_id TEXT NOT NULL REFERENCES topic_decisions(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    locks_json TEXT NOT NULL CHECK(json_valid(locks_json)),
+    field_versions_json TEXT NOT NULL CHECK(json_valid(field_versions_json)),
+    rejection_reasons_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(rejection_reasons_json)),
+    source_template_id TEXT CHECK(source_template_id IS NULL OR length(source_template_id) BETWEEN 1 AND 80),
+    source_job_id TEXT,
+    source_candidate_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_candidate_ids_json)),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256) = 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, revision),
+    UNIQUE(topic_decision_id, revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_decision_versions_decision_revision
+ON topic_decision_versions(topic_decision_id, revision DESC);
+
+CREATE TABLE IF NOT EXISTS topic_decision_candidate_sets (
+    id TEXT PRIMARY KEY,
+    topic_decision_id TEXT NOT NULL REFERENCES topic_decisions(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+    based_on_revision INTEGER NOT NULL CHECK(based_on_revision >= 0),
+    target_field TEXT CHECK(target_field IS NULL OR target_field IN (
+        'target_platform', 'target_audience', 'subgenre', 'premise', 'core_desire',
+        'long_term_promise', 'first_three_chapter_promise', 'constraints',
+        'forbidden_elements', 'reference_purpose', 'reality_anchor',
+        'first_ten_chapter_goal'
+    )),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_candidate_sets_project_created
+ON topic_decision_candidate_sets(project_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS topic_decision_candidates (
+    id TEXT PRIMARY KEY,
+    candidate_set_id TEXT NOT NULL REFERENCES topic_decision_candidate_sets(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 3),
+    label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 80),
+    content_json TEXT NOT NULL CHECK(json_valid(content_json)),
+    changed_fields_json TEXT NOT NULL CHECK(json_valid(changed_fields_json)),
+    rationale TEXT NOT NULL CHECK(length(rationale) BETWEEN 1 AND 800),
+    risks_json TEXT NOT NULL CHECK(json_valid(risks_json)),
+    state TEXT NOT NULL DEFAULT 'candidate' CHECK(state IN ('candidate', 'selected', 'rejected')),
+    rejection_reason TEXT CHECK(rejection_reason IS NULL OR length(rejection_reason) BETWEEN 1 AND 1000),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(candidate_set_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_candidates_set_ordinal
+ON topic_decision_candidates(candidate_set_id, ordinal);
 
 CREATE TABLE IF NOT EXISTS volume_plans (
     id TEXT PRIMARY KEY,
@@ -485,6 +793,9 @@ CREATE TABLE IF NOT EXISTS text_change_sets (
     title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
     state TEXT NOT NULL CHECK(state IN ('candidate', 'applied', 'rejected')),
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    creative_safety_json TEXT CHECK(
+        creative_safety_json IS NULL OR json_valid(creative_safety_json)
+    ),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -640,6 +951,7 @@ CREATE TABLE IF NOT EXISTS sandbox_runs (
     actions_used INTEGER NOT NULL DEFAULT 0 CHECK(actions_used BETWEEN 0 AND 200),
     current_state_json TEXT NOT NULL CHECK(json_valid(current_state_json)),
     current_state_sha256 TEXT NOT NULL CHECK(length(current_state_sha256) = 64),
+    execution_mode TEXT NOT NULL DEFAULT 'rules' CHECK(execution_mode IN ('rules', 'ai')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT
@@ -658,6 +970,10 @@ CREATE TABLE IF NOT EXISTS sandbox_rounds (
     evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
     state_before_sha256 TEXT NOT NULL CHECK(length(state_before_sha256) = 64),
     state_after_sha256 TEXT NOT NULL CHECK(length(state_after_sha256) = 64),
+    origin TEXT NOT NULL DEFAULT 'rules' CHECK(origin IN ('rules', 'ai')),
+    model_proposals_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(model_proposals_json)),
+    rejected_proposals_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(rejected_proposals_json)),
+    job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     UNIQUE(run_id, ordinal)
 );
@@ -701,7 +1017,7 @@ CREATE TABLE IF NOT EXISTS ai_provider_profiles (
 
 CREATE TABLE IF NOT EXISTS ai_task_defaults (
     task_type TEXT PRIMARY KEY
-        CHECK(task_type IN ('chapter_brief', 'chapter_draft', 'reference_analysis', 'review')),
+        CHECK(task_type IN ('chapter_brief', 'chapter_draft', 'reference_analysis', 'review', 'sandbox')),
     profile_id TEXT NOT NULL REFERENCES ai_provider_profiles(id) ON DELETE CASCADE,
     revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
     updated_at TEXT NOT NULL
@@ -710,9 +1026,23 @@ CREATE TABLE IF NOT EXISTS ai_task_defaults (
 CREATE TABLE IF NOT EXISTS context_packets (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
-    chapter_revision INTEGER NOT NULL CHECK(chapter_revision >= 0),
-    task_type TEXT NOT NULL CHECK(task_type IN ('chapter_brief', 'chapter_draft')),
+    chapter_id TEXT REFERENCES chapters(id) ON DELETE CASCADE,
+    chapter_revision INTEGER CHECK(chapter_revision IS NULL OR chapter_revision >= 0),
+    task_type TEXT CHECK(
+        task_type IS NULL OR task_type IN ('chapter_brief', 'chapter_draft')
+    ),
+    purpose TEXT NOT NULL CHECK(purpose IN (
+        'startup', 'expansion', 'field', 'brief', 'draft',
+        'candidate_review', 'canon_reconciliation'
+    )),
+    subject_json TEXT NOT NULL CHECK(json_valid(subject_json)),
+    profile_fingerprint_sha256 TEXT CHECK(
+        profile_fingerprint_sha256 IS NULL OR length(profile_fingerprint_sha256) = 64
+    ),
+    dependency_snapshot_json TEXT NOT NULL CHECK(json_valid(dependency_snapshot_json)),
+    dependency_fingerprint_sha256 TEXT NOT NULL
+        CHECK(length(dependency_fingerprint_sha256) = 64),
+    blocking_reasons_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(blocking_reasons_json)),
     compiler_version TEXT NOT NULL CHECK(length(compiler_version) BETWEEN 1 AND 80),
     token_budget INTEGER NOT NULL CHECK(token_budget BETWEEN 1000 AND 200000),
     used_tokens INTEGER NOT NULL CHECK(used_tokens > 0),
@@ -722,11 +1052,58 @@ CREATE TABLE IF NOT EXISTS context_packets (
     packet_json TEXT NOT NULL CHECK(length(packet_json) BETWEEN 2 AND 5000000),
     rendered_context TEXT NOT NULL CHECK(length(rendered_context) BETWEEN 2 AND 5000000),
     created_at TEXT NOT NULL,
-    UNIQUE(chapter_id, task_type, packet_sha256)
+    CHECK((chapter_id IS NULL) = (chapter_revision IS NULL)),
+    UNIQUE(project_id, purpose, packet_sha256)
 );
 
 CREATE INDEX IF NOT EXISTS idx_context_packets_chapter_created
 ON context_packets(chapter_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_context_packets_project_purpose_created
+ON context_packets(project_id, purpose, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS creative_plan_dependencies (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    subject_kind TEXT NOT NULL CHECK(subject_kind IN (
+        'book_blueprint', 'volume_plan', 'rolling_plan'
+    )),
+    subject_id TEXT NOT NULL,
+    subject_revision INTEGER NOT NULL CHECK(subject_revision >= 0),
+    dependency_snapshot_json TEXT NOT NULL CHECK(json_valid(dependency_snapshot_json)),
+    dependency_fingerprint_sha256 TEXT NOT NULL
+        CHECK(length(dependency_fingerprint_sha256) = 64),
+    baseline_state TEXT NOT NULL CHECK(baseline_state IN ('current', 'legacy')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(project_id, subject_kind, subject_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_creative_plan_dependencies_project
+ON creative_plan_dependencies(project_id, subject_kind, subject_id);
+
+CREATE TABLE IF NOT EXISTS plan_rebase_candidates (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    state TEXT NOT NULL CHECK(state IN ('candidate', 'adopted', 'stale', 'rejected')),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+    based_on_dependency_fingerprint_sha256 TEXT NOT NULL
+        CHECK(length(based_on_dependency_fingerprint_sha256) = 64),
+    target_dependency_fingerprint_sha256 TEXT NOT NULL
+        CHECK(length(target_dependency_fingerprint_sha256) = 64),
+    impact_json TEXT NOT NULL CHECK(json_valid(impact_json)),
+    book_blueprint_json TEXT CHECK(book_blueprint_json IS NULL OR json_valid(book_blueprint_json)),
+    volume_plans_json TEXT NOT NULL CHECK(json_valid(volume_plans_json)),
+    rolling_chapter_plans_json TEXT NOT NULL CHECK(json_valid(rolling_chapter_plans_json)),
+    adoption_idempotency_key TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    adopted_at TEXT,
+    CHECK((state = 'adopted') = (adopted_at IS NOT NULL)),
+    CHECK(adoption_idempotency_key IS NULL OR length(adoption_idempotency_key) BETWEEN 1 AND 200)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_rebase_candidates_project_updated
+ON plan_rebase_candidates(project_id, updated_at DESC, id);
 
 CREATE TABLE IF NOT EXISTS context_directives (
     id TEXT PRIMARY KEY,
@@ -743,7 +1120,7 @@ CREATE TABLE IF NOT EXISTS context_directives (
 
 CREATE INDEX IF NOT EXISTS idx_context_directives_chapter
 ON context_directives(chapter_id, source_kind, source_id);
-"""
+""" + PATTERN_ADAPTATION_SCHEMA_SQL
 
 
 class DatabaseIntegrityError(RuntimeError):

@@ -2,24 +2,27 @@ import type {
   BlueprintDimensionState,
   BlueprintEntityKind,
   BlueprintRelationshipState,
-  Job,
   OriginalityReport,
+  ReferenceApplicationLifecycleState,
   ReferenceFilePreview,
   ReferencePatternApplication,
   ReferencePatternCard,
   ReferencePatternDimension,
   ReferenceBlueprintState,
   ReferenceRightsBasis,
+  SceneOriginalityCheck,
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
-import { api } from '../api'
+import { ApiError, api } from '../api'
+import { CraftPatternWorkbench } from './CraftPatternWorkbench'
 
 interface ReferenceLabPanelProps {
   workspace: WorkspaceSummary
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+  onOpenTaskCenter?: () => void
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -40,11 +43,17 @@ const dimensionLabels = [
   ['ending', '结局'],
 ] as const
 
+const lifecycleLabels: Record<ReferenceApplicationLifecycleState, string> = {
+  active: '使用中',
+  draft: '已暂停',
+  archived: '已归档',
+}
+
 function formatWan(value: number) {
   return value % 10_000 === 0 ? `${value / 10_000} 万` : value.toLocaleString('zh-CN')
 }
 
-export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLabPanelProps) {
+export function ReferenceLabPanel({ workspace, onWorkspaceChanged, onOpenTaskCenter }: ReferenceLabPanelProps) {
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
   const [rightsBasis, setRightsBasis] = useState<ReferenceRightsBasis>('self_owned')
@@ -52,90 +61,17 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
   const [filePreview, setFilePreview] = useState<ReferenceFilePreview | null>(null)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [confirmedUncertainEncoding, setConfirmedUncertainEncoding] = useState(false)
-  const [selectedSegments, setSelectedSegments] = useState<Set<string>>(() => new Set())
   const [isImporting, setIsImporting] = useState(false)
-  const [authorFocus, setAuthorFocus] = useState('')
-  const [confirmedExternalProcessing, setConfirmedExternalProcessing] = useState(false)
-  const [analysisJob, setAnalysisJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const analysisJobId = analysisJob?.id
-  const analysisJobState = analysisJob?.state
-  const isAnalyzing = analysisJob !== null
-    && ['queued', 'running', 'pause_requested'].includes(analysisJob.state)
-
-  useEffect(() => {
-    let ignored = false
-    void api.listJobs(workspace.project.id).then((jobs) => {
-      if (ignored) return
-      const recoverable = jobs.find((job) => (
-        job.kind === 'reference_fusion' && job.state !== 'succeeded'
-      ))
-      if (recoverable) {
-        setAnalysisJob(recoverable)
-        if (recoverable.error_message) setError(recoverable.error_message)
-      }
-    }).catch(() => undefined)
-    return () => {
-      ignored = true
-    }
-  }, [workspace.project.id])
-
-  useEffect(() => {
-    if (!analysisJobId || !analysisJobState || !['queued', 'running', 'pause_requested'].includes(analysisJobState)) {
-      return undefined
-    }
-    let stopped = false
-    let timer: number | undefined
-    const poll = async () => {
-      try {
-        const detail = await api.getJob(analysisJobId)
-        if (stopped) return
-        setAnalysisJob(detail)
-        if (detail.state === 'succeeded') {
-          const refreshed = await api.getProjectSummary(workspace.project.id)
-          if (!stopped) onWorkspaceChanged(refreshed)
-          return
-        }
-        if (detail.state === 'failed' || detail.state === 'interrupted') {
-          setError(detail.error_message ?? '拆书任务中断，可从失败块继续。')
-          return
-        }
-        if (detail.state === 'cancelled') return
-        timer = window.setTimeout(poll, 700)
-      } catch (caught) {
-        if (!stopped) {
-          setError(caught instanceof Error ? caught.message : '读取拆书任务进度失败')
-        }
-      }
-    }
-    void poll()
-    return () => {
-      stopped = true
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [analysisJobId, analysisJobState, onWorkspaceChanged, workspace.project.id])
-
-  const selection = useMemo(() => {
-    const segmentIds: string[] = []
+  const sourceLabels = useMemo(() => {
     const sourceLabels = new Map<string, string>()
-    let workCount = 0
-    let characterCount = 0
     for (const work of workspace.reference_works) {
-      let workSelected = false
       for (const segment of work.segments) {
         sourceLabels.set(segment.id, `${work.title} · 区段 ${segment.ordinal}`)
-        if (!selectedSegments.has(segment.id)) continue
-        segmentIds.push(segment.id)
-        characterCount += segment.character_count
-        workSelected = true
       }
-      if (workSelected) workCount += 1
     }
-    return { segmentIds, sourceLabels, workCount, characterCount }
-  }, [selectedSegments, workspace.reference_works])
-  const analysisReady = selection.workCount >= 2
-    && selection.segmentIds.length <= 12
-    && selection.characterCount <= 2_000_000
+    return sourceLabels
+  }, [workspace.reference_works])
 
   function chooseFile(nextFile: File | undefined) {
     setError(null)
@@ -146,18 +82,18 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
       return
     }
     const extension = nextFile.name.toLowerCase().split('.').pop()
-    if (!extension || !['txt', 'md', 'markdown', 'pdf'].includes(extension)) {
+    if (!extension || !['txt', 'md', 'markdown', 'pdf', 'docx', 'epub'].includes(extension)) {
       setFile(null)
-      setError('当前支持 TXT、Markdown 与文本型 PDF。')
+      setError('当前支持 TXT、Markdown、PDF、DOCX 与 EPUB。')
       return
     }
     if (nextFile.size > MAX_FILE_BYTES) {
       setFile(null)
-      setError('单个参考文件不能超过 20 MB。')
+      setError('单个参考文件不能超过 25 MB。')
       return
     }
     setFile(nextFile)
-    setTitle(nextFile.name.replace(/\.(?:txt|md|markdown|pdf)$/i, ''))
+    setTitle(nextFile.name.replace(/\.(?:txt|md|markdown|pdf|docx|epub)$/i, ''))
   }
 
   async function previewFile() {
@@ -204,49 +140,6 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
     }
   }
 
-  function toggleSegment(segmentId: string) {
-    setSelectedSegments((current) => {
-      const next = new Set(current)
-      if (next.has(segmentId)) next.delete(segmentId)
-      else next.add(segmentId)
-      return next
-    })
-  }
-
-  async function synthesizePatterns() {
-    if (!analysisReady || !confirmedExternalProcessing) return
-    setError(null)
-    try {
-      const job = await api.startReferenceAnalysisJob(workspace.project.id, {
-        selected_segment_ids: selection.segmentIds,
-        author_focus: authorFocus.trim(),
-        confirm_external_processing: true,
-      })
-      setAnalysisJob(job)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '多书结构萃取失败')
-    }
-  }
-
-  async function cancelAnalysis() {
-    if (!analysisJob || !isAnalyzing) return
-    try {
-      setAnalysisJob(await api.cancelJob(analysisJob.id))
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '取消拆书任务失败')
-    }
-  }
-
-  async function retryAnalysis() {
-    if (!analysisJob || !['failed', 'interrupted', 'cancelled'].includes(analysisJob.state)) return
-    setError(null)
-    try {
-      setAnalysisJob(await api.retryJob(analysisJob.id))
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '重试拆书任务失败')
-    }
-  }
-
   return (
     <section className="reference-lab" aria-labelledby="reference-lab-title">
       <header className="reference-lab-heading">
@@ -263,10 +156,10 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
           <input
             type="file"
             aria-label="选择参考小说文件"
-            accept=".txt,.md,.markdown,.pdf,text/plain,text/markdown,application/pdf"
+            accept=".txt,.md,.markdown,.pdf,.docx,.epub"
             onChange={(event) => chooseFile(event.target.files?.[0])}
           />
-          <span>{file ? file.name : 'TXT / Markdown / PDF · 最大 25 MB'}</span>
+          <span>{file ? file.name : 'TXT / Markdown / PDF / DOCX / EPUB · 最大 25 MB'}</span>
         </label>
         <label>
           作品名
@@ -337,117 +230,18 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
       </p>
       {error ? <p className="agent-error" role="alert">{error}</p> : null}
 
-      <div className="reference-shelf" aria-label="参考作品区段">
-        {workspace.reference_works.length > 0 ? workspace.reference_works.map((work) => (
-          <article className="reference-folio" key={work.id}>
-            <header>
-              <div>
-                <small>{work.source_format.toUpperCase()} · {rightsLabels[work.rights_basis]}</small>
-                <strong>{work.title}</strong>
-              </div>
-              <span>{formatWan(work.total_characters)}字</span>
-            </header>
-            <div className="segment-ruler" aria-hidden="true">
-              {work.segments.map((segment) => <i key={segment.id} data-selected={selectedSegments.has(segment.id)} />)}
-            </div>
-            <div className="reference-segments">
-              {work.segments.map((segment) => (
-                <label key={segment.id} data-selected={selectedSegments.has(segment.id)}>
-                  <input
-                    type="checkbox"
-                    checked={selectedSegments.has(segment.id)}
-                    onChange={() => toggleSegment(segment.id)}
-                    aria-label={`选择${work.title}第 ${segment.ordinal} 段`}
-                  />
-                  <span>区段 {String(segment.ordinal).padStart(2, '0')}</span>
-                  <strong>{(segment.start_char + 1).toLocaleString('zh-CN')}–{segment.end_char.toLocaleString('zh-CN')} 字</strong>
-                  <small>
-                    {segment.chapter_start
-                      ? `${segment.chapter_start}${segment.chapter_end && segment.chapter_end !== segment.chapter_start ? ` → ${segment.chapter_end}` : ''}`
-                      : '未识别章节标题，按字符边界切分'}
-                  </small>
-                </label>
-              ))}
-            </div>
-          </article>
-        )) : (
-          <p className="reference-empty">导入第一本作品后，这里会像书脊一样排列它的 50 万字区段。</p>
-        )}
-      </div>
-
-      <footer className="reference-selection" data-ready={analysisReady}>
-        <strong>
-          {selectedSegments.size === 0
-            ? '尚未选择分析区段'
-            : selection.workCount >= 2
-              ? `已跨 ${selection.workCount} 本书选择 ${selectedSegments.size} 个区段`
-              : `已从 1 本书选择 ${selectedSegments.size} 个区段，还需选择另一本`}
-        </strong>
-        <span>
-          {selection.characterCount > 2_000_000
-            ? '单次最多处理 200 万字，请减少区段'
-            : selection.segmentIds.length > 12
-              ? '单次最多选择 12 个区段'
-              : analysisReady ? '已具备多书萃取条件' : '至少选择两本不同作品'}
-        </span>
-      </footer>
-
-      <section className="reference-analysis-controls" aria-label="六维结构萃取">
-        <label>
-          多书分析重点
-          <textarea
-            value={authorFocus}
-            onChange={(event) => setAuthorFocus(event.target.value)}
-            maxLength={1000}
-            rows={2}
-            placeholder="例如：重点比较资源增长与阶段结局"
-          />
-        </label>
-        <label className="reference-processing-consent">
-          <input
-            type="checkbox"
-            checked={confirmedExternalProcessing}
-            onChange={(event) => setConfirmedExternalProcessing(event.target.checked)}
-          />
-          <span>允许把选中区段分块发送给当前 AI</span>
-        </label>
-        <p>将发送 {selection.characterCount.toLocaleString('zh-CN')} 字；每次约 5 万字分块处理，再用结构化结果跨书合成。</p>
-        <button
-          type="button"
-          onClick={synthesizePatterns}
-          disabled={!analysisReady || !confirmedExternalProcessing || isAnalyzing}
-        >
-          {isAnalyzing ? '正在分块萃取…' : 'AI 萃取六维结构'}
-        </button>
-        {analysisJob ? (
-          <div className="reference-job-status" role="status" aria-live="polite">
-            <div>
-              <strong>{analysisJob.current_step || '拆书任务已进入本地队列'}</strong>
-              <span>
-                {analysisJob.progress_current} / {analysisJob.progress_total} 块 ·
-                已完成 {analysisJob.completed_calls} 次模型调用
-              </span>
-            </div>
-            <progress
-              aria-label="拆书任务进度"
-              value={analysisJob.progress_current}
-              max={Math.max(analysisJob.progress_total, 1)}
-            />
-            {isAnalyzing ? (
-              <button type="button" onClick={cancelAnalysis}>停止后续调用</button>
-            ) : ['failed', 'interrupted', 'cancelled'].includes(analysisJob.state) ? (
-              <button type="button" onClick={retryAnalysis}>从失败块继续</button>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
+      <CraftPatternWorkbench
+        workspace={workspace}
+        onWorkspaceChanged={onWorkspaceChanged}
+        onOpenTaskCenter={onOpenTaskCenter}
+      />
 
       {workspace.reference_pattern_cards.length > 0 ? (
         <section className="reference-pattern-archive" aria-labelledby="reference-pattern-archive-title">
           <header>
             <div>
-              <small>持久化档案 · 刷新后保留</small>
-              <h3 id="reference-pattern-archive-title">六维结构模式卡</h3>
+              <small>V1 兼容档案 · 仅供查看</small>
+              <h3 id="reference-pattern-archive-title">旧版六维结构模式卡</h3>
             </div>
             <span>{workspace.reference_pattern_cards.length} 张候选</span>
           </header>
@@ -457,7 +251,7 @@ export function ReferenceLabPanel({ workspace, onWorkspaceChanged }: ReferenceLa
                 key={card.id}
                 card={card}
                 workspace={workspace}
-                sourceLabels={selection.sourceLabels}
+                sourceLabels={sourceLabels}
                 onWorkspaceChanged={onWorkspaceChanged}
               />
             ))}
@@ -481,51 +275,65 @@ function ReferencePatternCardPanel({
   sourceLabels,
   onWorkspaceChanged,
 }: ReferencePatternCardPanelProps) {
-  const [selectedDimensions, setSelectedDimensions] = useState<Set<ReferencePatternDimension>>(
-    () => new Set(dimensionLabels.map(([key]) => key)),
-  )
-  const [applicationNote, setApplicationNote] = useState('')
-  const [confirmedOriginalAdaptation, setConfirmedOriginalAdaptation] = useState(false)
-  const [isApplying, setIsApplying] = useState(false)
-  const [applyError, setApplyError] = useState<string | null>(null)
+  const [lifecycleTarget, setLifecycleTarget] = useState<ReferenceApplicationLifecycleState | null>(null)
+  const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null)
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null)
   const existingApplication = workspace.reference_pattern_applications.find(
     (application) => application.pattern_card_id === card.id,
   )
 
-  function toggleDimension(dimension: ReferencePatternDimension) {
-    setSelectedDimensions((current) => {
-      const next = new Set(current)
-      if (next.has(dimension)) next.delete(dimension)
-      else next.add(dimension)
-      return next
-    })
-  }
-
-  async function applyToProject() {
-    if (selectedDimensions.size === 0 || !confirmedOriginalAdaptation || existingApplication) return
-    setIsApplying(true)
-    setApplyError(null)
+  async function updateLifecycle(nextState: ReferenceApplicationLifecycleState) {
+    if (!existingApplication || lifecycleTarget) return
+    const previousState = existingApplication.lifecycle_state
+    setLifecycleTarget(nextState)
+    setLifecycleMessage(null)
+    setLifecycleError(null)
     try {
-      const application = await api.applyReferencePattern(workspace.project.id, card.id, {
-        selected_dimensions: dimensionLabels
-          .map(([key]) => key)
-          .filter((dimension) => selectedDimensions.has(dimension)),
-        application_note: applicationNote.trim(),
-        confirm_original_adaptation: true,
-      })
-      onWorkspaceChanged({
-        ...workspace,
-        reference_pattern_applications: [
-          ...workspace.reference_pattern_applications,
-          application,
-        ],
-      })
+      const updated = await api.updateReferenceApplicationLifecycle(
+        workspace.project.id,
+        existingApplication.id,
+        {
+          lifecycle_state: nextState,
+          expected_lifecycle_revision: existingApplication.lifecycle_revision,
+        },
+      )
+      onWorkspaceChanged(replaceApplication(workspace, updated))
+      setLifecycleMessage(
+        nextState === 'active'
+          ? '已启用给 AI，后续章纲与正文会使用这份蓝图。'
+          : nextState === 'archived'
+            ? '已归档，蓝图、报告和来源仍会保留。'
+            : previousState === 'archived'
+              ? '已恢复为草稿，暂不会传给 AI。'
+              : '已暂停使用，这份蓝图不再进入 AI 上下文或原创性门禁。',
+      )
     } catch (caught) {
-      setApplyError(caught instanceof Error ? caught.message : '模式卡应用失败')
+      if (caught instanceof ApiError && caught.status === 409) {
+        try {
+          onWorkspaceChanged(await api.getProjectSummary(workspace.project.id))
+          setLifecycleError(`${caught.message}，已刷新最新状态。`)
+        } catch {
+          setLifecycleError(`${caught.message}；最新状态读取失败，请重新打开拆书库。`)
+        }
+      } else {
+        setLifecycleError(caught instanceof Error ? caught.message : '参考蓝图状态更新失败')
+      }
     } finally {
-      setIsApplying(false)
+      setLifecycleTarget(null)
     }
   }
+
+  const lifecycleDescription = existingApplication
+    ? existingApplication.lifecycle_state === 'active'
+      ? existingApplication.originality_status === 'passed'
+        ? '正在用于章纲与正文 AI；暂停或归档不会删除蓝图和检查报告。'
+        : '仍参与原创性门禁，可能阻断 AI 写作；可先暂停使用，再继续调整。'
+      : existingApplication.lifecycle_state === 'draft'
+        ? existingApplication.originality_status === 'passed'
+          ? '已暂停，不进入 AI 上下文或门禁；原创性检查已通过，可随时启用。'
+          : '已暂停，不进入 AI 上下文或门禁；通过原创性检查后才能启用。'
+        : '仅保留历史蓝图、报告和来源，不进入 AI 上下文或原创性门禁。'
+    : null
 
   return (
     <article className="reference-proposal">
@@ -564,61 +372,69 @@ function ReferencePatternCardPanel({
       <section className="reference-application" aria-label="应用结构到当前作品">
         <div className="reference-application-heading">
           <div><small>目标作品</small><strong>《{workspace.project.title}》</strong></div>
-          {existingApplication ? <span>已应用到当前作品</span> : <span>待作者选择</span>}
+          {existingApplication ? (
+            <span data-state={existingApplication.lifecycle_state}>
+              {lifecycleLabels[existingApplication.lifecycle_state]}
+            </span>
+          ) : <span>只读历史</span>}
         </div>
         {existingApplication ? (
-          <ReferenceBlueprintEditor
-            key={`${existingApplication.id}:${existingApplication.revision}:${existingApplication.latest_report_id ?? ''}`}
-            application={existingApplication}
-            workspace={workspace}
-            sourceLabels={sourceLabels}
-            onWorkspaceChanged={onWorkspaceChanged}
-          />
-        ) : (
           <>
-            <fieldset>
-              <legend>选择要带入当前作品的维度</legend>
-              {dimensionLabels.map(([key, label]) => (
-                <label key={key} data-selected={selectedDimensions.has(key)}>
-                  <input
-                    type="checkbox"
-                    aria-label={`应用维度：${label}`}
-                    checked={selectedDimensions.has(key)}
-                    onChange={() => toggleDimension(key)}
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
-            </fieldset>
-            <label className="reference-application-note">
-              用于当前作品的改编备注
-              <textarea
-                value={applicationNote}
-                onChange={(event) => setApplicationNote(event.target.value)}
-                maxLength={1000}
-                rows={3}
-                placeholder="例如：时代换成 1998 年南平，资源线改为本地制造业，人物关系全部重组"
-              />
-            </label>
-            <label className="reference-originality-confirm">
-              <input
-                type="checkbox"
-                aria-label="确认原创改编边界"
-                checked={confirmedOriginalAdaptation}
-                onChange={(event) => setConfirmedOriginalAdaptation(event.target.checked)}
-              />
-              <span>我会重写人物、地点、专名、产业细节和具体场景，不把模式卡当作仿写底稿。</span>
-            </label>
-            <button
-              type="button"
-              onClick={applyToProject}
-              disabled={selectedDimensions.size === 0 || !confirmedOriginalAdaptation || isApplying}
-            >
-              {isApplying ? '正在建立应用蓝图…' : `应用到《${workspace.project.title}》`}
-            </button>
+            <div className="reference-lifecycle-controls">
+              <p>{lifecycleDescription}</p>
+              <div role="group" aria-label="参考蓝图使用状态">
+                {existingApplication.lifecycle_state === 'active' ? (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('draft')}
+                    disabled={lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'draft' ? '正在暂停…' : '暂停用于 AI'}
+                  </button>
+                ) : existingApplication.lifecycle_state === 'draft' ? (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('active')}
+                    disabled={existingApplication.originality_status !== 'passed' || lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'active' ? '正在启用…' : '启用给 AI'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('draft')}
+                    disabled={lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'draft' ? '正在恢复…' : '恢复为草稿'}
+                  </button>
+                )}
+                {existingApplication.lifecycle_state !== 'archived' ? (
+                  <button
+                    type="button"
+                    onClick={() => updateLifecycle('archived')}
+                    disabled={lifecycleTarget !== null}
+                  >
+                    {lifecycleTarget === 'archived' ? '正在归档…' : '归档'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {lifecycleMessage ? <p className="reference-lifecycle-message" role="status" aria-live="polite">{lifecycleMessage}</p> : null}
+            {lifecycleError ? <p className="agent-error" role="alert">{lifecycleError}</p> : null}
+            <ReferenceBlueprintEditor
+              key={`${existingApplication.id}:${existingApplication.revision}:${existingApplication.latest_report_id ?? ''}`}
+              application={existingApplication}
+              workspace={workspace}
+              sourceLabels={sourceLabels}
+              onWorkspaceChanged={onWorkspaceChanged}
+              readOnly
+            />
           </>
+        ) : (
+          <p className="reference-boundary-note">
+            这张旧版卡片仅供查看，不再新建应用。请在上方写作模式工作台生成可追溯素材，再于原创迁移阶段使用。
+          </p>
         )}
-        {applyError ? <p className="agent-error" role="alert">{applyError}</p> : null}
       </section>
     </article>
   )
@@ -629,6 +445,7 @@ interface ReferenceBlueprintEditorProps {
   workspace: WorkspaceSummary
   sourceLabels: Map<string, string>
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+  readOnly?: boolean
 }
 
 const modeLabels = {
@@ -642,6 +459,14 @@ const riskLabels = {
   medium: '中风险',
   high: '高风险',
 } as const
+
+const sceneSignalLabels: Record<SceneOriginalityCheck['findings'][number]['signal'], string> = {
+  semantic_scene: '场景功能',
+  ordered_sequence: '场景顺序',
+  causal_graph: '因果链',
+  character_function_graph: '人物功能关系',
+  multi_source_convergence: '多书汇聚',
+}
 
 const entityKindLabels: Record<BlueprintEntityKind, string> = {
   character: '人物',
@@ -686,6 +511,7 @@ function ReferenceBlueprintEditor({
   workspace,
   sourceLabels,
   onWorkspaceChanged,
+  readOnly = false,
 }: ReferenceBlueprintEditorProps) {
   const [draft, setDraft] = useState<ReferenceBlueprintState | null>(() => (
     application.blueprint ? copyBlueprint(application.blueprint) : null
@@ -695,6 +521,7 @@ function ReferenceBlueprintEditor({
   )
   const [relationshipChanged, setRelationshipChanged] = useState(false)
   const [report, setReport] = useState<OriginalityReport | null>(null)
+  const [sceneReport, setSceneReport] = useState<SceneOriginalityCheck | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoadingReport, setIsLoadingReport] = useState(false)
   const [editorError, setEditorError] = useState<string | null>(null)
@@ -782,6 +609,116 @@ function ReferenceBlueprintEditor({
     }
   }
 
+  async function openSceneReport() {
+    setIsLoadingReport(true)
+    setEditorError(null)
+    try {
+      const latest = await api.getOrRunSceneOriginalityCheck(
+        workspace.project.id,
+        application.id,
+      )
+      setSceneReport(await api.getSceneOriginalityCheck(latest.id))
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '场景情节图报告加载失败')
+    } finally {
+      setIsLoadingReport(false)
+    }
+  }
+
+  async function acknowledgeSceneReport() {
+    setIsSaving(true)
+    setEditorError(null)
+    try {
+      const updated = await api.acknowledgeSceneOriginalityCheck(
+        workspace.project.id,
+        application.id,
+        { expected_revision: application.revision },
+      )
+      onWorkspaceChanged(replaceApplication(workspace, updated))
+      if (sceneReport) {
+        setSceneReport(await api.getSceneOriginalityCheck(sceneReport.id))
+      }
+    } catch (caught) {
+      setEditorError(caught instanceof Error ? caught.message : '场景风险确认失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  if (readOnly) {
+    const risk = application.risk_level
+    return (
+      <div className="reference-blueprint-editor reference-blueprint-archive" data-readonly="true">
+        <div className="originality-gate-summary" data-risk={risk ?? 'unchecked'}>
+          <div>
+            <small>V1 历史快照 · {application.threshold_version ?? '未记录规则版本'}</small>
+            <strong>{risk ? riskLabels[risk] : '未记录风险'}</strong>
+            <span>蓝图内容已冻结为只读档案；不能再编辑、重跑检查或确认风险。</span>
+          </div>
+          {application.latest_report_id ? (
+            <div className="originality-gate-actions">
+              <button type="button" onClick={openReport} disabled={isLoadingReport}>
+                {isLoadingReport ? '加载报告…' : '查看历史原创性报告'}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {report ? (
+          <section className="originality-report" aria-label="历史原创性报告" data-risk={report.risk_level}>
+            <header>
+              <div><small>风险分</small><strong>{report.score}/100</strong></div>
+              <div><small>检查范围</small><strong>{report.checked_dimensions.length} 个维度</strong></div>
+              <div><small>规则版本</small><strong>{report.threshold_version}</strong></div>
+            </header>
+            {report.evidence.length > 0 ? (
+              <ul>
+                {report.evidence.map((evidence) => (
+                  <li key={evidence.evidence_sha256}>
+                    <strong>+{evidence.score} · {evidence.summary}</strong>
+                    <span>
+                      {evidence.dimension
+                        ? dimensionLabels.find(([key]) => key === evidence.dimension)?.[1]
+                        : '组合检查'}
+                      {evidence.source_segment_id
+                        ? ` · ${sourceLabels.get(evidence.source_segment_id) ?? '来源区段'}`
+                        : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : <p>历史报告未记录需提示的风险。</p>}
+            <p className="originality-legal-notice">{report.legal_notice}</p>
+          </section>
+        ) : null}
+
+        {draft ? (
+          <section className="reference-blueprint-snapshot" aria-label="历史蓝图快照">
+            <h5>已保留的迁移设定</h5>
+            <div>
+              {application.selected_dimensions.map((dimension) => {
+                const state = draft.dimensions[dimension]
+                if (!state) return null
+                return (
+                  <article key={dimension}>
+                    <small>{dimensionLabels.find(([key]) => key === dimension)?.[1] ?? dimension} · {modeLabels[state.mode]} · v{state.version}</small>
+                    <strong>{state.generated_variant.summary}</strong>
+                    <p>{state.generated_variant.transferable_logic}</p>
+                  </article>
+                )
+              })}
+            </div>
+            <article>
+              <small>人物关系重组 · {modeLabels[draft.relationship.mode]} · v{draft.relationship.version}</small>
+              <strong>{draft.relationship.generated_variant}</strong>
+            </article>
+          </section>
+        ) : <p>这份旧版应用没有可读的蓝图快照。</p>}
+        {editorError ? <p className="agent-error" role="alert">{editorError}</p> : null}
+      </div>
+    )
+  }
+
   if (!draft) {
     return <p>这是旧版蓝图，已暂停传给 AI；请重新应用或恢复后完成原创性检查。</p>
   }
@@ -801,9 +738,14 @@ function ReferenceBlueprintEditor({
                 : '当前不传给章纲或正文 AI，请先重构标记项。'}
           </span>
         </div>
-        <button type="button" onClick={openReport} disabled={!application.latest_report_id || isLoadingReport}>
-          {isLoadingReport ? '加载报告…' : '查看原创性报告'}
-        </button>
+        <div className="originality-gate-actions">
+          <button type="button" onClick={openReport} disabled={!application.latest_report_id || isLoadingReport}>
+            {isLoadingReport ? '加载报告…' : '查看文本与结构报告'}
+          </button>
+          <button type="button" onClick={openSceneReport} disabled={isLoadingReport}>
+            查看场景情节图报告
+          </button>
+        </div>
       </div>
 
       {report ? (
@@ -831,13 +773,53 @@ function ReferenceBlueprintEditor({
             </ul>
           ) : <p>没有检出需提示的结构组合或文本重合。</p>}
           <p className="originality-legal-notice">{report.legal_notice}</p>
-          {application.originality_status === 'review_required' ? (
+          {application.originality_status === 'review_required' && report.risk_level === 'medium' ? (
             <button type="button" onClick={acknowledgeReport} disabled={isSaving}>
               我已查看报告，确认继续使用这份蓝图
             </button>
           ) : null}
           {application.originality_status === 'blocked' ? (
             <p className="originality-blocked-note">高风险不能手动跳过；请根据证据重构下方维度后重新检查。</p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {sceneReport ? (
+        <section className="originality-report scene-originality-report" aria-label="场景情节图报告" data-risk={sceneReport.risk_level}>
+          <header>
+            <div><small>场景风险分</small><strong>{sceneReport.score}/100</strong></div>
+            <div><small>参考范围</small><strong>{sceneReport.source_work_count} 本书</strong></div>
+            <div><small>场景节点</small><strong>{sceneReport.candidate_graph.nodes.length} 个</strong></div>
+          </header>
+          {sceneReport.candidate_graph.nodes.length ? (
+            <ol className="scene-plot-strip" aria-label="候选场景顺序">
+              {sceneReport.candidate_graph.nodes.map((node, index) => (
+                <li key={node.id}>
+                  <small>场景 {index + 1}</small>
+                  <strong>{node.label}</strong>
+                  {node.semantic_terms.length ? <span>{node.semantic_terms.join(' · ')}</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : <p>当前蓝图没有可比较的明确场景节拍。</p>}
+          {sceneReport.findings.length ? (
+            <ul>
+              {sceneReport.findings.map((finding) => (
+                <li key={finding.evidence_sha256}>
+                  <strong>{sceneSignalLabels[finding.signal]} · {finding.score}/100</strong>
+                  <span>{finding.summary}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p>未检出需提示的场景语义、顺序或因果图相似信号。</p>}
+          <p className="originality-legal-notice">{sceneReport.legal_notice}</p>
+          {application.originality_status === 'review_required' && sceneReport.risk_level === 'medium' ? (
+            <button type="button" onClick={acknowledgeSceneReport} disabled={isSaving}>
+              我已查看情节图，确认继续使用这份蓝图
+            </button>
+          ) : null}
+          {sceneReport.risk_level === 'high' ? (
+            <p className="originality-blocked-note">高风险不能确认跳过；请改变场景顺序、关键决策或后果链后重新检查。</p>
           ) : null}
         </section>
       ) : null}

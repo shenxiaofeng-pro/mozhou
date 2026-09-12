@@ -20,6 +20,20 @@ from app.migrations import (
     v15,
     v16,
     v17,
+    v18,
+    v19,
+    v20,
+    v21,
+    v22,
+    v23,
+    v24,
+    v25,
+    v26,
+    v27,
+    v28,
+    v29,
+    v30,
+    v31,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -54,6 +68,52 @@ MIGRATIONS = (
     ),
     Migration(version=16, name="closed_beta_evaluation", upgrade=v16.upgrade),
     Migration(version=17, name="narrative_sandbox", upgrade=v17.upgrade),
+    Migration(
+        version=18,
+        name="scene_plot_graph_originality",
+        upgrade=v18.upgrade,
+    ),
+    Migration(version=19, name="ai_narrative_sandbox", upgrade=v19.upgrade),
+    Migration(version=20, name="research_agent", upgrade=v20.upgrade),
+    Migration(
+        version=21,
+        name="document_formats_and_author_productivity",
+        upgrade=v21.upgrade,
+    ),
+    Migration(version=22, name="ai_comic_drama_workbench", upgrade=v22.upgrade),
+    Migration(
+        version=23,
+        name="reference_application_lifecycle",
+        upgrade=v23.upgrade,
+    ),
+    Migration(version=24, name="topic_decisions", upgrade=v24.upgrade),
+    Migration(version=25, name="craft_pattern_v2", upgrade=v25.upgrade),
+    Migration(version=26, name="writing_pattern_recipes", upgrade=v26.upgrade),
+    Migration(
+        version=27,
+        name="pattern_adaptation_originality_gate",
+        upgrade=v27.upgrade,
+    ),
+    Migration(
+        version=28,
+        name="pattern_adaptation_job_routing",
+        upgrade=v28.upgrade,
+    ),
+    Migration(
+        version=29,
+        name="unified_creative_context_and_plan_rebase",
+        upgrade=v29.upgrade,
+    ),
+    Migration(
+        version=30,
+        name="chapter_production_workbench",
+        upgrade=v30.upgrade,
+    ),
+    Migration(
+        version=31,
+        name="canon_reconciliation_and_author_preferences",
+        upgrade=v31.upgrade,
+    ),
 )
 
 if tuple(migration.version for migration in MIGRATIONS) != tuple(

@@ -9,21 +9,16 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: quality (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  quality_macos:
+    name: quality (macos-14)
+    runs-on: macos-14
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-2022]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -43,11 +38,107 @@ jobs:
       - name: Run complete verification gate
         shell: bash
         run: pnpm run verify
+      - name: Audit locked Python dependencies for macOS
+        shell: bash
+        run: |
+          uv export --project services/api --frozen --all-groups --no-emit-project --format requirements-txt --output-file python-requirements.txt
+          uvx --python 3.14 --from pip-audit==2.10.1 pip-audit --requirement python-requirements.txt
+
+  windows_common:
+    name: Windows common quality
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install locked toolchains and dependencies
+        shell: bash
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          uv python install 3.14
+          uv sync --project services/api --frozen
+      - name: Run non-backend verification gates
+        shell: bash
+        run: pnpm run verify:without-backend
+      - name: Audit locked Python dependencies for Windows
+        shell: bash
+        run: |
+          uv export --project services/api --frozen --all-groups --no-emit-project --format requirements-txt --output-file python-requirements.txt
+          uvx --python 3.14 --from pip-audit==2.10.1 pip-audit --requirement python-requirements.txt
+
+  windows_backend:
+    name: Windows backend (${{ matrix.shard_number }}/8)
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard_index: 0
+            shard_number: 1
+          - shard_index: 1
+            shard_number: 2
+          - shard_index: 2
+            shard_number: 3
+          - shard_index: 3
+            shard_number: 4
+          - shard_index: 4
+            shard_number: 5
+          - shard_index: 5
+            shard_number: 6
+          - shard_index: 6
+            shard_number: 7
+          - shard_index: 7
+            shard_number: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install locked Python dependencies
+        shell: bash
+        run: |
+          uv python install 3.14
+          uv sync --project services/api --frozen
+      - name: Run backend test shard
+        shell: bash
+        run: node scripts/backend-test-shard.mjs --shard-index ${{ matrix.shard_index }} --shard-count 8
+
+  windows_quality:
+    name: quality (windows-2022)
+    if: ${{ always() }}
+    needs: [windows_common, windows_backend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every Windows verification gate
+        env:
+          COMMON_RESULT: ${{ needs.windows_common.result }}
+          BACKEND_RESULT: ${{ needs.windows_backend.result }}
+        run: |
+          if [[ "$COMMON_RESULT" != "success" || "$BACKEND_RESULT" != "success" ]]; then
+            echo "::error::Windows verification failed: common=$COMMON_RESULT backend=$BACKEND_RESULT"
+            exit 1
+          fi
+          echo "All Windows verification gates passed."
 
   security:
     name: security
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -65,11 +156,11 @@ jobs:
       - name: Guard repository and audit JavaScript dependencies
         run: |
           pnpm run guard:repository
-          pnpm audit --audit-level high
+          pnpm audit --audit-level low
       - name: Audit Python dependencies
         run: |
-          uv export --project services/api --frozen --no-dev --format requirements-txt --output-file python-requirements.txt
-          uvx pip-audit --requirement python-requirements.txt
+          uv export --project services/api --frozen --all-groups --no-emit-project --format requirements-txt --output-file python-requirements.txt
+          uvx --python 3.14 --from pip-audit==2.10.1 pip-audit --requirement python-requirements.txt
       - name: Audit Rust dependencies
         uses: rustsec/audit-check@v2
         with:

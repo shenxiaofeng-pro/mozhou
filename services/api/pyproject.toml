@@ -7,13 +7,13 @@ dependencies = [
   "fastapi>=0.115,<1",
   "openai>=2.0,<3",
   "pydantic>=2.10,<3",
-  "pypdf>=6.0,<7",
+  "pypdf>=6.16.1,<7",
   "uvicorn>=0.34,<1",
 ]
 
 [dependency-groups]
 dev = [
-  "httpx2>=2.9,<3",
+  "httpx2>=2.12,<3",
   "mypy>=1.15,<2",
   "pyinstaller>=6.16,<7",
   "pytest>=8.3,<10",

@@ -199,6 +199,6 @@ def _parse_structure(parsed: ParsedReferenceFile, filename: str) -> ManuscriptIm
 
 def preview_manuscript_file(filename: str, payload: bytes) -> ManuscriptImportPreview:
     parsed = parse_reference_file(filename, payload)
-    if parsed.source_format not in {"txt", "markdown"}:
+    if parsed.source_format not in {"txt", "markdown", "docx", "epub"}:
         raise UnsafeImportError("unsupported_manuscript_format")
     return _parse_structure(parsed, filename)

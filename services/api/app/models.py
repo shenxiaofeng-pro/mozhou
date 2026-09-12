@@ -8,6 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 class Genre(StrEnum):
     HISTORICAL_REBIRTH = "historical_rebirth"
     URBAN_REBIRTH = "urban_rebirth"
+    EASTERN_FANTASY = "eastern_fantasy"
+    WESTERN_FANTASY = "western_fantasy"
+
+
+def is_rebirth_genre(genre: Genre) -> bool:
+    return genre in {Genre.HISTORICAL_REBIRTH, Genre.URBAN_REBIRTH}
 
 
 class ChapterStatus(StrEnum):
@@ -82,10 +88,55 @@ class SourceConfidence(StrEnum):
     LOW = "low"
 
 
+class ResearchCategory(StrEnum):
+    HISTORICAL_EVENT = "historical_event"
+    LOCAL_SYSTEM = "local_system"
+    INDUSTRY_RULE = "industry_rule"
+    PRICE_TECHNOLOGY = "price_technology"
+    CONTROVERSY = "controversy"
+
+
+class ResearchFindingState(StrEnum):
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ResearchFindingDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    source_id: str = Field(min_length=36, max_length=36)
+    category: ResearchCategory
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=1200)
+    evidence_excerpt: str = Field(min_length=1, max_length=4000)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+    applicable_year_start: int = Field(ge=-3000, le=2100)
+    applicable_year_end: int = Field(ge=-3000, le=2100)
+    region: str = Field(min_length=1, max_length=120)
+    confidence: SourceConfidence = SourceConfidence.MEDIUM
+    conflict_key: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> ResearchFindingDraft:
+        if self.end_char <= self.start_char:
+            raise ValueError("研究证据字符范围无效")
+        if self.applicable_year_end < self.applicable_year_start:
+            raise ValueError("研究结论年代范围无效")
+        return self
+
+
+class ResearchFindingDraftSet(BaseModel):
+    findings: list[ResearchFindingDraft] = Field(default_factory=list, max_length=80)
+
+
 class ReferenceFormat(StrEnum):
     TXT = "txt"
     MARKDOWN = "markdown"
     PDF = "pdf"
+    DOCX = "docx"
+    EPUB = "epub"
 
 
 class ReferenceRightsBasis(StrEnum):
@@ -101,6 +152,40 @@ class ReferencePatternDimension(StrEnum):
     RESOURCE_SYSTEM = "resource_system"
     KEY_SCENE_SEQUENCE = "key_scene_sequence"
     ENDING = "ending"
+
+
+class CraftPatternOperation(StrEnum):
+    ANALYSIS = "analysis"
+    FUSION = "fusion"
+
+
+class CraftPatternAssetType(StrEnum):
+    STAGE = "stage"
+    BOOK_EVOLUTION = "book_evolution"
+    FUSION_MATERIAL = "fusion_material"
+
+
+class CraftPatternLifecycleState(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class CraftPatternDimension(StrEnum):
+    ERA = "era"
+    CORE_DESIRE = "core_desire"
+    CONFLICT_CAUSALITY = "conflict_causality"
+    RESOURCE_SYSTEM = "resource_system"
+    KEY_SCENE_SEQUENCE = "key_scene_sequence"
+    ENDING = "ending"
+    HOOK_MECHANICS = "hook_mechanics"
+    PROMISE_PAYOFF_CADENCE = "promise_payoff_cadence"
+    EMOTIONAL_RHYTHM = "emotional_rhythm"
+    INFORMATION_REVEAL = "information_reveal"
+    FORESHADOWING_CYCLE = "foreshadowing_cycle"
+    SCENE_DESIGN = "scene_design"
+    POV_NARRATIVE_DISTANCE = "pov_narrative_distance"
+    EXPRESSION_PARAMETERS = "expression_parameters"
+    POWER_PROGRESSION = "power_progression"
 
 
 class BlueprintMode(StrEnum):
@@ -129,12 +214,26 @@ class OriginalityStatus(StrEnum):
     PASSED = "passed"
 
 
+class ReferenceApplicationLifecycleState(StrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
 class OriginalitySignal(StrEnum):
     PHRASE_OVERLAP = "phrase_overlap"
     PROPER_NOUN = "proper_noun"
     CHARACTER_COMBINATION = "character_combination"
     BEAT_SEQUENCE = "beat_sequence"
     MULTI_DIMENSION = "multi_dimension"
+
+
+class SceneOriginalitySignal(StrEnum):
+    SEMANTIC_SCENE = "semantic_scene"
+    ORDERED_SEQUENCE = "ordered_sequence"
+    CAUSAL_GRAPH = "causal_graph"
+    CHARACTER_FUNCTION_GRAPH = "character_function_graph"
+    MULTI_SOURCE_CONVERGENCE = "multi_source_convergence"
 
 
 class BookBlueprintField(StrEnum):
@@ -151,6 +250,91 @@ class BookBlueprintField(StrEnum):
     PROTAGONIST_ARC = "protagonist_arc"
     RESOURCE_GROWTH = "resource_growth"
     RELATIONSHIP_DESIGN = "relationship_design"
+
+
+class TopicDecisionField(StrEnum):
+    TARGET_PLATFORM = "target_platform"
+    TARGET_AUDIENCE = "target_audience"
+    SUBGENRE = "subgenre"
+    PREMISE = "premise"
+    CORE_DESIRE = "core_desire"
+    LONG_TERM_PROMISE = "long_term_promise"
+    FIRST_THREE_CHAPTER_PROMISE = "first_three_chapter_promise"
+    CONSTRAINTS = "constraints"
+    FORBIDDEN_ELEMENTS = "forbidden_elements"
+    REFERENCE_PURPOSE = "reference_purpose"
+    REALITY_ANCHOR = "reality_anchor"
+    FIRST_TEN_CHAPTER_GOAL = "first_ten_chapter_goal"
+
+
+class TopicDecisionStatus(StrEnum):
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+    PENDING_RECONFIRMATION = "pending_reconfirmation"
+
+
+class ProjectNextAction(StrEnum):
+    CONFIRM_TOPIC = "confirm_topic"
+    REVIEW_TOPIC_CHANGES = "review_topic_changes"
+    PLAN_BOOK = "plan_book"
+    REVIEW_DOWNSTREAM_PLANS = "review_downstream_plans"
+    CONTINUE_WRITING = "continue_writing"
+
+
+class AuthorNextActionKind(StrEnum):
+    CONFIRM_TOPIC = "confirm_topic"
+    REVIEW_TOPIC_CHANGES = "review_topic_changes"
+    PLAN_BOOK = "plan_book"
+    REVIEW_DOWNSTREAM_PLANS = "review_downstream_plans"
+    PLAN_CHAPTER = "plan_chapter"
+    GENERATE_CHAPTER_CANDIDATE = "generate_chapter_candidate"
+    CONTINUE_CHAPTER_DRAFT = "continue_chapter_draft"
+    REVIEW_CHAPTER = "review_chapter"
+    REVIEW_CANON_RECONCILIATION = "review_canon_reconciliation"
+    REVIEW_ROLLING_PLAN = "review_rolling_plan"
+    CREATE_NEXT_CHAPTER = "create_next_chapter"
+    PROJECT_COMPLETE = "project_complete"
+
+
+class AuthorWorkspaceView(StrEnum):
+    TOPIC_DECISION = "topic-decision"
+    WRITING = "writing"
+
+
+class AuthorWorkflowStage(StrEnum):
+    TOPIC = "topic"
+    BOOK = "book"
+    PLAN = "plan"
+    CANDIDATE = "candidate"
+    REVIEW = "review"
+    FEEDBACK = "feedback"
+    COMPLETE = "complete"
+
+
+class AuthorNextAction(BaseModel):
+    """One stable, server-selected entry point for resuming author work."""
+
+    kind: AuthorNextActionKind
+    target_view: AuthorWorkspaceView
+    target_stage: AuthorWorkflowStage
+    chapter_id: str | None = None
+    chapter_number: int | None = Field(default=None, ge=1, le=10_000)
+    last_approved_chapter_id: str | None = None
+    reconciliation_id: str | None = None
+    rolling_plan_id: str | None = None
+    rolling_plan_replenishment_id: str | None = None
+    blocked: bool = False
+
+
+class TopicDecisionCandidateState(StrEnum):
+    CANDIDATE = "candidate"
+    SELECTED = "selected"
+    REJECTED = "rejected"
+
+
+class TopicDecisionCandidateMode(StrEnum):
+    FULL = "full"
+    FIELD_REGENERATION = "field_regeneration"
 
 
 class DirectorWorkflow(StrEnum):
@@ -221,6 +405,7 @@ class ChapterVersionSource(StrEnum):
     GENERATION_APPLY = "generation_apply"
     CHANGE_SET_APPLY = "change_set_apply"
     ROLLBACK = "rollback"
+    APPROVAL = "approval"
 
 
 class TextChangeSetState(StrEnum):
@@ -235,8 +420,52 @@ class AiProvider(StrEnum):
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
+class TopicDecisionContent(BaseModel):
+    """Author-facing topic fields; drafts may be incomplete, confirmation may not."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    target_platform: str = Field(max_length=120)
+    target_audience: str = Field(max_length=500)
+    subgenre: str = Field(max_length=120)
+    premise: str = Field(max_length=3000)
+    core_desire: str = Field(max_length=1200)
+    long_term_promise: str = Field(max_length=1500)
+    first_three_chapter_promise: str = Field(max_length=1500)
+    constraints: list[str] = Field(max_length=20)
+    forbidden_elements: list[str] = Field(max_length=20)
+    reference_purpose: str = Field(max_length=1200)
+    reality_anchor: str = Field(max_length=1500)
+    first_ten_chapter_goal: str = Field(max_length=1500)
+
+    @field_validator(
+        "target_platform",
+        "target_audience",
+        "subgenre",
+        "premise",
+        "core_desire",
+        "long_term_promise",
+        "first_three_chapter_promise",
+        "reference_purpose",
+        "reality_anchor",
+        "first_ten_chapter_goal",
+    )
+    @classmethod
+    def reject_topic_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("选题内容不能包含空字节")
+        return value
+
+    @field_validator("constraints", "forbidden_elements")
+    @classmethod
+    def validate_topic_lists(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 500 or "\x00" in item for item in value):
+            raise ValueError("选题限制项格式无效")
+        return value
+
+
 class CreateProjectRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=120)
     genre: Genre
@@ -244,6 +473,15 @@ class CreateProjectRequest(BaseModel):
     rebirth_location: str = Field(min_length=1, max_length=100)
     chapter_target_words: int = Field(default=3000, ge=500, le=20000)
     safety_buffer_chapters: int = Field(default=3, ge=0, le=100)
+    template_id: str | None = Field(default=None, min_length=1, max_length=80)
+    topic_seed: str = Field(default="", max_length=3000)
+
+    @field_validator("title", "rebirth_location", "template_id", "topic_seed")
+    @classmethod
+    def reject_project_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("项目输入不能包含空字节")
+        return value
 
 
 class Project(BaseModel):
@@ -258,8 +496,213 @@ class Project(BaseModel):
     updated_at: str
 
 
-class BookBlueprintContent(BaseModel):
+class TopicDecision(BaseModel):
+    id: str
+    project_id: str
+    content: TopicDecisionContent
+    status: TopicDecisionStatus
+    locks: dict[TopicDecisionField, bool]
+    field_versions: dict[TopicDecisionField, int]
+    rejection_reasons: dict[TopicDecisionField, str] = Field(default_factory=dict)
+    source_template_id: str | None = None
+    source_job_id: str | None = None
+    source_candidate_ids: list[str] = Field(default_factory=list)
+    revision: int = Field(ge=0)
+    confirmed_revision: int | None = Field(default=None, ge=0)
+    plan_stale: bool = False
+    created_at: str
+    updated_at: str
+
+    @model_validator(mode="after")
+    def require_complete_topic_field_state(self) -> TopicDecision:
+        expected = set(TopicDecisionField)
+        if set(self.locks) != expected or set(self.field_versions) != expected:
+            raise ValueError("选题字段状态不完整")
+        if any(version < 1 for version in self.field_versions.values()):
+            raise ValueError("选题字段版本无效")
+        if not set(self.rejection_reasons) <= expected:
+            raise ValueError("选题拒绝原因字段无效")
+        expected_status = (
+            TopicDecisionStatus.DRAFT
+            if self.confirmed_revision is None
+            else TopicDecisionStatus.CONFIRMED
+            if self.confirmed_revision == self.revision
+            else TopicDecisionStatus.PENDING_RECONFIRMATION
+        )
+        if self.status != expected_status:
+            raise ValueError("选题确认状态与版本不匹配")
+        return self
+
+
+class TopicDecisionVersion(BaseModel):
+    id: str
+    topic_decision_id: str
+    project_id: str
+    revision: int = Field(gt=0)
+    content: TopicDecisionContent
+    locks: dict[TopicDecisionField, bool]
+    field_versions: dict[TopicDecisionField, int]
+    rejection_reasons: dict[TopicDecisionField, str] = Field(default_factory=dict)
+    source_template_id: str | None = None
+    source_job_id: str | None = None
+    source_candidate_ids: list[str] = Field(default_factory=list)
+    content_sha256: str = Field(min_length=64, max_length=64)
+    created_at: str
+
+
+class UpdateTopicDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: TopicDecisionContent
+    changed_fields: list[TopicDecisionField] = Field(default_factory=list, max_length=12)
+    lock_updates: dict[TopicDecisionField, bool] = Field(default_factory=dict)
+    rejection_reason_updates: dict[TopicDecisionField, str | None] = Field(
+        default_factory=dict
+    )
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("rejection_reason_updates")
+    @classmethod
+    def validate_rejection_reason_updates(
+        cls,
+        value: dict[TopicDecisionField, str | None],
+    ) -> dict[TopicDecisionField, str | None]:
+        if any(
+            reason is not None
+            and (not reason.strip() or len(reason) > 1000 or "\x00" in reason)
+            for reason in value.values()
+        ):
+            raise ValueError("选题拒绝原因格式无效")
+        return value
+
+    @model_validator(mode="after")
+    def require_topic_update(self) -> UpdateTopicDecisionRequest:
+        if len(set(self.changed_fields)) != len(self.changed_fields):
+            raise ValueError("选题变更字段不能重复")
+        if not self.changed_fields and not self.lock_updates and not self.rejection_reason_updates:
+            raise ValueError("选题没有声明任何变更")
+        return self
+
+
+class ConfirmTopicDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0)
+
+
+class TopicDecisionCandidateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    expected_revision: int = Field(ge=0)
+    author_intent: str = Field(default="", max_length=1000)
+    confirm_external_processing: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+    @field_validator("author_intent")
+    @classmethod
+    def reject_topic_intent_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("选题作者意图不能包含空字节")
+        return value
+
+
+class TopicDecisionRegenerationRequest(TopicDecisionCandidateRequest):
+    target_field: TopicDecisionField
+
+
+class TopicDecisionOutboundPreview(BaseModel):
+    mode: TopicDecisionCandidateMode
+    target_field: TopicDecisionField | None = None
+    profile_id: str | None
+    profile_name: str
+    provider: str
+    model: str
+    data_types: list[str]
+    content_scope: str
+    character_count: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_calls: int = Field(ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+
+
+class TopicDecisionCandidateDraft(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    label: str = Field(min_length=1, max_length=80)
+    content: TopicDecisionContent
+    why_distinct: str = Field(min_length=1, max_length=800)
+    risks: list[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("risks")
+    @classmethod
+    def validate_topic_risks(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 300 or "\x00" in item for item in value):
+            raise ValueError("选题风险提示格式无效")
+        return value
+
+
+class TopicDecisionCandidateDraftSet(BaseModel):
+    candidates: list[TopicDecisionCandidateDraft] = Field(min_length=3, max_length=3)
+
+
+class TopicDecisionCandidate(BaseModel):
+    id: str
+    ordinal: int = Field(ge=1, le=3)
+    label: str
+    content: TopicDecisionContent
+    changed_fields: list[TopicDecisionField]
+    rationale: str
+    risks: list[str]
+    state: TopicDecisionCandidateState
+    rejection_reason: str | None = None
+
+
+class TopicDecisionCandidateSet(BaseModel):
+    job_id: str
+    project_id: str
+    based_on_revision: int = Field(ge=0)
+    target_field: TopicDecisionField | None = None
+    candidates: list[TopicDecisionCandidate] = Field(min_length=3, max_length=3)
+
+
+class SelectTopicDecisionCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_id: str = Field(min_length=36, max_length=36)
+    selected_fields: list[TopicDecisionField] = Field(min_length=1, max_length=12)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("selected_fields")
+    @classmethod
+    def validate_selected_topic_fields(
+        cls,
+        value: list[TopicDecisionField],
+    ) -> list[TopicDecisionField]:
+        if len(set(value)) != len(value):
+            raise ValueError("选择的选题字段不能重复")
+        return value
+
+
+class RejectTopicDecisionCandidateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_id: str = Field(min_length=36, max_length=36)
+    reason: str = Field(min_length=1, max_length=1000)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("reason")
+    @classmethod
+    def reject_candidate_reason_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("候选拒绝原因不能包含空字节")
+        return value
+
+
+class BookBlueprintContent(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=120)
     genre: Genre
@@ -360,13 +803,14 @@ class BookBlueprint(BaseModel):
 
 
 class DirectorStartupRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     idea: str = Field(min_length=1, max_length=3000)
     reality_anchor: str = Field(default="", max_length=1500)
     candidate_count: int = Field(default=3, ge=2, le=3)
     confirm_external_processing: bool = False
     max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    expected_topic_revision: int | None = Field(default=None, ge=0)
 
     @field_validator("idea", "reality_anchor")
     @classmethod
@@ -377,12 +821,16 @@ class DirectorStartupRequest(BaseModel):
 
 
 class SelectDirectorCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     job_id: str = Field(min_length=36, max_length=36)
     candidate_id: str = Field(min_length=36, max_length=36)
     expected_blueprint_revision: int | None = Field(default=None, ge=0)
 
 
 class UpdateBookBlueprintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: BookBlueprintContent
     changed_fields: list[BookBlueprintField] = Field(default_factory=list, max_length=13)
     lock_updates: dict[BookBlueprintField, bool] = Field(default_factory=dict)
@@ -398,6 +846,8 @@ class UpdateBookBlueprintRequest(BaseModel):
 
 
 class DirectorRegenerationImpactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     target_field: BookBlueprintField
 
 
@@ -410,7 +860,7 @@ class DirectorRegenerationImpact(BaseModel):
 
 
 class DirectorFieldRegenerationRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     target_field: BookBlueprintField
     expected_revision: int = Field(ge=0)
@@ -451,6 +901,8 @@ class DirectorFieldDraft(BaseModel):
 
 
 class ApplyDirectorProposalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     job_id: str = Field(min_length=36, max_length=36)
     expected_revision: int = Field(ge=0)
 
@@ -465,7 +917,7 @@ class DirectorSceneBeat(BaseModel):
 
 
 class VolumePlanContent(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     volume_number: int = Field(ge=1, le=100)
     title: str = Field(min_length=1, max_length=120)
@@ -488,7 +940,7 @@ class VolumePlan(VolumePlanContent):
 
 
 class RollingChapterPlanContent(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     chapter_number: int = Field(ge=1, le=10_000)
     title: str = Field(min_length=1, max_length=120)
@@ -552,7 +1004,7 @@ class DirectorExpansionProposal(DirectorExpansionDraft):
 
 
 class DirectorExpansionRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
@@ -562,12 +1014,16 @@ class DirectorExpansionRequest(BaseModel):
 
 
 class UpdateVolumePlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: VolumePlanContent
     locked: bool
     expected_revision: int = Field(ge=0)
 
 
 class UpdateRollingChapterPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: RollingChapterPlanContent
     locked: bool
     expected_revision: int = Field(ge=0)
@@ -586,6 +1042,7 @@ class DirectorOutboundPreview(BaseModel):
     estimated_output_tokens: int = Field(ge=0)
     estimated_calls: int = Field(ge=1)
     estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    context_packet: dict[str, object] | None = None
 
 
 class DirectorPreReviewFinding(BaseModel):
@@ -600,7 +1057,7 @@ class DirectorPreReview(BaseModel):
 
 
 class DirectorChapterPipelineRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
@@ -612,7 +1069,7 @@ class DirectorChapterPipelineRequest(BaseModel):
 
 
 class CreateRecoveryPointRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     label: str = Field(min_length=1, max_length=80)
 
@@ -698,6 +1155,8 @@ class ManuscriptScene(BaseModel):
 
 
 class ManuscriptImportChapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_id: str = Field(min_length=1, max_length=80)
     title: str = Field(min_length=1, max_length=120)
     content: str = Field(max_length=2_000_000)
@@ -713,6 +1172,8 @@ class ManuscriptImportChapter(BaseModel):
 
 
 class ManuscriptImportVolume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_id: str = Field(min_length=1, max_length=80)
     title: str = Field(min_length=1, max_length=120)
     chapters: list[ManuscriptImportChapter] = Field(min_length=1, max_length=10_000)
@@ -733,7 +1194,7 @@ class ManuscriptImportPreview(BaseModel):
 
 
 class ConfirmManuscriptImportRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=120)
     genre: Genre
@@ -753,28 +1214,20 @@ class ConfirmManuscriptImportRequest(BaseModel):
     @model_validator(mode="after")
     def validate_import_tree(self) -> ConfirmManuscriptImportRequest:
         volume_ids = [volume.client_id for volume in self.volumes]
-        chapter_ids = [
-            chapter.client_id
-            for volume in self.volumes
-            for chapter in volume.chapters
-        ]
+        chapter_ids = [chapter.client_id for volume in self.volumes for chapter in volume.chapters]
         if len(set(volume_ids)) != len(volume_ids) or len(set(chapter_ids)) != len(chapter_ids):
             raise ValueError("稿件预览节点标识不能重复")
         if len(chapter_ids) > 10_000:
             raise ValueError("稿件章节数量超过上限")
         total = len(self.unrecognized_text) + sum(
-            len(chapter.content)
-            for volume in self.volumes
-            for chapter in volume.chapters
+            len(chapter.content) for volume in self.volumes for chapter in volume.chapters
         )
         if total > 20_000_000:
             raise ValueError("稿件总字符数超过上限")
         if self.unrecognized_text and self.unrecognized_action is None:
             raise ValueError("必须决定如何处理未识别段落")
         has_warnings = bool(self.warnings) or any(
-            chapter.warnings
-            for volume in self.volumes
-            for chapter in volume.chapters
+            chapter.warnings for volume in self.volumes for chapter in volume.chapters
         )
         if has_warnings and not self.confirm_warnings:
             raise ValueError("必须确认空章、超长章或低置信度结构")
@@ -867,7 +1320,7 @@ class SerialDashboard(BaseModel):
 
 
 class WorkspaceSearchResult(BaseModel):
-    kind: Literal["project", "chapter", "character", "resource", "thread"]
+    kind: Literal["project", "chapter", "character", "resource", "thread", "idea", "annotation"]
     id: str
     title: str
     snippet: str
@@ -1159,6 +1612,7 @@ class ReviewOutboundPreview(BaseModel):
     estimated_calls: int = Field(ge=0)
     estimated_cost_microusd: int | None = Field(default=None, ge=0)
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_packet: dict[str, object] | None = None
 
 
 class ReviewChapterRequest(BaseModel):
@@ -1292,6 +1746,7 @@ class ResumeCard(BaseModel):
     active_entities: list[ResumeCardItem] = Field(default_factory=list)
     pending_reviews: int = 0
     warning_count: int = 0
+    next_action: AuthorNextAction | None = None
 
 
 class AiStatus(BaseModel):
@@ -1393,8 +1848,6 @@ class ImportReferenceWorkRequest(BaseModel):
             raise ValueError("参考作品不能包含空字节")
         if not value.strip():
             raise ValueError("参考作品不能为空")
-        if len(value.encode("utf-8")) > 20 * 1024 * 1024:
-            raise ValueError("参考作品不能超过 20 MB")
         return value
 
 
@@ -1417,6 +1870,8 @@ class ReferenceWorkImpactResponse(BaseModel):
     work: ReferenceWork
     projects: list[Project]
     cache_entries: int
+    retained_craft_asset_count: int = Field(default=0, ge=0)
+    affected_craft_job_count: int = Field(default=0, ge=0)
 
 
 class ReferenceSynthesisRequest(BaseModel):
@@ -1510,6 +1965,411 @@ class ReferencePatternCard(ReferenceSynthesisProposal):
     provider: AiProvider
     model: str
     created_at: str
+
+
+class CraftPatternAnalysisPreviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    selected_segment_ids: list[str] = Field(min_length=1, max_length=64)
+    author_focus: str = Field(default="", max_length=1000)
+
+    @field_validator("selected_segment_ids")
+    @classmethod
+    def validate_segment_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("参考区段不能重复选择")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("参考区段标识无效") from error
+        return value
+
+    @field_validator("author_focus")
+    @classmethod
+    def validate_author_focus(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("分析重点不能包含空字节")
+        return value
+
+
+class SubmitCraftPatternAnalysisRequest(CraftPatternAnalysisPreviewRequest):
+    confirm_external_processing: bool = False
+    confirm_unknown_cost: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    expected_preflight_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CraftPatternFusionPreviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    selected_asset_version_ids: list[str] = Field(min_length=2, max_length=30)
+    author_focus: str = Field(default="", max_length=1000)
+
+    @field_validator("selected_asset_version_ids")
+    @classmethod
+    def validate_asset_version_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("写作模式资产不能重复选择")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("写作模式资产标识无效") from error
+        return value
+
+    @field_validator("author_focus")
+    @classmethod
+    def validate_author_focus(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("融合重点不能包含空字节")
+        return value
+
+
+class SubmitCraftPatternFusionRequest(CraftPatternFusionPreviewRequest):
+    confirm_external_processing: bool = False
+    confirm_unknown_cost: bool = False
+    max_estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    expected_preflight_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CraftPatternSelectedWork(BaseModel):
+    work_id: str = Field(min_length=36, max_length=36)
+    title: str = Field(min_length=1, max_length=160)
+    segment_count: int = Field(ge=0)
+    character_count: int = Field(ge=0)
+
+    @field_validator("work_id")
+    @classmethod
+    def validate_work_id(cls, value: str) -> str:
+        try:
+            if str(UUID(value)) != value:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("参考作品标识无效") from error
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def reject_work_title_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("参考作品标题不能包含空字节")
+        return value
+
+
+class CraftPatternSelectedSegment(BaseModel):
+    segment_id: str = Field(min_length=36, max_length=36)
+    work_id: str = Field(min_length=36, max_length=36)
+    work_title: str = Field(min_length=1, max_length=160)
+    ordinal: int = Field(ge=1)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+    chapter_start: str | None = Field(default=None, max_length=160)
+    chapter_end: str | None = Field(default=None, max_length=160)
+    character_count: int = Field(gt=0)
+
+    @field_validator("segment_id", "work_id")
+    @classmethod
+    def validate_source_ids(cls, value: str) -> str:
+        try:
+            if str(UUID(value)) != value:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("参考区段来源标识无效") from error
+        return value
+
+    @field_validator("work_title", "chapter_start", "chapter_end")
+    @classmethod
+    def reject_segment_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("参考区段字段不能包含空字节")
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self) -> CraftPatternSelectedSegment:
+        if self.end_char <= self.start_char or self.end_char - self.start_char != self.character_count:
+            raise ValueError("参考区段字符范围无效")
+        return self
+
+
+class CraftPatternSelectedAsset(BaseModel):
+    asset_version_id: str = Field(min_length=36, max_length=36)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    title: str = Field(min_length=1, max_length=160)
+    asset_type: CraftPatternAssetType
+    version: int = Field(ge=1)
+    source_work_ids: list[str] = Field(min_length=1, max_length=30)
+
+    @field_validator("asset_version_id", "source_work_ids", mode="before")
+    @classmethod
+    def validate_selected_asset_ids(cls, value: object) -> object:
+        items = value if isinstance(value, list) else [value]
+        if len(items) != len(set(items)):
+            raise ValueError("写作模式来源不能重复")
+        for item in items:
+            try:
+                if str(UUID(str(item))) != str(item):
+                    raise ValueError
+            except (TypeError, ValueError) as error:
+                raise ValueError("写作模式来源标识无效") from error
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def reject_selected_asset_title_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式标题不能包含空字节")
+        return value
+
+
+class CraftPatternPreflight(BaseModel):
+    operation: CraftPatternOperation
+    selected_works: list[CraftPatternSelectedWork]
+    selected_segments: list[CraftPatternSelectedSegment]
+    selected_assets: list[CraftPatternSelectedAsset]
+    selected_character_count: int = Field(ge=0)
+    stage_card_count: int = Field(ge=0)
+    book_evolution_count: int = Field(ge=0)
+    fusion_material_count: int = Field(ge=0)
+    map_calls: int = Field(ge=0)
+    stage_calls: int = Field(ge=0)
+    book_calls: int = Field(ge=0)
+    fusion_calls: int = Field(ge=0)
+    planned_calls: int = Field(ge=0)
+    cache_hit_calls: int = Field(ge=0)
+    uncached_calls: int = Field(ge=0)
+    estimated_input_tokens: int = Field(ge=0)
+    estimated_output_tokens: int = Field(ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    profile_id: str | None
+    profile_name: str | None
+    provider: str
+    model: str
+    data_types: list[str]
+    content_scope: str
+    prompt_version: str
+    preflight_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CraftPatternMapEvidenceDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    work_id: str = Field(min_length=1, max_length=100)
+    segment_id: str = Field(min_length=1, max_length=100)
+    evidence_text: str = Field(min_length=8, max_length=240)
+    evidence_summary: str = Field(min_length=1, max_length=160)
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("work_id", "segment_id", "evidence_text", "evidence_summary")
+    @classmethod
+    def reject_unsafe_evidence_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("证据不能包含空字节")
+        return value
+
+
+class CraftPatternItemFields(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    dimension: CraftPatternDimension
+    name: str = Field(min_length=1, max_length=120)
+    observation: str = Field(min_length=1, max_length=1000)
+    transferable_rule: str = Field(min_length=1, max_length=1000)
+    adaptation_risk: str = Field(min_length=1, max_length=600)
+
+    @field_validator("name", "observation", "transferable_rule", "adaptation_risk")
+    @classmethod
+    def reject_unsafe_pattern_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式不能包含空字节")
+        return value
+
+
+class CraftPatternMapItemDraft(CraftPatternItemFields):
+    evidence: list[CraftPatternMapEvidenceDraft] = Field(min_length=1, max_length=8)
+
+
+class CraftPatternMapDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    craft_items: list[CraftPatternMapItemDraft] = Field(min_length=1, max_length=30)
+
+    @field_validator("title", "summary")
+    @classmethod
+    def reject_unsafe_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式不能包含空字节")
+        return value
+
+
+class CraftPatternReductionItemDraft(CraftPatternItemFields):
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def validate_evidence_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("证据标识不能重复")
+        for item in value:
+            try:
+                UUID(item)
+            except (TypeError, ValueError) as error:
+                raise ValueError("证据标识无效") from error
+        return value
+
+
+class CraftPatternReductionDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    craft_items: list[CraftPatternReductionItemDraft] = Field(min_length=1, max_length=30)
+
+    @field_validator("title", "summary")
+    @classmethod
+    def reject_unsafe_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式不能包含空字节")
+        return value
+
+
+class CraftPatternEvidence(BaseModel):
+    id: str = Field(min_length=36, max_length=36)
+    work_id: str = Field(min_length=36, max_length=36)
+    work_title: str = Field(min_length=1, max_length=160)
+    segment_id: str = Field(min_length=36, max_length=36)
+    stage_label: str = Field(min_length=1, max_length=240)
+    chapter_label: str | None = Field(default=None, max_length=160)
+    absolute_start_char: int = Field(ge=0)
+    absolute_end_char: int = Field(gt=0)
+    evidence_summary: str = Field(min_length=1, max_length=160)
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("id", "work_id", "segment_id")
+    @classmethod
+    def validate_uuid_fields(cls, value: str) -> str:
+        try:
+            if str(UUID(value)) != value:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise ValueError("证据来源标识无效") from error
+        return value
+
+    @field_validator("work_title", "stage_label", "chapter_label", "evidence_summary")
+    @classmethod
+    def reject_evidence_null_bytes(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("证据字段不能包含空字节")
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self) -> CraftPatternEvidence:
+        if self.absolute_end_char <= self.absolute_start_char:
+            raise ValueError("证据字符范围无效")
+        return self
+
+
+class CraftPatternItem(CraftPatternItemFields):
+    evidence: list[CraftPatternEvidence] = Field(min_length=1, max_length=20)
+
+
+class CraftPatternMaterial(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    craft_items: list[CraftPatternItem] = Field(min_length=1, max_length=30)
+
+
+class CraftPatternAsset(BaseModel):
+    id: str = Field(min_length=36, max_length=36)
+    series_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    schema_version: Literal[2] = 2
+    asset_type: CraftPatternAssetType
+    version: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lifecycle_state: CraftPatternLifecycleState | None
+    lifecycle_revision: int | None = Field(default=None, ge=0)
+    source_job_id: str | None
+    source_work_ids: list[str] = Field(min_length=1, max_length=30)
+    source_segment_ids: list[str] = Field(min_length=1, max_length=64)
+    source_asset_version_ids: list[str] = Field(default_factory=list, max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=1000)
+    author_focus: str = Field(default="", max_length=1000)
+    craft_items: list[CraftPatternItem] = Field(min_length=1, max_length=30)
+    provider: str = Field(min_length=1, max_length=40)
+    model: str = Field(min_length=1, max_length=100)
+    prompt_version: str = Field(min_length=1, max_length=100)
+    created_at: str
+    updated_at: str
+
+    @field_validator(
+        "id",
+        "source_job_id",
+        "source_work_ids",
+        "source_segment_ids",
+        "source_asset_version_ids",
+        mode="before",
+    )
+    @classmethod
+    def validate_asset_ids(cls, value: object) -> object:
+        if value is None:
+            return value
+        items = value if isinstance(value, list) else [value]
+        if len(items) != len(set(items)):
+            raise ValueError("写作模式来源不能重复")
+        for item in items:
+            try:
+                if str(UUID(str(item))) != str(item):
+                    raise ValueError
+            except (TypeError, ValueError) as error:
+                raise ValueError("写作模式来源标识无效") from error
+        return value
+
+    @field_validator("title", "summary", "author_focus", "provider", "model", "prompt_version")
+    @classmethod
+    def reject_asset_null_bytes(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("写作模式资产不能包含空字节")
+        return value
+
+
+class CraftPatternAssetSummary(BaseModel):
+    id: str
+    series_id: str
+    asset_type: CraftPatternAssetType
+    version: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lifecycle_state: CraftPatternLifecycleState | None
+    lifecycle_revision: int | None = Field(default=None, ge=0)
+    source_work_ids: list[str]
+    source_segment_ids: list[str]
+    source_asset_version_ids: list[str]
+    title: str
+    summary: str
+    provider: str
+    model: str
+    prompt_version: str
+    created_at: str
+    updated_at: str
+
+
+class CraftPatternAssetPage(BaseModel):
+    items: list[CraftPatternAssetSummary]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class UpdateCraftPatternLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: CraftPatternLifecycleState
+    expected_lifecycle_revision: int = Field(ge=0)
 
 
 class AppliedReferenceDimension(BaseModel):
@@ -1622,10 +2482,61 @@ class OriginalityReport(OriginalityAssessment):
     created_at: str
 
 
+class SceneGraphNode(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=240)
+    semantic_terms: list[str] = Field(default_factory=list, max_length=24)
+
+
+class SceneGraphEdge(BaseModel):
+    source: str = Field(min_length=1, max_length=40)
+    target: str = Field(min_length=1, max_length=40)
+    relation: str = Field(min_length=1, max_length=40)
+
+
+class ScenePlotGraph(BaseModel):
+    nodes: list[SceneGraphNode] = Field(max_length=40)
+    edges: list[SceneGraphEdge] = Field(max_length=80)
+
+
+class SceneOriginalityFinding(BaseModel):
+    signal: SceneOriginalitySignal
+    score: int = Field(ge=0, le=100)
+    summary: str = Field(min_length=1, max_length=300)
+    source_segment_ids: list[str] = Field(default_factory=list, max_length=72)
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SceneOriginalityAssessment(BaseModel):
+    risk_level: OriginalityRiskLevel
+    score: int = Field(ge=0, le=100)
+    threshold_version: str = Field(min_length=1, max_length=80)
+    candidate_graph: ScenePlotGraph
+    findings: list[SceneOriginalityFinding] = Field(max_length=30)
+    source_segment_ids: list[str] = Field(max_length=72)
+    source_work_count: int = Field(ge=1, le=12)
+    input_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    legal_notice: str = Field(min_length=1, max_length=200)
+
+
+class SceneOriginalityCheck(SceneOriginalityAssessment):
+    id: str
+    application_id: str
+    blueprint_revision: int = Field(ge=0)
+    status: OriginalityStatus
+    viewed_at: str | None = None
+    acknowledged_at: str | None = None
+    created_at: str
+
+
 class ReferencePatternApplication(BaseModel):
     id: str
     project_id: str
     pattern_card_id: str
+    lifecycle_state: ReferenceApplicationLifecycleState = (
+        ReferenceApplicationLifecycleState.ACTIVE
+    )
+    lifecycle_revision: int = Field(default=0, ge=0)
     selected_dimensions: list[ReferencePatternDimension]
     dimensions: dict[ReferencePatternDimension, AppliedReferenceDimension]
     relationship_recomposition: str
@@ -1691,6 +2602,11 @@ class UpdateReferenceBlueprintRequest(BaseModel):
         return self
 
 
+class UpdateReferenceApplicationLifecycleRequest(BaseModel):
+    lifecycle_state: ReferenceApplicationLifecycleState
+    expected_lifecycle_revision: int = Field(ge=0)
+
+
 class AcknowledgeOriginalityReportRequest(BaseModel):
     expected_revision: int = Field(ge=0)
 
@@ -1698,6 +2614,9 @@ class AcknowledgeOriginalityReportRequest(BaseModel):
 class Workspace(BaseModel):
     project: Project
     chapters: list[Chapter]
+    topic_decision: TopicDecision | None = None
+    next_action: ProjectNextAction = ProjectNextAction.CONTINUE_WRITING
+    author_next_action: AuthorNextAction | None = None
     manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
     manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
@@ -1720,6 +2639,9 @@ class Workspace(BaseModel):
 class WorkspaceSummary(BaseModel):
     project: Project
     chapters: list[ChapterSummary]
+    topic_decision: TopicDecision | None = None
+    next_action: ProjectNextAction = ProjectNextAction.CONTINUE_WRITING
+    author_next_action: AuthorNextAction | None = None
     manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
     manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
@@ -1959,8 +2881,33 @@ class CreateChapterRequest(BaseModel):
 
 
 class TransitionChapterRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     target_status: ChapterStatus
     expected_revision: int = Field(ge=0)
+    expected_content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    source_writing_outcome_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+
+    @model_validator(mode="after")
+    def require_approval_content_guard(self) -> TransitionChapterRequest:
+        if (
+            self.target_status == ChapterStatus.APPROVED
+            and self.expected_content_sha256 is None
+        ):
+            raise ValueError("批准章节必须携带正文指纹")
+        if (
+            self.target_status != ChapterStatus.APPROVED
+            and self.source_writing_outcome_id is not None
+        ):
+            raise ValueError("只有批准章节才能指定写作结果")
+        return self
 
 
 class StartGenerationRequest(BaseModel):
@@ -1993,3 +2940,203 @@ class DirectorChapterPipelineResult(BaseModel):
     brief: AiChapterBriefProposal
     pre_review: DirectorPreReview
     draft: GenerationRun
+
+
+class ComicAdaptationMode(StrEnum):
+    FAITHFUL = "faithful"
+    BALANCED = "balanced"
+    DRAMATIC = "dramatic"
+
+
+class ComicProjectState(StrEnum):
+    DRAFT = "draft"
+    PLANNING = "planning"
+    OUTLINED = "outlined"
+    PRODUCING = "producing"
+    COMPLETED = "completed"
+
+
+class ComicApprovalState(StrEnum):
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ComicScriptState(StrEnum):
+    EMPTY = "empty"
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ComicTargetKind(StrEnum):
+    SEASON = "season"
+    EPISODE_OUTLINE = "episode_outline"
+    EPISODE_SCRIPT = "episode_script"
+
+
+class ComicDialogueDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    character: str = Field(min_length=1, max_length=80)
+    line: str = Field(min_length=1, max_length=500)
+    emotion: str = Field(default="", max_length=120)
+
+
+class ComicAssetRequirement(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    kind: Literal["character", "location", "costume", "prop", "effect", "other"]
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+
+
+class ComicSceneDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    scene_number: int = Field(ge=1, le=100)
+    interior_exterior: Literal["INT", "EXT", "INT/EXT"]
+    location: str = Field(min_length=1, max_length=120)
+    time_of_day: str = Field(min_length=1, max_length=80)
+    cast: list[str] = Field(default_factory=list, max_length=20)
+    action: str = Field(min_length=1, max_length=4000)
+    dialogue: list[ComicDialogueDraft] = Field(default_factory=list, max_length=60)
+    narration: str = Field(default="", max_length=2000)
+    visual_focus: str = Field(min_length=1, max_length=1000)
+    ending_beat: str = Field(min_length=1, max_length=1000)
+    source_chapter_ids: list[str] = Field(min_length=1, max_length=50)
+    asset_requirements: list[ComicAssetRequirement] = Field(default_factory=list, max_length=50)
+
+
+class ComicEpisodeOutlineDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    episode_number: int = Field(ge=1, le=100)
+    title: str = Field(min_length=1, max_length=120)
+    source_chapter_ids: list[str] = Field(min_length=1, max_length=50)
+    opening_hook: str = Field(min_length=1, max_length=1000)
+    episode_goal: str = Field(min_length=1, max_length=1000)
+    core_conflict: str = Field(min_length=1, max_length=1200)
+    reversal: str = Field(min_length=1, max_length=1000)
+    emotional_payoff: str = Field(min_length=1, max_length=1000)
+    ending_cliffhanger: str = Field(min_length=1, max_length=1000)
+    cast: list[str] = Field(default_factory=list, max_length=30)
+    locations: list[str] = Field(default_factory=list, max_length=30)
+    key_props: list[str] = Field(default_factory=list, max_length=30)
+    next_episode_promise: str = Field(default="", max_length=1000)
+
+
+class ComicSeasonDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    logline: str = Field(min_length=1, max_length=500)
+    theme: str = Field(min_length=1, max_length=500)
+    core_desire: str = Field(min_length=1, max_length=1000)
+    main_conflict: str = Field(min_length=1, max_length=1200)
+    adaptation_strategy: str = Field(min_length=1, max_length=2000)
+    character_recomposition: list[str] = Field(default_factory=list, max_length=30)
+    episode_outlines: list[ComicEpisodeOutlineDraft] = Field(min_length=1, max_length=100)
+
+
+class ComicEpisodeScriptDraft(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    episode_number: int = Field(ge=1, le=100)
+    title: str = Field(min_length=1, max_length=120)
+    estimated_seconds: int = Field(ge=15, le=600)
+    scenes: list[ComicSceneDraft] = Field(min_length=1, max_length=100)
+
+
+class CreateComicProjectRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=120)
+    source_chapter_ids: list[str] = Field(min_length=1, max_length=200)
+    episode_target_count: int = Field(default=8, ge=1, le=100)
+    episode_duration_seconds: int = Field(default=90, ge=30, le=300)
+    aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
+    art_style: str = Field(default="", max_length=500)
+    adaptation_mode: ComicAdaptationMode = ComicAdaptationMode.BALANCED
+    narration_preference: str = Field(default="", max_length=500)
+    author_requirements: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_sources(self) -> CreateComicProjectRequest:
+        for source_id in self.source_chapter_ids:
+            try:
+                UUID(source_id)
+            except ValueError as error:
+                raise ValueError("漫剧来源章节 ID 无效") from error
+        return self
+
+
+class ComicProject(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    source_chapter_ids: list[str]
+    source_snapshot_sha256: str
+    episode_target_count: int
+    episode_duration_seconds: int
+    aspect_ratio: Literal["9:16", "16:9", "1:1"]
+    art_style: str
+    adaptation_mode: ComicAdaptationMode
+    narration_preference: str
+    author_requirements: str
+    state: ComicProjectState
+    season_revision: int
+    created_at: str
+    updated_at: str
+
+
+class ComicEpisode(BaseModel):
+    id: str
+    comic_project_id: str
+    episode_number: int
+    title: str
+    source_chapter_ids: list[str]
+    outline_state: ComicApprovalState
+    script_state: ComicScriptState
+    outline_revision: int
+    script_revision: int
+    created_at: str
+    updated_at: str
+
+
+class ComicVersion(BaseModel):
+    id: str
+    comic_project_id: str
+    episode_id: str | None
+    target_kind: ComicTargetKind
+    target_id: str
+    version_number: int
+    state: ComicApprovalState
+    content: dict[str, object]
+    content_sha256: str
+    source_snapshot_sha256: str
+    job_id: str | None
+    created_at: str
+    reviewed_at: str | None
+
+
+class ComicScene(BaseModel):
+    id: str
+    comic_project_id: str
+    episode_id: str
+    script_version_id: str
+    scene_number: int
+    content: ComicSceneDraft
+    source_chapter_ids: list[str]
+    created_at: str
+
+
+class ComicWorkspace(BaseModel):
+    project: ComicProject
+    episodes: list[ComicEpisode] = Field(default_factory=list)
+    versions: list[ComicVersion] = Field(default_factory=list)
+    scenes: list[ComicScene] = Field(default_factory=list)
+
+
+class ReviewComicVersionRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    expected_revision: int = Field(ge=0)

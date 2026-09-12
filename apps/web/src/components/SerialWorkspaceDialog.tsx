@@ -16,6 +16,8 @@ const searchKindLabels: Record<WorkspaceSearchResult['kind'], string> = {
   character: '人物',
   resource: '资源',
   thread: '伏笔',
+  idea: '灵感',
+  annotation: '批注',
 }
 
 export function SerialWorkspaceDialog({

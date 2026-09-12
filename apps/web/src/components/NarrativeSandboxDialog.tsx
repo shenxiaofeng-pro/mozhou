@@ -1,5 +1,7 @@
 import type {
+  Job,
   Project,
+  SandboxAiPreview,
   SandboxCandidate,
   SandboxComparison,
   SandboxInterview,
@@ -71,6 +73,10 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
   const [variableName, setVariableName] = useState('竞争者降价')
   const [variableValue, setVariableValue] = useState('true')
   const [requestedRounds, setRequestedRounds] = useState(3)
+  const [executionMode, setExecutionMode] = useState<'rules' | 'ai'>('rules')
+  const [aiPreview, setAiPreview] = useState<SandboxAiPreview | null>(null)
+  const [aiConfirmed, setAiConfirmed] = useState(false)
+  const [aiJob, setAiJob] = useState<Job | null>(null)
   const [report, setReport] = useState<SandboxReport | null>(null)
   const [interview, setInterview] = useState<SandboxInterview | null>(null)
   const [comparison, setComparison] = useState<SandboxComparison | null>(null)
@@ -80,14 +86,19 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
 
   useEffect(() => {
     let active = true
-    Promise.all([api.listSandboxTemplates(), api.getSandboxWorkspace(project.id)])
-      .then(([nextTemplates, nextWorkspace]) => {
+    Promise.all([
+      api.listSandboxTemplates(),
+      api.getSandboxWorkspace(project.id),
+      api.listJobs(project.id).catch(() => []),
+    ])
+      .then(([nextTemplates, nextWorkspace, jobs]) => {
         if (!active) return
         setTemplates(nextTemplates)
         setWorkspace(nextWorkspace)
         setSelectedSnapshotId(nextWorkspace.snapshots[0]?.id ?? '')
         setSelectedBranchId(nextWorkspace.branches[0]?.id ?? '')
         setActiveRunId(nextWorkspace.runs[0]?.id ?? '')
+        setAiJob(jobs.find((job) => job.kind === 'sandbox_ai_round') ?? null)
         setBusy(null)
       })
       .catch((failure: unknown) => {
@@ -118,6 +129,10 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
     const branch = workspace.branches.find((item) => item.id === activeRun?.branch_id)
     return workspace.snapshots.find((item) => item.id === branch?.snapshot_id) ?? null
   }, [activeRun?.branch_id, workspace.branches, workspace.snapshots])
+  const compatibleTemplates = useMemo(
+    () => templates.filter((template) => template.genres.includes(project.genre)),
+    [project.genre, templates],
+  )
 
   const refresh = async () => {
     const nextWorkspace = await api.getSandboxWorkspace(project.id)
@@ -192,11 +207,14 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
         selectedBranch.id,
         requestedRounds,
         snapshot.actor_count * requestedRounds,
+        executionMode,
       )
       setWorkspace((current) => mergeRun(current, run))
       setActiveRunId(run.id)
       setReport(null)
       setInterview(null)
+      setAiPreview(null)
+      setAiConfirmed(false)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '推演创建失败')
     } finally {
@@ -218,6 +236,89 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
       }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '推演推进失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const waitForAiJob = async (jobId: string) => {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const detail = await api.getJob(jobId)
+      setAiJob(detail)
+      if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(detail.state)) {
+        if (detail.state === 'succeeded') {
+          const current = await api.getSandboxRun(activeRunId)
+          setWorkspace((value) => mergeRun(value, current))
+          setReport(await api.getSandboxReport(current.id))
+          setAiPreview(null)
+          setAiConfirmed(false)
+        } else if (detail.error_message) {
+          setError(detail.error_message)
+        }
+        return
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 250))
+    }
+    setError('AI 沙盘仍在后台运行，可在任务中心继续查看或取消')
+  }
+
+  const previewAiRound = async (run: SandboxRun) => {
+    setBusy('ai-preview')
+    setError(null)
+    try {
+      setAiPreview(await api.previewSandboxAiRound(run.id))
+      setAiConfirmed(false)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'AI 沙盘预览失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const submitAiRound = async (run: SandboxRun) => {
+    if (!aiPreview || !aiConfirmed) return
+    setBusy('ai-submit')
+    setError(null)
+    try {
+      const job = await api.submitSandboxAiRound(run.id, {
+        expected_state_sha256: aiPreview.state_sha256,
+        confirm_external_processing: true,
+        max_estimated_cost_microusd: aiPreview.estimated_cost_microusd,
+      })
+      setAiJob(job)
+      setBusy(null)
+      await waitForAiJob(job.id)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'AI 沙盘任务提交失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const cancelAiJob = async () => {
+    if (!aiJob) return
+    setBusy('ai-cancel')
+    setError(null)
+    try {
+      setAiJob(await api.cancelJob(aiJob.id))
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'AI 沙盘任务取消失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const retryAiJob = async () => {
+    if (!aiJob) return
+    setBusy('ai-retry')
+    setError(null)
+    try {
+      const job = await api.retryJob(aiJob.id)
+      setAiJob(job)
+      setBusy(null)
+      await waitForAiJob(job.id)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'AI 沙盘任务重试失败')
     } finally {
       setBusy(null)
     }
@@ -350,7 +451,7 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
                 <p>01 / FREEZE</p>
                 <h3 id="sandbox-snapshot-title">冻结正式世界</h3>
                 <div className="sandbox-template-list">
-                  {templates.map((template) => (
+                  {compatibleTemplates.map((template) => (
                     <button
                       type="button"
                       key={template.id}
@@ -423,6 +524,15 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
                     onChange={(event) => setRequestedRounds(Number(event.target.value))}
                   />
                 </label>
+                <label>推演模式
+                  <select
+                    value={executionMode}
+                    onChange={(event) => setExecutionMode(event.target.value as 'rules' | 'ai')}
+                  >
+                    <option value="rules">本地规则 · 零费用</option>
+                    <option value="ai">AI 提议 + 规则裁决</option>
+                  </select>
+                </label>
                 <button type="button" disabled={!selectedBranch || busy !== null} onClick={() => { void createRun() }}>
                   {busy === 'run' ? '正在建立运行…' : '建立受约束推演'}
                 </button>
@@ -457,7 +567,7 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
                           />
                           <button type="button" onClick={() => { void loadRun(run) }}>
                             <strong>{branch?.label ?? '未知分支'}</strong>
-                            <span>{stateLabels[run.state]} · {run.completed_rounds}/{run.requested_rounds} 轮 · {run.actions_used}/{run.action_budget} 行动</span>
+                            <span>{run.execution_mode === 'ai' ? 'AI + 规则' : '本地规则'} · {stateLabels[run.state]} · {run.completed_rounds}/{run.requested_rounds} 轮 · {run.actions_used}/{run.action_budget} 行动</span>
                           </button>
                         </li>
                       )
@@ -487,8 +597,16 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
                       {(activeRun.state === 'ready' || activeRun.state === 'running') ? (
                         <>
                           <button type="button" disabled={busy !== null} onClick={() => { void cancel(activeRun) }}>取消</button>
-                          <button type="button" disabled={busy !== null} onClick={() => { void advance(activeRun) }}>推进一轮</button>
-                          <button type="button" disabled={busy !== null} onClick={() => { void advance(activeRun, true) }}>连续推演</button>
+                          {activeRun.execution_mode === 'ai' ? (
+                            <button type="button" disabled={busy !== null} onClick={() => { void previewAiRound(activeRun) }}>
+                              {busy === 'ai-preview' ? '正在计算范围…' : '预览 AI 本轮'}
+                            </button>
+                          ) : (
+                            <>
+                              <button type="button" disabled={busy !== null} onClick={() => { void advance(activeRun) }}>推进一轮</button>
+                              <button type="button" disabled={busy !== null} onClick={() => { void advance(activeRun, true) }}>连续推演</button>
+                            </>
+                          )}
                         </>
                       ) : (
                         <button type="button" disabled={busy !== null} onClick={() => { void replay(activeRun) }}>同种子重放</button>
@@ -498,11 +616,49 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
                   <div className="sandbox-rounds">
                     {activeRun.rounds.map((roundItem) => (
                       <article key={roundItem.id}>
-                        <header><strong>第 {roundItem.ordinal} 轮</strong><span>{roundItem.state_after_sha256.slice(0, 10)}</span></header>
+                        <header><strong>第 {roundItem.ordinal} 轮 · {roundItem.origin === 'ai' ? '模型提议 / 规则裁决' : '本地规则'}</strong><span>{roundItem.state_after_sha256.slice(0, 10)}</span></header>
                         <ul>{roundItem.outcomes.map((outcome) => <li key={outcome.actor_id}>{outcome.summary}</li>)}</ul>
+                        {(roundItem.rejected_proposals?.length ?? 0) > 0 ? (
+                          <small>{roundItem.rejected_proposals?.length} 个模型行动被规则拒绝并安全回退</small>
+                        ) : null}
                       </article>
                     ))}
                   </div>
+                </section>
+              ) : null}
+
+              {aiPreview && activeRun?.execution_mode === 'ai' ? (
+                <section className="sandbox-ai-preview" aria-labelledby="sandbox-ai-preview-title">
+                  <p>OUTBOUND PREVIEW / 外发确认</p>
+                  <h3 id="sandbox-ai-preview-title">第 {aiPreview.round_number} 轮只发送冻结沙盘摘要</h3>
+                  <dl>
+                    <div><dt>线路</dt><dd>{aiPreview.profile_name} · {aiPreview.model}</dd></div>
+                    <div><dt>范围</dt><dd>{aiPreview.content_scope}</dd></div>
+                    <div><dt>字符 / Token</dt><dd>{aiPreview.character_count} 字符 · 约 {aiPreview.estimated_input_tokens + aiPreview.estimated_output_tokens} Token</dd></div>
+                    <div><dt>预计费用</dt><dd>{aiPreview.estimated_cost_microusd === null ? '线路未配置单价' : `约 $${(aiPreview.estimated_cost_microusd / 1_000_000).toFixed(6)}`}</dd></div>
+                  </dl>
+                  <p>发送：{aiPreview.data_types.join('、')}。模型只提议，服务端仍逐项检查知识、位置、能力、资源和预算。</p>
+                  <label className="sandbox-ai-confirm">
+                    <input type="checkbox" checked={aiConfirmed} onChange={(event) => setAiConfirmed(event.target.checked)} />
+                    我确认把以上范围发送给当前模型，并接受本次费用上限
+                  </label>
+                  <button type="button" disabled={!aiConfirmed || busy !== null} onClick={() => { void submitAiRound(activeRun) }}>
+                    {busy === 'ai-submit' ? '正在创建可恢复任务…' : '确认并推进一轮'}
+                  </button>
+                </section>
+              ) : null}
+
+              {aiJob ? (
+                <section className="sandbox-ai-job" aria-live="polite">
+                  <p>AI JOB / 可恢复任务</p>
+                  <h3>{aiJob.state} · {aiJob.current_step || '等待后台执行'}</h3>
+                  <span>{aiJob.progress_current}/{aiJob.progress_total} · 已完成 {aiJob.completed_calls}/{aiJob.estimated_calls} 次模型调用</span>
+                  {['queued', 'running', 'pause_requested'].includes(aiJob.state) ? (
+                    <button type="button" disabled={busy !== null || aiJob.state === 'pause_requested'} onClick={() => { void cancelAiJob() }}>取消任务</button>
+                  ) : null}
+                  {['failed', 'cancelled', 'interrupted'].includes(aiJob.state) ? (
+                    <button type="button" disabled={busy !== null} onClick={() => { void retryAiJob() }}>重试并复用已付费结果</button>
+                  ) : null}
                 </section>
               ) : null}
 
@@ -570,7 +726,7 @@ export function NarrativeSandboxDialog({ project, onClose }: NarrativeSandboxDia
         )}
 
         <footer>
-          <span>纯本地确定性推演 · 0 次模型调用 · 不引入 MiroFish 代码或云服务</span>
+          <span>规则模式零外发；AI 模式逐轮确认费用，模型提议与正式正文永久隔离</span>
           <button type="button" onClick={onClose}>返回作品书架</button>
         </footer>
       </section>

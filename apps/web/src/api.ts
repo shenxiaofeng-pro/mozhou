@@ -5,13 +5,53 @@ import type {
   AiStatus,
   AiTaskDefault,
   AiTaskType,
+  AdoptChapterProductionCandidateInput,
+  AdoptPlanRebaseCandidateInput,
+  AdoptPlanRebaseCandidateResult,
+  AdoptPatternAdaptationCandidateInput,
+  AdoptPatternAdaptationResult,
   AcknowledgeOriginalityReportInput,
   ApplyFactChangeSetInput,
   ApplyDirectorProposalInput,
   ApplyReferencePatternInput,
   ApplyTextChangeSetInput,
   Chapter,
+  ChapterCandidateGuard,
+  ChapterCandidateLock,
+  ChapterCandidateReview,
+  ChapterDraftCandidate,
+  ChapterDraftCandidateVersion,
+  ChapterOutlineCandidate,
+  ChapterProductionEvent,
+  ChapterProductionOutboundPreview,
+  ChapterProductionPreflightCheck,
+  ChapterProductionSnapshot,
+  ChapterWritingOutcome,
+  CanonDecisionBatchInput,
+  CanonDecisionBatchResult,
+  CanonReconciliationSnapshot,
+  AuthorPreference,
+  RollingPlanReplenishment,
   ChapterVersion,
+  CheckChapterPreflightInput,
+  CraftPatternAnalysisJobInput,
+  CraftPatternAnalysisPreviewInput,
+  CraftPatternAsset,
+  CraftPatternAssetPage,
+  CraftPatternAssetSummary,
+  CraftPatternAssetType,
+  CraftPatternFusionJobInput,
+  CraftPatternFusionPreviewInput,
+  CraftPatternPreflight,
+  ComicAiPreview,
+  ComicAsset,
+  ComicAuditIssue,
+  ComicEpisodeSubmission,
+  ComicProductionPackage,
+  ComicProject,
+  ComicSeasonSubmission,
+  ComicWorkspace,
+  CreateComicProjectInput,
   BookBlueprint,
   BookBlueprintField,
   BetaEvaluationReport,
@@ -23,9 +63,11 @@ import type {
   ContextDirective,
   ContextDirectiveInput,
   ContextPacket,
+  CreatePlanRebaseCandidateInput,
   CreateModelProfileInput,
   CreateDirectoryNodeInput,
   CreateChapterInput,
+  CreateChapterProductionInput,
   CreateBetaFeedbackInput,
   CreateSandboxBranchInput,
   CreateSandboxCandidateInput,
@@ -38,6 +80,8 @@ import type {
   CreateStoryThreadInput,
   CreateTextChangeSetInput,
   CreateTimelineEventInput,
+  CreativeContextCompileInput,
+  CreativePlanImpactPreview,
   DeleteDirectoryNodeInput,
   DirectoryDeleteImpact,
   DirectoryEvent,
@@ -52,10 +96,19 @@ import type {
   JobDetail,
   KnowledgeReviewAction,
   ModelProfile,
+  EditChapterCandidateInput,
+  EditPatternAdaptationCandidateInput,
   ManuscriptExport,
   ManuscriptImportPreview,
   MoveDirectoryNodeInput,
   OriginalityReport,
+  PatternAdaptationCandidate,
+  PatternAdaptationPreflight,
+  PatternAdaptationPreflightInput,
+  PatternAdaptationProposal,
+  PatternOriginalityGateState,
+  PatternOriginalityReport,
+  PlanRebaseCandidate,
   Project,
   ProjectArchive,
   ReferenceWork,
@@ -65,11 +118,21 @@ import type {
   ReferencePatternApplication,
   ReferencePatternCard,
   ReferenceSynthesisInput,
+  ResearchFinding,
+  ResearchInput,
+  ResearchPreview,
+  ResearchSession,
+  ResearchSubmission,
+  ResearchWorkspace,
+  RejectChapterProductionCandidateInput,
   RejectTextChangeSetInput,
+  RegenerateChapterSelectionInput,
   RenameDirectoryNodeInput,
   RecoveryPointSummary,
   SerialDashboard,
+  SceneOriginalityCheck,
   SandboxBranch,
+  SandboxAiPreview,
   SandboxCandidate,
   SandboxComparison,
   SandboxInterview,
@@ -77,12 +140,17 @@ import type {
   SandboxRun,
   SandboxTemplate,
   SandboxWorkspace,
+  SubmitSandboxAiRoundInput,
   SourceCard,
   SourceDocument,
   StoryEntity,
   StoryThread,
   TransitionStoryThreadInput,
   GenerationRun,
+  GenerateChapterDraftInput,
+  GenerateChapterOutlineInput,
+  LockChapterSelectionInput,
+  MergeChapterCandidatesInput,
   DirectorChapterPipelineRequest,
   DirectorChapterPipelineResult,
   DirectorExpansionProposal,
@@ -101,22 +169,64 @@ import type {
   UpdateChapterBriefInput,
   UpdateChapterInput,
   UpdateBookBlueprintInput,
+  UpdateCraftPatternLifecycleInput,
   UpdateRollingChapterPlanInput,
   UpdateVolumePlanInput,
   UpdateModelProfileInput,
+  UpdatePlanRebaseCandidateInput,
+  UpdateReferenceApplicationLifecycleInput,
   UpdateReferenceBlueprintInput,
   UpdateAiTaskDefaultInput,
   UpdateStoryEntityInput,
   Workspace,
   WorkspaceSummary,
   WorkspaceSearchResult,
+  WritingCalendar,
+  ChapterAnnotation,
+  AuthorIdea,
+  StoryGraphs,
+  StoryRelationship,
   SelectDirectorCandidateInput,
+  ReviewChapterCandidateInput,
   ReviewChapterInput,
   ReviewFinding,
   ReviewJobResult,
   ReviewOutboundPreview,
   RollbackChapterVersionInput,
   TextChangeSet,
+  ConfirmTopicDecisionInput,
+  RejectTopicDecisionCandidateInput,
+  SelectTopicDecisionCandidateInput,
+  TopicDecision,
+  TopicDecisionCandidate,
+  TopicDecisionCandidateRequest,
+  TopicDecisionCandidateSet,
+  TopicDecisionOutboundPreview,
+  TopicDecisionRegenerationRequest,
+  UpdateTopicDecisionInput,
+  CreateWritingPatternRecipeInput,
+  CreateWritingPatternRecipeVersionInput,
+  PreviewWritingPatternRecipeInput,
+  PreviewWritingPatternRecipeVersionInput,
+  PreviewWritingPatternReuseInput,
+  ReuseWritingPatternRecipeInput,
+  RunPatternOriginalityCheckInput,
+  SubmitChapterCandidateReviewJobInput,
+  SubmitChapterDraftJobInput,
+  SubmitChapterOutlineJobInput,
+  SubmitChapterRewriteJobInput,
+  SubmitPatternAdaptationInput,
+  UndoChapterCandidateInput,
+  UpdateChapterOutlineInput,
+  UpdateWritingPatternLifecycleInput,
+  WritingPatternLifecycleState,
+  WritingPatternProfilePreview,
+  WritingPatternProfileSummary,
+  WritingPatternProfileVersion,
+  WritingPatternRecipePage,
+  WritingPatternRecipePreview,
+  WritingPatternRecipeSeries,
+  WritingPatternRecipeVersion,
 } from '@mozhou/contracts'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 
@@ -124,9 +234,26 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code: string | null = null,
   ) {
     super(message)
   }
+}
+
+function parseApiError(payload: unknown): { message: string; code: string | null } {
+  if (!payload || typeof payload !== 'object' || !('detail' in payload)) {
+    return { message: '本地服务暂时无法完成操作', code: null }
+  }
+  const { detail } = payload
+  if (typeof detail === 'string') return { message: detail, code: null }
+  if (!detail || typeof detail !== 'object') {
+    return { message: '本地服务暂时无法完成操作', code: null }
+  }
+  const message = 'message' in detail && typeof detail.message === 'string'
+    ? detail.message
+    : '本地服务暂时无法完成操作'
+  const code = 'code' in detail && typeof detail.code === 'string' ? detail.code : null
+  return { message, code }
 }
 
 let tauriApiConnection: Promise<ApiConnection> | null = null
@@ -187,11 +314,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null)
-    const detail =
-      payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string'
-        ? payload.detail
-        : '本地服务暂时无法完成操作'
-    throw new ApiError(detail, response.status)
+    const error = parseApiError(payload)
+    throw new ApiError(error.message, response.status, error.code)
   }
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
@@ -204,17 +328,141 @@ async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Bl
   const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers })
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null)
-    const detail = payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string'
-      ? payload.detail
-      : '本地服务暂时无法完成操作'
-    throw new ApiError(detail, response.status)
+    const error = parseApiError(payload)
+    throw new ApiError(error.message, response.status, error.code)
   }
   const disposition = response.headers.get('content-disposition') ?? ''
-  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'mozhou-diagnostics.zip'
+  const encodedFilename = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+  const filename = encodedFilename ? decodeURIComponent(encodedFilename) : (/filename="([^"]+)"/.exec(disposition)?.[1] ?? 'mozhou-download.bin')
   return { blob: await response.blob(), filename }
 }
 
 export const api = {
+  listComicProjects(projectId: string) {
+    return request<ComicProject[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/comic-projects`,
+    )
+  },
+  createComicProject(projectId: string, input: CreateComicProjectInput) {
+    return request<ComicWorkspace>(
+      `/api/projects/${encodeURIComponent(projectId)}/comic-projects`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getComicProject(comicProjectId: string) {
+    return request<ComicWorkspace>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}`,
+    )
+  },
+  previewComicSeason(comicProjectId: string, authorDirection = '') {
+    return request<ComicAiPreview>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/season-plan/preview`,
+      { method: 'POST', body: JSON.stringify({ author_direction: authorDirection }) },
+    )
+  },
+  submitComicSeason(
+    comicProjectId: string,
+    input: {
+      author_direction: string
+      expected_source_snapshot_sha256: string
+      confirm_external_processing: boolean
+      max_estimated_cost_microusd?: number
+    },
+  ) {
+    return request<ComicSeasonSubmission>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/season-plan`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  adoptComicSeason(comicProjectId: string, versionId: string, expectedRevision: number) {
+    return request<ComicWorkspace>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/season-plan/adopt`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ version_id: versionId, expected_revision: expectedRevision }),
+      },
+    )
+  },
+  reviewComicOutline(
+    episodeId: string,
+    action: 'approve' | 'reject',
+    expectedRevision: number,
+    versionId?: string,
+  ) {
+    return request<ComicWorkspace>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/outline/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          expected_revision: expectedRevision,
+          ...(versionId ? { version_id: versionId } : {}),
+        }),
+      },
+    )
+  },
+  previewComicEpisode(episodeId: string, authorDirection = '') {
+    return request<ComicAiPreview>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/script/preview`,
+      { method: 'POST', body: JSON.stringify({ author_direction: authorDirection }) },
+    )
+  },
+  submitComicEpisode(
+    episodeId: string,
+    input: {
+      author_direction: string
+      expected_source_snapshot_sha256: string
+      expected_outline_revision: number
+      confirm_external_processing: boolean
+      max_estimated_cost_microusd?: number
+    },
+  ) {
+    return request<ComicEpisodeSubmission>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/script`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  reviewComicScript(
+    episodeId: string,
+    action: 'approve' | 'reject',
+    expectedRevision: number,
+    versionId?: string,
+  ) {
+    return request<ComicWorkspace>(
+      `/api/comic-episodes/${encodeURIComponent(episodeId)}/script/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          action,
+          expected_revision: expectedRevision,
+          ...(versionId ? { version_id: versionId } : {}),
+        }),
+      },
+    )
+  },
+  getComicAudit(comicProjectId: string) {
+    return request<ComicAuditIssue[]>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/audit`,
+    )
+  },
+  getComicAssets(comicProjectId: string) {
+    return request<ComicAsset[]>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/assets`,
+    )
+  },
+  getComicProductionPackage(comicProjectId: string) {
+    return request<ComicProductionPackage>(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/production-package`,
+    )
+  },
+  exportComicProductionPackage(
+    comicProjectId: string,
+    format: 'json' | 'markdown' | 'docx',
+  ) {
+    return requestBlob(
+      `/api/comic-projects/${encodeURIComponent(comicProjectId)}/export?format=${encodeURIComponent(format)}`,
+    )
+  },
   getDiagnostics() {
     return request<DiagnosticSummary>('/api/diagnostics')
   },
@@ -257,10 +505,19 @@ export const api = {
       { method: 'POST', body: JSON.stringify(input) },
     )
   },
-  createSandboxRun(branchId: string, requestedRounds: number, actionBudget: number) {
+  createSandboxRun(
+    branchId: string,
+    requestedRounds: number,
+    actionBudget: number,
+    executionMode: 'rules' | 'ai' = 'rules',
+  ) {
     return request<SandboxRun>(`/api/sandbox/branches/${encodeURIComponent(branchId)}/runs`, {
       method: 'POST',
-      body: JSON.stringify({ requested_rounds: requestedRounds, action_budget: actionBudget }),
+      body: JSON.stringify({
+        requested_rounds: requestedRounds,
+        action_budget: actionBudget,
+        execution_mode: executionMode,
+      }),
     })
   },
   getSandboxRun(runId: string) {
@@ -269,6 +526,17 @@ export const api = {
   advanceSandboxRun(runId: string) {
     return request<SandboxRun>(`/api/sandbox/runs/${encodeURIComponent(runId)}/advance`, {
       method: 'POST',
+    })
+  },
+  previewSandboxAiRound(runId: string) {
+    return request<SandboxAiPreview>(
+      `/api/sandbox/runs/${encodeURIComponent(runId)}/ai-preview`,
+    )
+  },
+  submitSandboxAiRound(runId: string, input: SubmitSandboxAiRoundInput) {
+    return request<Job>(`/api/sandbox/runs/${encodeURIComponent(runId)}/ai-jobs`, {
+      method: 'POST',
+      body: JSON.stringify(input),
     })
   },
   cancelSandboxRun(runId: string) {
@@ -432,6 +700,48 @@ export const api = {
   getContextPacket(packetId: string) {
     return request<ContextPacket>(`/api/context-packets/${encodeURIComponent(packetId)}`)
   },
+  createCreativeContextPacket(projectId: string, input: CreativeContextCompileInput) {
+    return request<ContextPacket>(
+      `/api/projects/${encodeURIComponent(projectId)}/creative-context/packets`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getCreativeContextImpact(projectId: string) {
+    return request<CreativePlanImpactPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/creative-context/impact`,
+    )
+  },
+  createPlanRebaseCandidate(projectId: string, input: CreatePlanRebaseCandidateInput) {
+    return request<PlanRebaseCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getPlanRebaseCandidate(projectId: string, candidateId: string) {
+    return request<PlanRebaseCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates/${encodeURIComponent(candidateId)}`,
+    )
+  },
+  updatePlanRebaseCandidate(
+    projectId: string,
+    candidateId: string,
+    input: UpdatePlanRebaseCandidateInput,
+  ) {
+    return request<PlanRebaseCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates/${encodeURIComponent(candidateId)}`,
+      { method: 'PUT', body: JSON.stringify(input) },
+    )
+  },
+  adoptPlanRebaseCandidate(
+    projectId: string,
+    candidateId: string,
+    input: AdoptPlanRebaseCandidateInput,
+  ) {
+    return request<AdoptPlanRebaseCandidateResult>(
+      `/api/projects/${encodeURIComponent(projectId)}/plan-rebase-candidates/${encodeURIComponent(candidateId)}/adopt`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
   listContextDirectives(chapterId: string) {
     return request<ContextDirective[]>(`/api/chapters/${encodeURIComponent(chapterId)}/context-directives`)
   },
@@ -449,6 +759,59 @@ export const api = {
   },
   createProject(input: CreateProjectInput) {
     return request<Workspace>('/api/projects', { method: 'POST', body: JSON.stringify(input) })
+  },
+  updateTopicDecision(projectId: string, input: UpdateTopicDecisionInput) {
+    return request<TopicDecision>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  confirmTopicDecision(projectId: string, input: ConfirmTopicDecisionInput) {
+    return request<TopicDecision>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/confirm`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewTopicDecisionCandidates(projectId: string, input: TopicDecisionCandidateRequest) {
+    return request<TopicDecisionOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidates-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startTopicDecisionCandidateJob(projectId: string, input: TopicDecisionCandidateRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidate-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewTopicDecisionRegeneration(projectId: string, input: TopicDecisionRegenerationRequest) {
+    return request<TopicDecisionOutboundPreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/regeneration-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startTopicDecisionRegenerationJob(projectId: string, input: TopicDecisionRegenerationRequest) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/regeneration-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getTopicDecisionCandidates(jobId: string) {
+    return request<TopicDecisionCandidateSet>(
+      `/api/jobs/${encodeURIComponent(jobId)}/topic-decision-candidates`,
+    )
+  },
+  selectTopicDecisionCandidate(projectId: string, input: SelectTopicDecisionCandidateInput) {
+    return request<TopicDecision>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidate-selection`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  rejectTopicDecisionCandidate(projectId: string, input: RejectTopicDecisionCandidateInput) {
+    return request<TopicDecisionCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/topic-decision/candidate-rejection`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
   },
   previewManuscript(file: File) {
     const query = new URLSearchParams({ source_filename: file.name })
@@ -468,6 +831,9 @@ export const api = {
     return request<ManuscriptExport>(
       `/api/projects/${encodeURIComponent(projectId)}/manuscript-export`,
     )
+  },
+  exportManuscriptBinary(projectId: string, format: 'docx' | 'epub') {
+    return requestBlob(`/api/projects/${encodeURIComponent(projectId)}/manuscript-export/${format}`)
   },
   createDirectoryNode(projectId: string, input: CreateDirectoryNodeInput) {
     return request<WorkspaceSummary>(
@@ -680,6 +1046,211 @@ export const api = {
   getChapter(chapterId: string) {
     return request<Chapter>(`/api/chapters/${encodeURIComponent(chapterId)}`)
   },
+  getCurrentChapterProduction(projectId: string, chapterId: string) {
+    return request<ChapterProductionSnapshot>(
+      `/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/production`,
+    )
+  },
+  createChapterProduction(
+    projectId: string,
+    chapterId: string,
+    input: CreateChapterProductionInput,
+  ) {
+    return request<ChapterProductionSnapshot>(
+      `/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/productions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProduction(productionId: string) {
+    return request<ChapterProductionSnapshot>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}`,
+    )
+  },
+  listChapterProductionEvents(productionId: string) {
+    return request<ChapterProductionEvent[]>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/events`,
+    )
+  },
+  listChapterCandidateVersions(productionId: string, candidateId: string) {
+    return request<ChapterDraftCandidateVersion[]>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/versions`,
+    )
+  },
+  previewChapterProductionOutline(productionId: string, input: GenerateChapterOutlineInput) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outline/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionOutlineJob(productionId: string, input: SubmitChapterOutlineJobInput) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outline/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionOutlineJobResult(productionId: string, jobId: string) {
+    return request<ChapterOutlineCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outline/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  updateChapterProductionOutline(
+    productionId: string,
+    outlineId: string,
+    input: UpdateChapterOutlineInput,
+  ) {
+    return request<ChapterOutlineCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outlines/${encodeURIComponent(outlineId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  checkChapterProductionPreflight(
+    productionId: string,
+    outlineId: string,
+    input: CheckChapterPreflightInput,
+  ) {
+    return request<ChapterProductionPreflightCheck>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/outlines/${encodeURIComponent(outlineId)}/preflight`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterProductionDraft(productionId: string, input: GenerateChapterDraftInput) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/draft/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionDraftJob(productionId: string, input: SubmitChapterDraftJobInput) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/draft/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionDraftJobResult(productionId: string, jobId: string) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/draft/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  editChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: EditChapterCandidateInput,
+  ) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterProductionRewrite(
+    productionId: string,
+    candidateId: string,
+    input: RegenerateChapterSelectionInput,
+  ) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/rewrite/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionRewriteJob(
+    productionId: string,
+    candidateId: string,
+    input: SubmitChapterRewriteJobInput,
+  ) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/rewrite/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionRewriteJobResult(productionId: string, candidateId: string, jobId: string) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/rewrite/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  lockChapterProductionSelection(
+    productionId: string,
+    candidateId: string,
+    input: LockChapterSelectionInput,
+  ) {
+    return request<ChapterCandidateLock>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/locks`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  unlockChapterProductionSelection(
+    productionId: string,
+    candidateId: string,
+    lockId: string,
+    input: ChapterCandidateGuard,
+  ) {
+    return request<void>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/locks/${encodeURIComponent(lockId)}`,
+      { method: 'DELETE', body: JSON.stringify(input) },
+    )
+  },
+  undoChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: UndoChapterCandidateInput,
+  ) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/undo`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  mergeChapterProductionCandidates(productionId: string, input: MergeChapterCandidatesInput) {
+    return request<ChapterDraftCandidate>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/merge`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewChapterProductionCandidateReview(
+    productionId: string,
+    candidateId: string,
+    input: ReviewChapterCandidateInput,
+  ) {
+    return request<ChapterProductionOutboundPreview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/review/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startChapterProductionCandidateReviewJob(
+    productionId: string,
+    candidateId: string,
+    input: SubmitChapterCandidateReviewJobInput,
+  ) {
+    return request<Job>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/review/jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getChapterProductionCandidateReviewJobResult(
+    productionId: string,
+    candidateId: string,
+    jobId: string,
+  ) {
+    return request<ChapterCandidateReview>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/review/jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  adoptChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: AdoptChapterProductionCandidateInput,
+  ) {
+    return request<ChapterWritingOutcome>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/adopt`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  rejectChapterProductionCandidate(
+    productionId: string,
+    candidateId: string,
+    input: RejectChapterProductionCandidateInput,
+  ) {
+    return request<ChapterWritingOutcome>(
+      `/api/chapter-productions/${encodeURIComponent(productionId)}/candidates/${encodeURIComponent(candidateId)}/reject`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
   listChapterVersions(chapterId: string) {
     return request<ChapterVersion[]>(`/api/chapters/${encodeURIComponent(chapterId)}/versions`)
   },
@@ -754,6 +1325,54 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     })
+  },
+  getLatestCanonReconciliation(projectId: string, chapterId: string) {
+    return request<CanonReconciliationSnapshot | null>(
+      `/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/canon-reconciliation/latest`,
+    )
+  },
+  decideCanonReconciliation(
+    projectId: string,
+    reconciliationId: string,
+    input: CanonDecisionBatchInput,
+  ) {
+    return request<CanonDecisionBatchResult>(
+      `/api/projects/${encodeURIComponent(projectId)}/canon-reconciliations/${encodeURIComponent(reconciliationId)}/decisions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listAuthorPreferences(projectId: string) {
+    return request<AuthorPreference[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/author-preferences`,
+    )
+  },
+  deleteAuthorPreference(projectId: string, preferenceId: string, expectedRevision: number) {
+    return request<AuthorPreference>(
+      `/api/projects/${encodeURIComponent(projectId)}/author-preferences/${encodeURIComponent(preferenceId)}`,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    )
+  },
+  adoptRollingPlanReplenishment(
+    projectId: string,
+    replenishmentId: string,
+    expectedRevision: number,
+    expectedPlansSha256: string,
+    idempotencyKey: string,
+  ) {
+    return request<RollingPlanReplenishment>(
+      `/api/projects/${encodeURIComponent(projectId)}/rolling-plan-replenishments/${encodeURIComponent(replenishmentId)}/adopt`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          expected_revision: expectedRevision,
+          expected_plans_sha256: expectedPlansSha256,
+          idempotency_key: idempotencyKey,
+        }),
+      },
+    )
   },
   startGeneration(chapterId: string, expectedRevision: number) {
     return request<GenerationRun>(`/api/chapters/${encodeURIComponent(chapterId)}/generation-runs`, {
@@ -846,6 +1465,61 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirmed, expected_revision: expectedRevision }),
     })
+  },
+  previewResearch(projectId: string, input: ResearchInput) {
+    return request<ResearchPreview>(`/api/projects/${encodeURIComponent(projectId)}/research/preview`, {
+      method: 'POST', body: JSON.stringify(input),
+    })
+  },
+  submitResearch(projectId: string, input: ResearchInput & {
+    expected_source_set_sha256: string
+    confirm_external_processing: boolean
+    max_estimated_cost_microusd?: number
+  }) {
+    return request<ResearchSubmission>(`/api/projects/${encodeURIComponent(projectId)}/research/jobs`, {
+      method: 'POST', body: JSON.stringify(input),
+    })
+  },
+  listResearchSessions(projectId: string) {
+    return request<ResearchSession[]>(`/api/projects/${encodeURIComponent(projectId)}/research/sessions`)
+  },
+  getResearchSession(sessionId: string) {
+    return request<ResearchWorkspace>(`/api/research/sessions/${encodeURIComponent(sessionId)}`)
+  },
+  reviewResearchFinding(findingId: string, action: 'approve' | 'reject', expectedRevision: number) {
+    return request<ResearchFinding>(`/api/research/findings/${encodeURIComponent(findingId)}/review`, {
+      method: 'POST', body: JSON.stringify({ action, expected_revision: expectedRevision }),
+    })
+  },
+  getWritingCalendar(projectId: string, days = 42) {
+    return request<WritingCalendar>(`/api/projects/${encodeURIComponent(projectId)}/writing-calendar?days=${days}`)
+  },
+  listChapterAnnotations(chapterId: string) {
+    return request<ChapterAnnotation[]>(`/api/chapters/${encodeURIComponent(chapterId)}/annotations`)
+  },
+  createChapterAnnotation(chapterId: string, input: { comment: string; start_char: number; end_char: number; expected_chapter_revision: number }) {
+    return request<ChapterAnnotation>(`/api/chapters/${encodeURIComponent(chapterId)}/annotations`, { method: 'POST', body: JSON.stringify(input) })
+  },
+  resolveChapterAnnotation(annotationId: string, expectedRevision: number) {
+    return request<ChapterAnnotation>(`/api/chapter-annotations/${encodeURIComponent(annotationId)}/resolve`, { method: 'POST', body: JSON.stringify({ expected_revision: expectedRevision }) })
+  },
+  listAuthorIdeas(projectId: string) {
+    return request<AuthorIdea[]>(`/api/author-ideas?project_id=${encodeURIComponent(projectId)}`)
+  },
+  createAuthorIdea(input: { project_id?: string; title: string; content: string; tags: string[] }) {
+    return request<AuthorIdea>('/api/author-ideas', { method: 'POST', body: JSON.stringify(input) })
+  },
+  updateAuthorIdea(ideaId: string, input: { title: string; content: string; tags: string[]; status: AuthorIdea['status']; expected_revision: number }) {
+    return request<AuthorIdea>(`/api/author-ideas/${encodeURIComponent(ideaId)}`, { method: 'PATCH', body: JSON.stringify(input) })
+  },
+  prepareAuthorIdea(ideaId: string, targetKind: NonNullable<AuthorIdea['target_kind']>, expectedRevision: number) {
+    return request<AuthorIdea>(`/api/author-ideas/${encodeURIComponent(ideaId)}/prepare`, { method: 'POST', body: JSON.stringify({ target_kind: targetKind, expected_revision: expectedRevision }) })
+  },
+  getStoryGraphs(projectId: string) {
+    return request<StoryGraphs>(`/api/projects/${encodeURIComponent(projectId)}/story-graphs`)
+  },
+  createStoryRelationship(projectId: string, input: { source_entity_id: string; target_entity_id: string; relation_type: string; summary: string; source_chapter_id?: string }) {
+    return request<StoryRelationship>(`/api/projects/${encodeURIComponent(projectId)}/story-relationships`, { method: 'POST', body: JSON.stringify(input) })
   },
   importReferenceWork(projectId: string, input: ImportReferenceWorkInput) {
     return request<ReferenceWork>(`/api/projects/${encodeURIComponent(projectId)}/reference-works`, {
@@ -955,10 +1629,265 @@ export const api = {
       body: JSON.stringify(input),
     })
   },
+  previewCraftPatternAnalysis(projectId: string, input: CraftPatternAnalysisPreviewInput) {
+    return request<CraftPatternPreflight>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-analysis-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startCraftPatternAnalysisJob(projectId: string, input: CraftPatternAnalysisJobInput) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-analysis-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewCraftPatternFusion(projectId: string, input: CraftPatternFusionPreviewInput) {
+    return request<CraftPatternPreflight>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-fusion-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startCraftPatternFusionJob(projectId: string, input: CraftPatternFusionJobInput) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/craft-pattern-fusion-jobs`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listReferenceCraftAssets(projectId: string) {
+    return request<CraftPatternAssetSummary[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets`,
+    )
+  },
+  listGlobalReferenceCraftAssets(input: {
+    for_project_id?: string
+    asset_type?: CraftPatternAssetType
+    work_id?: string
+    limit?: number
+    offset?: number
+  } = {}) {
+    const query = new URLSearchParams()
+    if (input.for_project_id) query.set('for_project_id', input.for_project_id)
+    if (input.asset_type) query.set('asset_type', input.asset_type)
+    if (input.work_id) query.set('work_id', input.work_id)
+    query.set('limit', String(input.limit ?? 50))
+    query.set('offset', String(input.offset ?? 0))
+    return request<CraftPatternAssetPage>(`/api/reference-craft-assets?${query}`)
+  },
+  getReferenceCraftAsset(assetId: string, forProjectId?: string) {
+    const query = new URLSearchParams()
+    if (forProjectId) query.set('for_project_id', forProjectId)
+    const suffix = query.size > 0 ? `?${query}` : ''
+    return request<CraftPatternAsset>(
+      `/api/reference-craft-assets/${encodeURIComponent(assetId)}${suffix}`,
+    )
+  },
+  listJobReferenceCraftAssets(jobId: string) {
+    return request<CraftPatternAsset[]>(
+      `/api/jobs/${encodeURIComponent(jobId)}/reference-craft-assets`,
+    )
+  },
+  reuseReferenceCraftAsset(projectId: string, assetId: string) {
+    return request<CraftPatternAsset>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets/${encodeURIComponent(assetId)}/reuse`,
+      { method: 'POST' },
+    )
+  },
+  updateCraftPatternLifecycle(
+    projectId: string,
+    assetId: string,
+    input: UpdateCraftPatternLifecycleInput,
+  ) {
+    return request<CraftPatternAsset>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-craft-assets/${encodeURIComponent(assetId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewWritingPatternRecipe(projectId: string, input: PreviewWritingPatternRecipeInput) {
+    return request<WritingPatternRecipePreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  createWritingPatternRecipe(projectId: string, input: CreateWritingPatternRecipeInput) {
+    return request<WritingPatternRecipeVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  previewWritingPatternRecipeVersion(
+    projectId: string,
+    recipeId: string,
+    input: PreviewWritingPatternRecipeVersionInput,
+  ) {
+    return request<WritingPatternRecipePreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(recipeId)}/versions/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  createWritingPatternRecipeVersion(
+    projectId: string,
+    recipeId: string,
+    input: CreateWritingPatternRecipeVersionInput,
+  ) {
+    return request<WritingPatternRecipeVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(recipeId)}/versions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listWritingPatternRecipes(input: {
+    lifecycle_state?: WritingPatternLifecycleState
+    limit?: number
+    offset?: number
+  } = {}) {
+    const query = new URLSearchParams()
+    if (input.lifecycle_state) query.set('lifecycle_state', input.lifecycle_state)
+    query.set('limit', String(input.limit ?? 30))
+    query.set('offset', String(input.offset ?? 0))
+    return request<WritingPatternRecipePage>(`/api/writing-pattern-recipes?${query}`)
+  },
+  getWritingPatternRecipe(recipeId: string) {
+    return request<WritingPatternRecipeSeries>(
+      `/api/writing-pattern-recipes/${encodeURIComponent(recipeId)}`,
+    )
+  },
+  getWritingPatternRecipeVersion(versionId: string) {
+    return request<WritingPatternRecipeVersion>(
+      `/api/writing-pattern-recipe-versions/${encodeURIComponent(versionId)}`,
+    )
+  },
+  updateWritingPatternRecipeLifecycle(
+    recipeId: string,
+    input: UpdateWritingPatternLifecycleInput,
+  ) {
+    return request<WritingPatternRecipeSeries>(
+      `/api/writing-pattern-recipes/${encodeURIComponent(recipeId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewWritingPatternRecipeReuse(
+    projectId: string,
+    versionId: string,
+    input: PreviewWritingPatternReuseInput,
+  ) {
+    return request<WritingPatternProfilePreview>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(versionId)}/reuse-preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  reuseWritingPatternRecipe(
+    projectId: string,
+    versionId: string,
+    input: ReuseWritingPatternRecipeInput,
+  ) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-recipes/${encodeURIComponent(versionId)}/reuse`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listWritingPatternProfiles(projectId: string) {
+    return request<WritingPatternProfileSummary[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles`,
+    )
+  },
+  getActiveWritingPatternProfile(projectId: string) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profile`,
+    )
+  },
+  getWritingPatternProfile(projectId: string, profileVersionId: string) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles/${encodeURIComponent(profileVersionId)}`,
+    )
+  },
+  updateWritingPatternProfileLifecycle(
+    projectId: string,
+    profileVersionId: string,
+    input: UpdateWritingPatternLifecycleInput,
+  ) {
+    return request<WritingPatternProfileVersion>(
+      `/api/projects/${encodeURIComponent(projectId)}/writing-pattern-profiles/${encodeURIComponent(profileVersionId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  previewPatternAdaptation(projectId: string, input: PatternAdaptationPreflightInput) {
+    return request<PatternAdaptationPreflight>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptations/preview`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  startPatternAdaptation(projectId: string, input: SubmitPatternAdaptationInput) {
+    return request<Job>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptations`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getPatternAdaptationResult(projectId: string, jobId: string) {
+    return request<PatternAdaptationProposal>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptation-jobs/${encodeURIComponent(jobId)}/result`,
+    )
+  },
+  editPatternAdaptationCandidate(
+    projectId: string,
+    candidateId: string,
+    input: EditPatternAdaptationCandidateInput,
+  ) {
+    return request<PatternAdaptationCandidate>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptation-candidates/${encodeURIComponent(candidateId)}`,
+      { method: 'PATCH', body: JSON.stringify(input) },
+    )
+  },
+  adoptPatternAdaptationCandidate(
+    projectId: string,
+    candidateId: string,
+    input: AdoptPatternAdaptationCandidateInput,
+  ) {
+    return request<AdoptPatternAdaptationResult>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-adaptation-candidates/${encodeURIComponent(candidateId)}/adopt`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  runPatternOriginalityCheck(projectId: string, input: RunPatternOriginalityCheckInput) {
+    return request<PatternOriginalityReport>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-originality-checks`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getPatternOriginalityGate(projectId: string) {
+    return request<PatternOriginalityGateState>(
+      `/api/projects/${encodeURIComponent(projectId)}/pattern-originality-gate`,
+    )
+  },
+  getPatternOriginalityReport(reportId: string) {
+    return request<PatternOriginalityReport>(
+      `/api/pattern-originality-reports/${encodeURIComponent(reportId)}`,
+    )
+  },
+  viewPatternOriginalityReport(reportId: string) {
+    return request<PatternOriginalityReport>(
+      `/api/pattern-originality-reports/${encodeURIComponent(reportId)}/views`,
+      { method: 'POST' },
+    )
+  },
+  acknowledgePatternOriginalityReport(reportId: string) {
+    return request<PatternOriginalityReport>(
+      `/api/pattern-originality-reports/${encodeURIComponent(reportId)}/acknowledgements`,
+      { method: 'POST' },
+    )
+  },
   applyReferencePattern(projectId: string, cardId: string, input: ApplyReferencePatternInput) {
     return request<ReferencePatternApplication>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-cards/${encodeURIComponent(cardId)}/applications`,
       { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  updateReferenceApplicationLifecycle(
+    projectId: string,
+    applicationId: string,
+    input: UpdateReferenceApplicationLifecycleInput,
+  ) {
+    return request<ReferencePatternApplication>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-pattern-applications/${encodeURIComponent(applicationId)}/lifecycle`,
+      { method: 'PATCH', body: JSON.stringify(input) },
     )
   },
   getOriginalityReport(reportId: string) {
@@ -983,6 +1912,27 @@ export const api = {
   ) {
     return request<ReferencePatternApplication>(
       `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/originality-acknowledgements`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  getOrRunSceneOriginalityCheck(projectId: string, applicationId: string) {
+    return request<SceneOriginalityCheck>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/scene-originality-checks`,
+      { method: 'POST' },
+    )
+  },
+  getSceneOriginalityCheck(checkId: string) {
+    return request<SceneOriginalityCheck>(
+      `/api/scene-originality-checks/${encodeURIComponent(checkId)}`,
+    )
+  },
+  acknowledgeSceneOriginalityCheck(
+    projectId: string,
+    applicationId: string,
+    input: AcknowledgeOriginalityReportInput,
+  ) {
+    return request<ReferencePatternApplication>(
+      `/api/projects/${encodeURIComponent(projectId)}/reference-blueprints/${encodeURIComponent(applicationId)}/scene-originality-acknowledgements`,
       { method: 'POST', body: JSON.stringify(input) },
     )
   },

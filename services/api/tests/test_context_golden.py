@@ -59,14 +59,16 @@ def _workspace(case: dict[str, Any]) -> Workspace:
         updated_at=NOW,
     )
     previous = int(case["previous_chapters"])
-    seed = "南平城里的现实秩序和人物关系继续变化。" * 60
+    seed = str(case.get("chapter_seed", "南平城里的现实秩序和人物关系继续变化。")) * 60
     chapters = [_chapter(project_id, number, seed) for number in range(1, previous + 2)]
-    current = chapters[-1].model_copy(update={
-        "title": case["current_title"],
-        "reader_promise": case["current_state_change"],
-        "state_change": case["current_state_change"],
-        "ending_cliffhanger": case["current_cliffhanger"],
-    })
+    current = chapters[-1].model_copy(
+        update={
+            "title": case["current_title"],
+            "reader_promise": case["current_state_change"],
+            "state_change": case["current_state_change"],
+            "ending_cliffhanger": case["current_cliffhanger"],
+        }
+    )
     chapters[-1] = current
     entities = [
         StoryEntity(
@@ -106,7 +108,8 @@ def _workspace(case: dict[str, Any]) -> Workspace:
             planted_chapter_number=item["planted"],
             resolved_chapter_id=(
                 f"chapter-{min(previous, item['planted'] + 5)}"
-                if item["status"] == "resolved" else None
+                if item["status"] == "resolved"
+                else None
             ),
             revision=0,
             created_at=NOW,
@@ -123,9 +126,7 @@ def _workspace(case: dict[str, Any]) -> Workspace:
             source_note="重生前记忆",
             confidence=KnowledgeConfidence.CERTAIN,
             status=item["status"],
-            divergence_event_id=(
-                "timeline-novel" if item["status"] != "valid" else None
-            ),
+            divergence_event_id=("timeline-novel" if item["status"] != "valid" else None),
             revision=0,
             created_at=NOW,
             updated_at=NOW,
@@ -141,8 +142,7 @@ def _workspace(case: dict[str, Any]) -> Workspace:
             title=item["title"],
             summary=item["summary"],
             source_chapter_id=(
-                f"chapter-{item['source_chapter']}"
-                if item.get("source_chapter") else None
+                f"chapter-{item['source_chapter']}" if item.get("source_chapter") else None
             ),
             created_at=NOW,
         )
@@ -203,12 +203,14 @@ def test_context_golden_recall_and_hard_constraint_omissions(case: dict[str, Any
     assert hard_omissions == set()
     assert selected_sources.isdisjoint(must_exclude)
     assert packet.used_tokens <= packet.token_budget
-    assert any("不代表小说分歧后" in note for note in packet.conflict_notes)
+    if case.get("expect_divergence_note", True):
+        assert any("不代表小说分歧后" in note for note in packet.conflict_notes)
 
     for source_key in expected_hard:
         source_kind, source_id = source_key.split(":", 1)
         item = next(
-            item for item in packet.items
+            item
+            for item in packet.items
             if item.source_refs
             and item.source_refs[0].kind == source_kind
             and item.source_refs[0].source_id == source_id

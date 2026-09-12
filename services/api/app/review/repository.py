@@ -5,6 +5,7 @@ from itertools import pairwise
 from sqlite3 import Connection, Row
 from uuid import uuid4
 
+from app.creative_safety import CreativeSafetyGate, CreativeSafetyProvenance
 from app.database import Database
 from app.models import (
     ApplyTextChangeSetRequest,
@@ -47,6 +48,29 @@ def _content_sha256(content: str) -> str:
 class ReviewRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self._creative_safety_gate: CreativeSafetyGate | None = None
+
+    def set_creative_safety_gate(self, gate: CreativeSafetyGate) -> None:
+        self._creative_safety_gate = gate
+
+    def _require_frozen_creative_safety(
+        self,
+        project_id: str,
+        frozen_json: str | None,
+    ) -> None:
+        if self._creative_safety_gate is None:
+            return
+        try:
+            frozen = (
+                CreativeSafetyProvenance.model_validate_json(frozen_json)
+                if frozen_json is not None
+                else None
+            )
+        except ValueError as error:
+            raise InvalidTextChangeError("创作安全快照无效") from error
+        current = self._creative_safety_gate.require_creative_safety(project_id, frozen)
+        if current is not None and current.mode == "pattern_adaptation" and frozen is None:
+            raise InvalidTextChangeError("旧改写候选缺少创作安全快照")
 
     @staticmethod
     def append_chapter_version(
@@ -149,12 +173,16 @@ class ReviewRepository:
     ) -> Chapter:
         timestamp = _now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
                 "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
             ).fetchone()
             if chapter is None:
                 raise ReviewNotFoundError(chapter_id)
-            if int(chapter["revision"]) != request.expected_revision:
+            if (
+                int(chapter["revision"]) != request.expected_revision
+                or chapter["status"] == ChapterStatus.APPROVED.value
+            ):
                 raise StaleReviewRevisionError(str(chapter["revision"]))
             target = connection.execute(
                 """
@@ -166,11 +194,11 @@ class ReviewRepository:
             if target is None:
                 raise ReviewNotFoundError(version_id)
             new_revision = request.expected_revision + 1
-            connection.execute(
+            result = connection.execute(
                 """
                 UPDATE chapters
                 SET content = ?, status = ?, revision = ?, updated_at = ?
-                WHERE id = ? AND revision = ?
+                WHERE id = ? AND revision = ? AND status != ?
                 """,
                 (
                     target["content"],
@@ -179,8 +207,11 @@ class ReviewRepository:
                     timestamp,
                     chapter_id,
                     request.expected_revision,
+                    ChapterStatus.APPROVED.value,
                 ),
             )
+            if result.rowcount != 1:
+                raise StaleReviewRevisionError(str(chapter["revision"]))
             self.append_chapter_version(
                 connection,
                 chapter_id=chapter_id,
@@ -302,11 +333,19 @@ class ReviewRepository:
     ) -> TextChangeSet:
         timestamp = _now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
                 "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
             ).fetchone()
             if chapter is None:
                 raise ReviewNotFoundError(chapter_id)
+            creative_safety = (
+                self._creative_safety_gate.require_creative_safety(
+                    str(chapter["project_id"])
+                )
+                if self._creative_safety_gate is not None
+                else None
+            )
             placeholders = ",".join("?" for _ in request.finding_ids)
             rows = connection.execute(
                 f"""
@@ -355,8 +394,8 @@ class ReviewRepository:
                 """
                 INSERT INTO text_change_sets (
                     id, chapter_id, base_chapter_revision, base_content_sha256,
-                    title, state, revision, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'candidate', 0, ?, ?)
+                    title, state, revision, creative_safety_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'candidate', 0, ?, ?, ?)
                 """,
                 (
                     change_set_id,
@@ -364,6 +403,11 @@ class ReviewRepository:
                     chapter["revision"],
                     _content_sha256(content),
                     f"审校建议 · {len(prepared)} 处局部修改",
+                    (
+                        creative_safety.model_dump_json()
+                        if creative_safety is not None
+                        else None
+                    ),
                     timestamp,
                     timestamp,
                 ),
@@ -439,11 +483,20 @@ class ReviewRepository:
         timestamp = _now_iso()
         selected_ids = set(request.selected_change_ids)
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             change_set = connection.execute(
-                "SELECT * FROM text_change_sets WHERE id = ?", (change_set_id,)
+                """
+                SELECT s.*, c.project_id FROM text_change_sets s
+                JOIN chapters c ON c.id = s.chapter_id
+                WHERE s.id = ?
+                """,
+                (change_set_id,),
             ).fetchone()
             if change_set is None:
                 raise ReviewNotFoundError(change_set_id)
+            self._require_frozen_creative_safety(
+                str(change_set["project_id"]), change_set["creative_safety_json"]
+            )
             if int(change_set["revision"]) != request.expected_set_revision:
                 raise StaleReviewRevisionError(str(change_set["revision"]))
             if change_set["state"] != TextChangeSetState.CANDIDATE.value:
@@ -458,6 +511,7 @@ class ReviewRepository:
                 or int(chapter["revision"]) != int(change_set["base_chapter_revision"])
                 or _content_sha256(str(chapter["content"]))
                 != change_set["base_content_sha256"]
+                or chapter["status"] == ChapterStatus.APPROVED.value
             ):
                 raise StaleReviewRevisionError(str(chapter["revision"]))
             changes = connection.execute(
@@ -486,7 +540,7 @@ class ReviewRepository:
                 """
                 UPDATE chapters
                 SET content = ?, status = ?, revision = ?, updated_at = ?
-                WHERE id = ? AND revision = ?
+                WHERE id = ? AND revision = ? AND status != ?
                 """,
                 (
                     content,
@@ -495,6 +549,7 @@ class ReviewRepository:
                     timestamp,
                     chapter["id"],
                     request.expected_chapter_revision,
+                    ChapterStatus.APPROVED.value,
                 ),
             )
             if result.rowcount != 1:

@@ -15,6 +15,11 @@ class AiTaskType(StrEnum):
     CHAPTER_DRAFT = "chapter_draft"
     REFERENCE_ANALYSIS = "reference_analysis"
     REVIEW = "review"
+    SANDBOX = "sandbox"
+    RESEARCH = "research"
+    COMIC_SEASON_PLAN = "comic_season_plan"
+    COMIC_EPISODE_SCRIPT = "comic_episode_script"
+    PATTERN_ADAPTATION = "pattern_adaptation"
 
 
 class AiErrorCategory(StrEnum):

@@ -6,23 +6,60 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hmac import compare_digest
 from typing import Any, cast
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import ValidationError
 
-from app.context import ContextDirective
+from app.canon_reconciliation.models import (
+    CANON_PAYLOAD_MODELS,
+    AuthorPreference,
+    AuthorPreferenceCandidate,
+    CanonConflict,
+    CanonDecisionBatchResult,
+    CanonDeltaCandidate,
+    CanonEvidence,
+    CanonKind,
+    CanonReconciliation,
+    CanonRecord,
+    ChapterApproval,
+    ReconciliationAnalysis,
+    RollingPlanReplenishment,
+)
+from app.chapter_production.models import (
+    CandidateLock,
+    CandidateReview,
+    ChapterOutline,
+    ChapterProduction,
+    DraftCandidateVersion,
+    MergeSource,
+    ModelTrace,
+    OutlineCandidateVersion,
+    PreflightCheck,
+    ProductionEvent,
+    WritingOutcome,
+)
+from app.context import ContextDependencySnapshot, ContextDirective, ContextPacket
+from app.context.plan_models import PlanRebaseCandidate, PlanRebaseCandidateState
 from app.database import CURRENT_SCHEMA_VERSION, Database
 from app.jobs.models import Job, JobArtifact, JobAttempt, JobChunk, JobEvent
 from app.models import (
     BookBlueprint,
+    BookBlueprintContent,
     Chapter,
     ChapterStatus,
     ChapterVersion,
+    ComicEpisode,
+    ComicProject,
+    ComicScene,
+    ComicVersion,
+    CraftPatternAssetType,
+    CraftPatternMaterial,
     FactChange,
     FactChangeSet,
     FutureKnowledge,
     GenerationRun,
     GenerationState,
+    Genre,
     ManuscriptScene,
     ManuscriptVolume,
     OriginalityReport,
@@ -36,6 +73,8 @@ from app.models import (
     ReviewFinding,
     RollingChapterPlan,
     RollingChapterPlanContent,
+    SceneOriginalityCheck,
+    SceneOriginalityFinding,
     SourceCard,
     SourceDocument,
     StoryEntity,
@@ -44,14 +83,28 @@ from app.models import (
     TextChange,
     TextChangeSet,
     TimelineEvent,
+    TopicDecision,
+    TopicDecisionCandidate,
+    TopicDecisionCandidateSet,
+    TopicDecisionContent,
+    TopicDecisionField,
+    TopicDecisionStatus,
+    TopicDecisionVersion,
     VolumePlan,
     VolumePlanContent,
 )
 from app.originality_guard import LEGAL_NOTICE
+from app.pattern_adaptation.repository import candidate_content_sha256
 from app.repository import NotFoundError
+from app.topic_decisions import topic_subgenre_label
+from app.writing_patterns.archive import (
+    InvalidWritingPatternArchiveError,
+    rebind_writing_pattern_rows,
+    validate_writing_pattern_tables,
+)
 
 ARCHIVE_FORMAT = "mozhou-project"
-ARCHIVE_FORMAT_VERSION = 6
+ARCHIVE_FORMAT_VERSION = 18
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 
 
@@ -62,6 +115,7 @@ class ArchiveTable:
     scope: str
     foreign_keys: tuple[tuple[str, str, bool], ...] = ()
     json_columns: tuple[str, ...] = ()
+    identity_column: str | None = "id"
 
 
 ARCHIVE_TABLES = (
@@ -79,6 +133,25 @@ ARCHIVE_TABLES = (
             "updated_at",
         ),
         "id = ?",
+    ),
+    ArchiveTable(
+        "author_ideas",
+        (
+            "id",
+            "project_id",
+            "title",
+            "content",
+            "tags_json",
+            "status",
+            "target_kind",
+            "target_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", True),),
+        ("tags_json",),
     ),
     ArchiveTable(
         "book_blueprints",
@@ -135,6 +208,46 @@ ARCHIVE_TABLES = (
             ("volume_plan_id", "volume_plans", False),
         ),
         ("content_json",),
+    ),
+    ArchiveTable(
+        "creative_plan_dependencies",
+        (
+            "project_id",
+            "subject_kind",
+            "subject_id",
+            "subject_revision",
+            "dependency_snapshot_json",
+            "dependency_fingerprint_sha256",
+            "baseline_state",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("dependency_snapshot_json",),
+        None,
+    ),
+    ArchiveTable(
+        "plan_rebase_candidates",
+        (
+            "id",
+            "project_id",
+            "state",
+            "revision",
+            "based_on_dependency_fingerprint_sha256",
+            "target_dependency_fingerprint_sha256",
+            "impact_json",
+            "book_blueprint_json",
+            "volume_plans_json",
+            "rolling_chapter_plans_json",
+            "adoption_idempotency_key",
+            "created_at",
+            "updated_at",
+            "adopted_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("impact_json", "volume_plans_json", "rolling_chapter_plans_json"),
     ),
     ArchiveTable(
         "manuscript_volumes",
@@ -250,6 +363,42 @@ ARCHIVE_TABLES = (
         ),
     ),
     ArchiveTable(
+        "context_packets",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "chapter_revision",
+            "task_type",
+            "purpose",
+            "subject_json",
+            "profile_fingerprint_sha256",
+            "dependency_snapshot_json",
+            "dependency_fingerprint_sha256",
+            "blocking_reasons_json",
+            "compiler_version",
+            "token_budget",
+            "used_tokens",
+            "overflow_tokens",
+            "packet_sha256",
+            "source_fingerprint_sha256",
+            "packet_json",
+            "rendered_context",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", True),
+        ),
+        (
+            "subject_json",
+            "dependency_snapshot_json",
+            "blocking_reasons_json",
+            "packet_json",
+        ),
+    ),
+    ArchiveTable(
         "context_directives",
         (
             "id",
@@ -269,6 +418,28 @@ ARCHIVE_TABLES = (
         ),
     ),
     ArchiveTable(
+        "chapter_annotations",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "chapter_revision",
+            "content_sha256",
+            "start_char",
+            "end_char",
+            "selected_text",
+            "context_before",
+            "context_after",
+            "comment",
+            "status",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False), ("chapter_id", "chapters", False)),
+    ),
+    ArchiveTable(
         "generation_runs",
         (
             "id",
@@ -279,11 +450,13 @@ ARCHIVE_TABLES = (
             "error_message",
             "provider",
             "model",
+            "creative_safety_json",
             "created_at",
             "updated_at",
         ),
         "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
         (("chapter_id", "chapters", False),),
+        ("creative_safety_json",),
     ),
     ArchiveTable(
         "chapter_events",
@@ -425,6 +598,1086 @@ ARCHIVE_TABLES = (
         ("detail_json",),
     ),
     ArchiveTable(
+        "chapter_productions",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "base_chapter_revision",
+            "base_chapter_content_sha256",
+            "state",
+            "revision",
+            "current_outline_candidate_id",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", False),
+            ("current_outline_candidate_id", "chapter_outline_candidates", True),
+        ),
+    ),
+    ArchiveTable(
+        "chapter_production_events",
+        (
+            "id",
+            "production_id",
+            "sequence",
+            "event_type",
+            "from_state",
+            "to_state",
+            "detail_json",
+            "created_at",
+        ),
+        "production_id IN (SELECT id FROM chapter_productions WHERE project_id = ?)",
+        (("production_id", "chapter_productions", False),),
+        ("detail_json",),
+    ),
+    ArchiveTable(
+        "chapter_outline_candidates",
+        (
+            "id",
+            "production_id",
+            "ordinal",
+            "label",
+            "state",
+            "current_revision",
+            "current_content_sha256",
+            "created_at",
+            "updated_at",
+        ),
+        "production_id IN (SELECT id FROM chapter_productions WHERE project_id = ?)",
+        (("production_id", "chapter_productions", False),),
+    ),
+    ArchiveTable(
+        "chapter_outline_candidate_versions",
+        (
+            "id",
+            "candidate_id",
+            "revision",
+            "content_json",
+            "content_sha256",
+            "operation",
+            "parent_version_id",
+            "source_job_id",
+            "context_purpose",
+            "context_packet_id",
+            "context_packet_sha256",
+            "context_dependency_fingerprint_sha256",
+            "context_compiler_version",
+            "profile_fingerprint_sha256",
+            "provider",
+            "model",
+            "prompt_version",
+            "created_at",
+        ),
+        "candidate_id IN (SELECT oc.id FROM chapter_outline_candidates oc "
+        "JOIN chapter_productions p ON p.id = oc.production_id WHERE p.project_id = ?)",
+        (
+            ("candidate_id", "chapter_outline_candidates", False),
+            ("parent_version_id", "chapter_outline_candidate_versions", True),
+            ("source_job_id", "jobs", True),
+            ("context_packet_id", "context_packets", True),
+        ),
+        ("content_json",),
+    ),
+    ArchiveTable(
+        "chapter_preflight_checks",
+        (
+            "id",
+            "production_id",
+            "outline_candidate_id",
+            "outline_version_id",
+            "outline_revision",
+            "outline_content_sha256",
+            "reader_promise",
+            "opening_hook",
+            "state_change",
+            "emotional_payoff",
+            "ending_cliffhanger",
+            "missing_fields_json",
+            "passed",
+            "created_at",
+        ),
+        "production_id IN (SELECT id FROM chapter_productions WHERE project_id = ?)",
+        (
+            ("production_id", "chapter_productions", False),
+            ("outline_candidate_id", "chapter_outline_candidates", False),
+            ("outline_version_id", "chapter_outline_candidate_versions", False),
+        ),
+        ("missing_fields_json",),
+    ),
+    ArchiveTable(
+        "chapter_draft_candidates",
+        (
+            "id",
+            "production_id",
+            "label",
+            "state",
+            "source_outline_candidate_id",
+            "source_outline_version_id",
+            "source_outline_revision",
+            "source_outline_content_sha256",
+            "current_revision",
+            "current_content_sha256",
+            "created_at",
+            "updated_at",
+        ),
+        "production_id IN (SELECT id FROM chapter_productions WHERE project_id = ?)",
+        (
+            ("production_id", "chapter_productions", False),
+            ("source_outline_candidate_id", "chapter_outline_candidates", True),
+            ("source_outline_version_id", "chapter_outline_candidate_versions", True),
+        ),
+    ),
+    ArchiveTable(
+        "chapter_draft_candidate_versions",
+        (
+            "id",
+            "candidate_id",
+            "revision",
+            "content",
+            "content_sha256",
+            "operation",
+            "parent_version_id",
+            "restored_from_version_id",
+            "source_job_id",
+            "context_purpose",
+            "context_packet_id",
+            "context_packet_sha256",
+            "context_dependency_fingerprint_sha256",
+            "context_compiler_version",
+            "profile_fingerprint_sha256",
+            "provider",
+            "model",
+            "prompt_version",
+            "instruction",
+            "created_at",
+        ),
+        "candidate_id IN (SELECT dc.id FROM chapter_draft_candidates dc "
+        "JOIN chapter_productions p ON p.id = dc.production_id WHERE p.project_id = ?)",
+        (
+            ("candidate_id", "chapter_draft_candidates", False),
+            ("parent_version_id", "chapter_draft_candidate_versions", True),
+            ("restored_from_version_id", "chapter_draft_candidate_versions", True),
+            ("source_job_id", "jobs", True),
+            ("context_packet_id", "context_packets", True),
+        ),
+    ),
+    ArchiveTable(
+        "chapter_draft_candidate_locks",
+        (
+            "id",
+            "candidate_id",
+            "start_char",
+            "end_char",
+            "locked_text",
+            "locked_text_sha256",
+            "created_from_version_id",
+            "created_at",
+        ),
+        "candidate_id IN (SELECT dc.id FROM chapter_draft_candidates dc "
+        "JOIN chapter_productions p ON p.id = dc.production_id WHERE p.project_id = ?)",
+        (
+            ("candidate_id", "chapter_draft_candidates", False),
+            ("created_from_version_id", "chapter_draft_candidate_versions", False),
+        ),
+    ),
+    ArchiveTable(
+        "chapter_candidate_reviews",
+        (
+            "id",
+            "candidate_id",
+            "candidate_version_id",
+            "candidate_revision",
+            "candidate_content_sha256",
+            "source_job_id",
+            "context_purpose",
+            "context_packet_id",
+            "context_packet_sha256",
+            "context_dependency_fingerprint_sha256",
+            "context_compiler_version",
+            "profile_fingerprint_sha256",
+            "provider",
+            "model",
+            "prompt_version",
+            "findings_json",
+            "created_at",
+        ),
+        "candidate_id IN (SELECT dc.id FROM chapter_draft_candidates dc "
+        "JOIN chapter_productions p ON p.id = dc.production_id WHERE p.project_id = ?)",
+        (
+            ("candidate_id", "chapter_draft_candidates", False),
+            ("candidate_version_id", "chapter_draft_candidate_versions", False),
+            ("source_job_id", "jobs", True),
+            ("context_packet_id", "context_packets", False),
+        ),
+        ("findings_json",),
+    ),
+    ArchiveTable(
+        "chapter_candidate_merge_sources",
+        (
+            "result_candidate_id",
+            "result_version_id",
+            "ordinal",
+            "source_candidate_id",
+            "source_version_id",
+            "source_revision",
+            "source_content_sha256",
+            "start_char",
+            "end_char",
+            "selected_text_sha256",
+        ),
+        "result_candidate_id IN (SELECT dc.id FROM chapter_draft_candidates dc "
+        "JOIN chapter_productions p ON p.id = dc.production_id WHERE p.project_id = ?)",
+        (
+            ("result_candidate_id", "chapter_draft_candidates", False),
+            ("result_version_id", "chapter_draft_candidate_versions", False),
+            ("source_candidate_id", "chapter_draft_candidates", False),
+            ("source_version_id", "chapter_draft_candidate_versions", False),
+        ),
+        identity_column=None,
+    ),
+    ArchiveTable(
+        "chapter_writing_outcomes",
+        (
+            "id",
+            "production_id",
+            "candidate_id",
+            "candidate_version_id",
+            "candidate_revision",
+            "candidate_content_sha256",
+            "source_outline_candidate_id",
+            "source_outline_version_id",
+            "source_outline_revision",
+            "source_outline_content_sha256",
+            "decision",
+            "adoption_mode",
+            "base_chapter_revision",
+            "base_chapter_content_sha256",
+            "final_chapter_revision",
+            "final_chapter_content_sha256",
+            "final_chapter_status",
+            "chapter_version_id",
+            "adoption_detail_json",
+            "idempotency_key",
+            "request_sha256",
+            "reason",
+            "created_at",
+        ),
+        "production_id IN (SELECT id FROM chapter_productions WHERE project_id = ?)",
+        (
+            ("production_id", "chapter_productions", False),
+            ("candidate_id", "chapter_draft_candidates", False),
+            ("candidate_version_id", "chapter_draft_candidate_versions", False),
+            ("source_outline_candidate_id", "chapter_outline_candidates", True),
+            ("source_outline_version_id", "chapter_outline_candidate_versions", True),
+            ("chapter_version_id", "chapter_versions", True),
+        ),
+        ("adoption_detail_json",),
+    ),
+    ArchiveTable(
+        "chapter_approvals",
+        (
+            "id",
+            "project_id",
+            "chapter_id",
+            "chapter_revision",
+            "chapter_content_sha256",
+            "chapter_version_id",
+            "source_writing_outcome_id",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", False),
+            ("chapter_version_id", "chapter_versions", False),
+            ("source_writing_outcome_id", "chapter_writing_outcomes", True),
+        ),
+    ),
+    ArchiveTable(
+        "canon_reconciliations",
+        (
+            "id",
+            "approval_id",
+            "project_id",
+            "chapter_id",
+            "job_id",
+            "state",
+            "revision",
+            "context_packet_id",
+            "context_packet_sha256",
+            "context_dependency_fingerprint_sha256",
+            "analysis_sha256",
+            "preference_skip_reason",
+            "error_message",
+            "created_at",
+            "updated_at",
+            "completed_at",
+        ),
+        "project_id = ?",
+        (
+            ("approval_id", "chapter_approvals", False),
+            ("project_id", "projects", False),
+            ("chapter_id", "chapters", False),
+            ("job_id", "jobs", False),
+            ("context_packet_id", "context_packets", True),
+        ),
+    ),
+    ArchiveTable(
+        "canon_delta_candidates",
+        (
+            "id",
+            "reconciliation_id",
+            "project_id",
+            "ordinal",
+            "kind",
+            "subject_key",
+            "summary",
+            "payload_json",
+            "payload_sha256",
+            "evidence_json",
+            "evidence_sha256",
+            "conflicts_json",
+            "state",
+            "revision",
+            "rejection_reason",
+            "accepted_record_id",
+            "created_at",
+            "updated_at",
+            "decided_at",
+        ),
+        "project_id = ?",
+        (
+            ("reconciliation_id", "canon_reconciliations", False),
+            ("project_id", "projects", False),
+            ("accepted_record_id", "canon_records", True),
+        ),
+        ("payload_json", "evidence_json", "conflicts_json"),
+    ),
+    ArchiveTable(
+        "canon_records",
+        (
+            "id",
+            "project_id",
+            "kind",
+            "subject_key",
+            "payload_json",
+            "payload_sha256",
+            "revision",
+            "state",
+            "source_candidate_id",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("source_candidate_id", "canon_delta_candidates", True),
+        ),
+        ("payload_json",),
+    ),
+    ArchiveTable(
+        "author_preference_candidates",
+        (
+            "id",
+            "reconciliation_id",
+            "project_id",
+            "ordinal",
+            "scope_kind",
+            "scope_value",
+            "dimension",
+            "compact_rule",
+            "rule_sha256",
+            "confidence",
+            "comparison_metrics_json",
+            "source_writing_outcome_id",
+            "source_candidate_version_id",
+            "candidate_content_sha256",
+            "final_content_sha256",
+            "state",
+            "revision",
+            "rejection_reason",
+            "confirmed_preference_id",
+            "created_at",
+            "updated_at",
+            "decided_at",
+        ),
+        "project_id = ?",
+        (
+            ("reconciliation_id", "canon_reconciliations", False),
+            ("project_id", "projects", False),
+            ("source_writing_outcome_id", "chapter_writing_outcomes", False),
+            ("source_candidate_version_id", "chapter_draft_candidate_versions", False),
+            ("confirmed_preference_id", "author_preferences", True),
+        ),
+        ("comparison_metrics_json",),
+    ),
+    ArchiveTable(
+        "author_preferences",
+        (
+            "id",
+            "project_id",
+            "scope_kind",
+            "scope_value",
+            "dimension",
+            "compact_rule",
+            "rule_sha256",
+            "fingerprint_sha256",
+            "confidence",
+            "occurrence_count",
+            "state",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+    ),
+    ArchiveTable(
+        "author_preference_sources",
+        (
+            "preference_id",
+            "candidate_id",
+            "source_writing_outcome_id",
+            "source_candidate_version_id",
+            "approval_id",
+            "created_at",
+        ),
+        "preference_id IN (SELECT id FROM author_preferences WHERE project_id = ?)",
+        (
+            ("preference_id", "author_preferences", False),
+            ("candidate_id", "author_preference_candidates", False),
+            ("source_writing_outcome_id", "chapter_writing_outcomes", False),
+            ("source_candidate_version_id", "chapter_draft_candidate_versions", False),
+            ("approval_id", "chapter_approvals", False),
+        ),
+        identity_column=None,
+    ),
+    ArchiveTable(
+        "canon_decision_batches",
+        (
+            "id",
+            "project_id",
+            "reconciliation_id",
+            "idempotency_key",
+            "request_sha256",
+            "response_json",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("reconciliation_id", "canon_reconciliations", False),
+        ),
+        ("response_json",),
+    ),
+    ArchiveTable(
+        "rolling_plan_replenishments",
+        (
+            "id",
+            "project_id",
+            "reconciliation_id",
+            "source_decision_batch_id",
+            "source_chapter_id",
+            "source_canon_record_ids_json",
+            "state",
+            "revision",
+            "volume_plan_id",
+            "base_blueprint_id",
+            "base_blueprint_revision",
+            "base_blueprint_content_sha256",
+            "protected_chapter_numbers_json",
+            "plans_json",
+            "plans_sha256",
+            "blocked_reason",
+            "adoption_idempotency_key",
+            "created_at",
+            "updated_at",
+            "decided_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("reconciliation_id", "canon_reconciliations", False),
+            ("source_decision_batch_id", "canon_decision_batches", True),
+            ("source_chapter_id", "chapters", False),
+            ("volume_plan_id", "volume_plans", True),
+            ("base_blueprint_id", "book_blueprints", True),
+        ),
+        (
+            "source_canon_record_ids_json",
+            "protected_chapter_numbers_json",
+            "plans_json",
+        ),
+    ),
+    ArchiveTable(
+        "craft_pattern_assets",
+        (
+            "id",
+            "series_id",
+            "schema_version",
+            "asset_type",
+            "version",
+            "generation_fingerprint_sha256",
+            "source_job_id",
+            "source_work_ids_json",
+            "source_segment_ids_json",
+            "source_asset_version_ids_json",
+            "title",
+            "summary",
+            "author_focus",
+            "craft_items_json",
+            "provider",
+            "provider_profile_id",
+            "profile_revision",
+            "model",
+            "prompt_version",
+            "evidence_validator_version",
+            "source_fingerprint_sha256",
+            "content_sha256",
+            "created_at",
+        ),
+        "id IN ("
+        "WITH RECURSIVE asset_tree(id) AS ("
+        "SELECT asset_version_id FROM project_craft_pattern_assets WHERE project_id = ?1 "
+        "UNION SELECT o.asset_version_id FROM craft_pattern_job_outputs o "
+        "JOIN jobs j ON j.id = o.job_id WHERE j.project_id = ?1 "
+        "UNION SELECT s.asset_version_id FROM writing_pattern_recipe_sources s "
+        "JOIN writing_pattern_recipe_versions rv ON rv.id = s.recipe_version_id "
+        "WHERE rv.recipe_id IN ("
+        "SELECT r.id FROM writing_pattern_recipes r "
+        "WHERE r.created_from_project_id = ?1 "
+        "UNION SELECT used.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions used ON used.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1"
+        ") "
+        "UNION SELECT child.value FROM asset_tree tree "
+        "JOIN craft_pattern_assets parent ON parent.id = tree.id "
+        "JOIN json_each(parent.source_asset_version_ids_json) child"
+        ") SELECT id FROM asset_tree)",
+        (("source_job_id", "jobs", True),),
+        (
+            "source_work_ids_json",
+            "source_segment_ids_json",
+            "source_asset_version_ids_json",
+            "craft_items_json",
+        ),
+    ),
+    ArchiveTable(
+        "project_craft_pattern_assets",
+        (
+            "id",
+            "project_id",
+            "asset_version_id",
+            "lifecycle_state",
+            "lifecycle_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("asset_version_id", "craft_pattern_assets", False),
+        ),
+    ),
+    ArchiveTable(
+        "craft_pattern_job_outputs",
+        ("id", "job_id", "asset_version_id", "ordinal", "created_at"),
+        "job_id IN (SELECT id FROM jobs WHERE project_id = ?)",
+        (
+            ("job_id", "jobs", False),
+            ("asset_version_id", "craft_pattern_assets", False),
+        ),
+    ),
+    ArchiveTable(
+        "topic_decisions",
+        (
+            "id",
+            "project_id",
+            "content_json",
+            "locks_json",
+            "field_versions_json",
+            "rejection_reasons_json",
+            "source_template_id",
+            "source_job_id",
+            "source_candidate_ids_json",
+            "revision",
+            "confirmed_revision",
+            "plan_stale",
+            "onboarding_required",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", True),
+        ),
+        ("source_candidate_ids_json",),
+    ),
+    ArchiveTable(
+        "topic_decision_versions",
+        (
+            "id",
+            "topic_decision_id",
+            "project_id",
+            "revision",
+            "content_json",
+            "locks_json",
+            "field_versions_json",
+            "rejection_reasons_json",
+            "source_template_id",
+            "source_job_id",
+            "source_candidate_ids_json",
+            "content_sha256",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("topic_decision_id", "topic_decisions", False),
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", True),
+        ),
+        ("source_candidate_ids_json",),
+    ),
+    ArchiveTable(
+        "topic_decision_candidate_sets",
+        (
+            "id",
+            "topic_decision_id",
+            "project_id",
+            "source_job_id",
+            "based_on_revision",
+            "target_field",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("topic_decision_id", "topic_decisions", False),
+            ("project_id", "projects", False),
+            ("source_job_id", "jobs", False),
+        ),
+    ),
+    ArchiveTable(
+        "topic_decision_candidates",
+        (
+            "id",
+            "candidate_set_id",
+            "project_id",
+            "ordinal",
+            "label",
+            "content_json",
+            "changed_fields_json",
+            "rationale",
+            "risks_json",
+            "state",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+            "decided_at",
+        ),
+        "project_id = ?",
+        (
+            ("candidate_set_id", "topic_decision_candidate_sets", False),
+            ("project_id", "projects", False),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_recipes",
+        (
+            "id",
+            "created_from_project_id",
+            "lifecycle_state",
+            "lifecycle_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "created_from_project_id = ?1 OR id IN ("
+        "SELECT rv.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions rv ON rv.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1)",
+        (("created_from_project_id", "projects", True),),
+    ),
+    ArchiveTable(
+        "writing_pattern_recipe_versions",
+        (
+            "id",
+            "recipe_id",
+            "version",
+            "name",
+            "description",
+            "conflict_decisions_json",
+            "conflicts_json",
+            "source_asset_count",
+            "source_work_count",
+            "safety_basis",
+            "source_snapshot_sha256",
+            "content_sha256",
+            "created_at",
+        ),
+        "recipe_id IN ("
+        "SELECT r.id FROM writing_pattern_recipes r "
+        "WHERE r.created_from_project_id = ?1 "
+        "UNION SELECT used.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions used ON used.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1)",
+        (("recipe_id", "writing_pattern_recipes", False),),
+        ("conflict_decisions_json", "conflicts_json"),
+    ),
+    ArchiveTable(
+        "writing_pattern_recipe_sources",
+        (
+            "id",
+            "recipe_version_id",
+            "ordinal",
+            "entry_key",
+            "asset_version_id",
+            "asset_series_id",
+            "asset_version",
+            "asset_content_sha256",
+            "asset_type",
+            "dimension",
+            "pattern_name",
+            "transferable_rule",
+            "adaptation_risk",
+            "purpose",
+            "strategy",
+            "weight",
+            "applicable_stages_json",
+            "chapter_start",
+            "chapter_end",
+            "note",
+            "source_work_fingerprints_json",
+            "source_snapshot_sha256",
+        ),
+        "recipe_version_id IN ("
+        "SELECT rv.id FROM writing_pattern_recipe_versions rv "
+        "WHERE rv.recipe_id IN ("
+        "SELECT r.id FROM writing_pattern_recipes r "
+        "WHERE r.created_from_project_id = ?1 "
+        "UNION SELECT used.recipe_id FROM writing_pattern_profile_versions p "
+        "JOIN writing_pattern_recipe_versions used ON used.id = p.recipe_version_id "
+        "WHERE p.project_id = ?1))",
+        (
+            ("recipe_version_id", "writing_pattern_recipe_versions", False),
+            ("asset_version_id", "craft_pattern_assets", False),
+        ),
+        ("applicable_stages_json", "source_work_fingerprints_json"),
+    ),
+    ArchiveTable(
+        "writing_pattern_profile_versions",
+        (
+            "id",
+            "project_id",
+            "recipe_version_id",
+            "recipe_content_sha256",
+            "topic_decision_version_id",
+            "topic_revision",
+            "topic_content_sha256",
+            "compiler_version",
+            "safety_basis",
+            "source_snapshot_sha256",
+            "profile_json",
+            "conflicts_json",
+            "decisions_json",
+            "excluded_entry_keys_json",
+            "profile_fingerprint_sha256",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("recipe_version_id", "writing_pattern_recipe_versions", False),
+            ("topic_decision_version_id", "topic_decision_versions", False),
+        ),
+        (
+            "profile_json",
+            "conflicts_json",
+            "decisions_json",
+            "excluded_entry_keys_json",
+        ),
+    ),
+    ArchiveTable(
+        "project_writing_pattern_profiles",
+        (
+            "id",
+            "project_id",
+            "profile_version_id",
+            "lifecycle_state",
+            "lifecycle_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("profile_version_id", "writing_pattern_profile_versions", False),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_adaptation_proposals",
+        (
+            "id",
+            "job_id",
+            "project_id",
+            "profile_version_id",
+            "profile_fingerprint_sha256",
+            "recipe_version_id",
+            "recipe_content_sha256",
+            "topic_decision_version_id",
+            "topic_revision",
+            "topic_content_sha256",
+            "base_blueprint_id",
+            "base_blueprint_revision",
+            "base_blueprint_content_sha256",
+            "lock_snapshot_json",
+            "lock_snapshot_sha256",
+            "dependency_fingerprint_sha256",
+            "safe_context_sha256",
+            "provider",
+            "provider_profile_id",
+            "provider_profile_revision",
+            "model",
+            "input_cost_microusd_per_million",
+            "output_cost_microusd_per_million",
+            "prompt_version",
+            "estimated_input_tokens",
+            "estimated_output_tokens",
+            "estimated_cost_microusd",
+            "cost_status",
+            "result_state",
+            "stale_reason",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("job_id", "jobs", False),
+            ("project_id", "projects", False),
+            ("profile_version_id", "writing_pattern_profile_versions", False),
+            ("recipe_version_id", "writing_pattern_recipe_versions", False),
+            ("topic_decision_version_id", "topic_decision_versions", False),
+            ("base_blueprint_id", "book_blueprints", True),
+        ),
+        ("lock_snapshot_json",),
+    ),
+    ArchiveTable(
+        "writing_pattern_adaptation_candidates",
+        (
+            "id",
+            "proposal_id",
+            "ordinal",
+            "label",
+            "why_distinct",
+            "distinct_axes_json",
+            "risk_hypotheses_json",
+            "current_revision",
+            "current_content_sha256",
+            "created_at",
+            "updated_at",
+        ),
+        "proposal_id IN (SELECT id FROM writing_pattern_adaptation_proposals WHERE project_id = ?)",
+        (("proposal_id", "writing_pattern_adaptation_proposals", False),),
+        ("distinct_axes_json", "risk_hypotheses_json"),
+    ),
+    ArchiveTable(
+        "writing_pattern_adaptation_candidate_versions",
+        (
+            "id",
+            "candidate_id",
+            "revision",
+            "blueprint_json",
+            "key_scene_sequence_json",
+            "transformation_notes_json",
+            "content_sha256",
+            "changed_fields_json",
+            "source",
+            "created_at",
+        ),
+        "candidate_id IN ("
+        "SELECT c.id FROM writing_pattern_adaptation_candidates c "
+        "JOIN writing_pattern_adaptation_proposals p ON p.id = c.proposal_id "
+        "WHERE p.project_id = ?)",
+        (("candidate_id", "writing_pattern_adaptation_candidates", False),),
+        (
+            "blueprint_json",
+            "key_scene_sequence_json",
+            "transformation_notes_json",
+            "changed_fields_json",
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_adoptions",
+        (
+            "id",
+            "project_id",
+            "proposal_id",
+            "candidate_id",
+            "candidate_version_id",
+            "blueprint_id",
+            "blueprint_revision",
+            "blueprint_content_sha256",
+            "profile_fingerprint_sha256",
+            "recipe_content_sha256",
+            "idempotency_key",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("proposal_id", "writing_pattern_adaptation_proposals", False),
+            ("candidate_id", "writing_pattern_adaptation_candidates", False),
+            (
+                "candidate_version_id",
+                "writing_pattern_adaptation_candidate_versions",
+                False,
+            ),
+            ("blueprint_id", "book_blueprints", False),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_originality_reports",
+        (
+            "id",
+            "project_id",
+            "adoption_id",
+            "profile_fingerprint_sha256",
+            "recipe_content_sha256",
+            "blueprint_id",
+            "blueprint_revision",
+            "blueprint_content_sha256",
+            "candidate_version_id",
+            "candidate_content_sha256",
+            "risk_level",
+            "status",
+            "score",
+            "threshold_version",
+            "input_sha256",
+            "source_availability",
+            "viewed_at",
+            "acknowledged_at",
+            "created_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("adoption_id", "writing_pattern_adoptions", False),
+            ("blueprint_id", "book_blueprints", False),
+            (
+                "candidate_version_id",
+                "writing_pattern_adaptation_candidate_versions",
+                False,
+            ),
+        ),
+    ),
+    ArchiveTable(
+        "writing_pattern_originality_findings",
+        (
+            "id",
+            "report_id",
+            "ordinal",
+            "signal",
+            "score",
+            "summary",
+            "source_fingerprint_sha256",
+            "evidence_sha256",
+        ),
+        "report_id IN (SELECT id FROM writing_pattern_originality_reports WHERE project_id = ?)",
+        (("report_id", "writing_pattern_originality_reports", False),),
+    ),
+    ArchiveTable(
+        "comic_projects",
+        (
+            "id",
+            "project_id",
+            "title",
+            "source_chapter_ids_json",
+            "source_snapshot_json",
+            "source_snapshot_sha256",
+            "episode_target_count",
+            "episode_duration_seconds",
+            "aspect_ratio",
+            "art_style",
+            "adaptation_mode",
+            "narration_preference",
+            "author_requirements",
+            "state",
+            "season_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False),),
+        ("source_chapter_ids_json", "source_snapshot_json"),
+    ),
+    ArchiveTable(
+        "comic_episodes",
+        (
+            "id",
+            "comic_project_id",
+            "episode_number",
+            "title",
+            "source_chapter_ids_json",
+            "outline_state",
+            "script_state",
+            "outline_revision",
+            "script_revision",
+            "created_at",
+            "updated_at",
+        ),
+        "comic_project_id IN (SELECT id FROM comic_projects WHERE project_id = ?)",
+        (("comic_project_id", "comic_projects", False),),
+        ("source_chapter_ids_json",),
+    ),
+    ArchiveTable(
+        "comic_versions",
+        (
+            "id",
+            "comic_project_id",
+            "episode_id",
+            "target_kind",
+            "target_id",
+            "version_number",
+            "state",
+            "content_json",
+            "content_sha256",
+            "source_snapshot_sha256",
+            "job_id",
+            "created_at",
+            "reviewed_at",
+        ),
+        "comic_project_id IN (SELECT id FROM comic_projects WHERE project_id = ?)",
+        (
+            ("comic_project_id", "comic_projects", False),
+            ("episode_id", "comic_episodes", True),
+            ("job_id", "jobs", True),
+        ),
+        ("content_json",),
+    ),
+    ArchiveTable(
+        "comic_scenes",
+        (
+            "id",
+            "comic_project_id",
+            "episode_id",
+            "script_version_id",
+            "scene_number",
+            "content_json",
+            "source_chapter_ids_json",
+            "created_at",
+        ),
+        "comic_project_id IN (SELECT id FROM comic_projects WHERE project_id = ?)",
+        (
+            ("comic_project_id", "comic_projects", False),
+            ("episode_id", "comic_episodes", False),
+            ("script_version_id", "comic_versions", False),
+        ),
+        ("content_json", "source_chapter_ids_json"),
+    ),
+    ArchiveTable(
         "review_findings",
         (
             "id",
@@ -463,11 +1716,13 @@ ARCHIVE_TABLES = (
             "title",
             "state",
             "revision",
+            "creative_safety_json",
             "created_at",
             "updated_at",
         ),
         "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
         (("chapter_id", "chapters", False),),
+        ("creative_safety_json",),
     ),
     ArchiveTable(
         "text_changes",
@@ -528,11 +1783,13 @@ ARCHIVE_TABLES = (
             "chapter_revision",
             "state",
             "revision",
+            "creative_safety_json",
             "created_at",
             "updated_at",
         ),
         "chapter_id IN (SELECT id FROM chapters WHERE project_id = ?)",
         (("chapter_id", "chapters", False),),
+        ("creative_safety_json",),
     ),
     ArchiveTable(
         "fact_changes",
@@ -605,6 +1862,29 @@ ARCHIVE_TABLES = (
         ),
     ),
     ArchiveTable(
+        "story_relationships",
+        (
+            "id",
+            "project_id",
+            "source_entity_id",
+            "target_entity_id",
+            "relation_type",
+            "summary",
+            "status",
+            "source_chapter_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (
+            ("project_id", "projects", False),
+            ("source_entity_id", "story_entities", False),
+            ("target_entity_id", "story_entities", False),
+            ("source_chapter_id", "chapters", True),
+        ),
+    ),
+    ArchiveTable(
         "source_documents",
         (
             "id",
@@ -622,7 +1902,8 @@ ARCHIVE_TABLES = (
             "created_at",
             "updated_at",
         ),
-        "id IN (SELECT source_document_id FROM source_cards WHERE project_id = ? AND source_document_id IS NOT NULL)",
+        "id IN (SELECT source_document_id FROM source_cards WHERE project_id = ? AND source_document_id IS NOT NULL) "
+        "OR id IN (SELECT rs.source_document_id FROM research_sources rs JOIN research_sessions s ON s.id = rs.session_id WHERE s.project_id = ? AND rs.source_document_id IS NOT NULL)",
         (),
         ("source_spans_json",),
     ),
@@ -653,6 +1934,85 @@ ARCHIVE_TABLES = (
         (
             ("project_id", "projects", False),
             ("source_document_id", "source_documents", True),
+        ),
+    ),
+    ArchiveTable(
+        "research_sessions",
+        (
+            "id",
+            "project_id",
+            "title",
+            "question",
+            "era_start",
+            "era_end",
+            "region",
+            "material_type",
+            "mode",
+            "state",
+            "source_set_sha256",
+            "job_id",
+            "invalid_ai_findings",
+            "created_at",
+            "updated_at",
+        ),
+        "project_id = ?",
+        (("project_id", "projects", False), ("job_id", "jobs", True)),
+    ),
+    ArchiveTable(
+        "research_sources",
+        (
+            "id",
+            "session_id",
+            "source_document_id",
+            "label",
+            "source_format",
+            "content",
+            "content_sha256",
+            "source_spans_json",
+            "ordinal",
+            "created_at",
+        ),
+        "session_id IN (SELECT id FROM research_sessions WHERE project_id = ?)",
+        (
+            ("session_id", "research_sessions", False),
+            ("source_document_id", "source_documents", True),
+        ),
+        ("source_spans_json",),
+    ),
+    ArchiveTable(
+        "research_findings",
+        (
+            "id",
+            "session_id",
+            "research_source_id",
+            "source_document_id",
+            "category",
+            "title",
+            "summary",
+            "evidence_excerpt",
+            "evidence_sha256",
+            "start_char",
+            "end_char",
+            "page_number_start",
+            "page_number_end",
+            "applicable_year_start",
+            "applicable_year_end",
+            "region",
+            "confidence",
+            "conflict_key",
+            "origin",
+            "state",
+            "source_card_id",
+            "revision",
+            "created_at",
+            "updated_at",
+        ),
+        "session_id IN (SELECT id FROM research_sessions WHERE project_id = ?)",
+        (
+            ("session_id", "research_sessions", False),
+            ("research_source_id", "research_sources", False),
+            ("source_document_id", "source_documents", True),
+            ("source_card_id", "source_cards", True),
         ),
     ),
     ArchiveTable(
@@ -722,6 +2082,8 @@ ARCHIVE_TABLES = (
             "id",
             "project_id",
             "pattern_card_id",
+            "lifecycle_state",
+            "lifecycle_revision",
             "selected_dimensions_json",
             "dimensions_json",
             "relationship_recomposition",
@@ -772,6 +2134,7 @@ ARCHIVE_TABLES = (
             "source_segment_ids_json",
             "input_sha256",
             "viewed_at",
+            "acknowledged_at",
             "created_at",
         ),
         "application_id IN (SELECT id FROM reference_pattern_applications WHERE project_id = ?)",
@@ -781,6 +2144,45 @@ ARCHIVE_TABLES = (
             "evidence_json",
             "source_segment_ids_json",
         ),
+    ),
+    ArchiveTable(
+        "scene_originality_checks",
+        (
+            "id",
+            "application_id",
+            "blueprint_revision",
+            "risk_level",
+            "score",
+            "threshold_version",
+            "candidate_graph_json",
+            "source_segment_ids_json",
+            "source_work_count",
+            "input_sha256",
+            "viewed_at",
+            "acknowledged_at",
+            "created_at",
+        ),
+        "application_id IN (SELECT id FROM reference_pattern_applications WHERE project_id = ?)",
+        (("application_id", "reference_pattern_applications", False),),
+        ("candidate_graph_json", "source_segment_ids_json"),
+    ),
+    ArchiveTable(
+        "scene_originality_findings",
+        (
+            "id",
+            "check_id",
+            "ordinal",
+            "signal",
+            "score",
+            "summary",
+            "source_segment_ids_json",
+            "evidence_sha256",
+        ),
+        "check_id IN (SELECT s.id FROM scene_originality_checks s "
+        "JOIN reference_pattern_applications a ON a.id = s.application_id "
+        "WHERE a.project_id = ?)",
+        (("check_id", "scene_originality_checks", False),),
+        ("source_segment_ids_json",),
     ),
 )
 
@@ -848,6 +2250,1464 @@ def _remap_json(value: Any, id_map: dict[str, str]) -> Any:
     return value
 
 
+def _sha256_json(value: object) -> str:
+    return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def _matches_context_dependency_fingerprint(
+    dependency: ContextDependencySnapshot,
+    fingerprint: str,
+) -> bool:
+    canonical_fingerprint = _sha256_json(dependency.canonical_payload())
+    if compare_digest(canonical_fingerprint, fingerprint):
+        return True
+    return compare_digest(
+        _sha256_json(dependency.model_dump(mode="json")),
+        fingerprint,
+    )
+
+
+def _validate_m32_archive_rows(tables: dict[str, Any]) -> None:
+    for row in tables["context_packets"]:
+        packet = ContextPacket.model_validate_json(str(row["packet_json"]))
+        if (
+            packet.id != row["id"]
+            or packet.project_id != row["project_id"]
+            or packet.chapter_id != row["chapter_id"]
+            or packet.chapter_revision != row["chapter_revision"]
+            or (packet.task_type.value if packet.task_type is not None else None)
+            != row["task_type"]
+            or packet.purpose.value != row["purpose"]
+            or packet.packet_sha256 != row["packet_sha256"]
+            or packet.source_fingerprint_sha256 != row["source_fingerprint_sha256"]
+            or packet.dependency_fingerprint_sha256
+            != row["dependency_fingerprint_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_context_packet")
+
+    for row in tables["creative_plan_dependencies"]:
+        dependency = ContextDependencySnapshot.model_validate_json(
+            str(row["dependency_snapshot_json"])
+        )
+        if (
+            row["subject_kind"]
+            not in {"book_blueprint", "volume_plan", "rolling_plan"}
+            or row["baseline_state"] not in {"current", "legacy"}
+            or not isinstance(row["subject_revision"], int)
+            or row["subject_revision"] < 0
+            or not _matches_context_dependency_fingerprint(
+                dependency,
+                str(row["dependency_fingerprint_sha256"]),
+            )
+        ):
+            raise InvalidProjectArchiveError("invalid_creative_plan_dependency")
+
+    for row in tables["plan_rebase_candidates"]:
+        PlanRebaseCandidate.model_validate(
+            {
+                **row,
+                "impact": _parse_json(row["impact_json"]),
+                "book_blueprint": (
+                    _parse_json(row["book_blueprint_json"])
+                    if row["book_blueprint_json"] is not None
+                    else None
+                ),
+                "volume_plans": _parse_json(row["volume_plans_json"]),
+                "rolling_chapter_plans": _parse_json(
+                    row["rolling_chapter_plans_json"]
+                ),
+            }
+        )
+
+
+def _chapter_production_trace(row: dict[str, Any]) -> ModelTrace | None:
+    purpose = row["context_purpose"]
+    trace_columns = (
+        "context_packet_id",
+        "context_packet_sha256",
+        "context_dependency_fingerprint_sha256",
+        "context_compiler_version",
+        "provider",
+        "model",
+        "prompt_version",
+    )
+    if purpose is None:
+        if any(row[column] is not None for column in trace_columns):
+            raise InvalidProjectArchiveError("invalid_chapter_production_trace")
+        return None
+    return ModelTrace.model_validate(
+        {
+            "purpose": purpose,
+            "context_packet_id": row["context_packet_id"],
+            "context_packet_sha256": row["context_packet_sha256"],
+            "context_dependency_fingerprint_sha256": row[
+                "context_dependency_fingerprint_sha256"
+            ],
+            "context_compiler_version": row["context_compiler_version"],
+            "profile_fingerprint_sha256": row["profile_fingerprint_sha256"],
+            "provider": row["provider"],
+            "model": row["model"],
+            "prompt_version": row["prompt_version"],
+        }
+    )
+
+
+def _validate_m33_archive_rows(tables: dict[str, Any]) -> None:
+    """Validate the complete candidate graph, not only its SQL-shaped rows."""
+
+    chapters = {str(row["id"]): row for row in tables["chapters"]}
+    chapter_versions = {str(row["id"]): row for row in tables["chapter_versions"]}
+    productions: dict[str, dict[str, Any]] = {}
+    for row in tables["chapter_productions"]:
+        production_model = ChapterProduction.model_validate(row)
+        chapter = chapters.get(production_model.chapter_id)
+        if chapter is None or chapter["project_id"] != production_model.project_id:
+            raise InvalidProjectArchiveError("invalid_chapter_production")
+        productions[production_model.id] = row
+
+    event_sequences: dict[str, set[int]] = {}
+    for row in tables["chapter_production_events"]:
+        detail = _parse_json(row["detail_json"])
+        if not isinstance(detail, dict):
+            raise InvalidProjectArchiveError("invalid_chapter_production_event")
+        event = ProductionEvent.model_validate({**row, "detail": detail})
+        if event.production_id not in productions:
+            raise InvalidProjectArchiveError("invalid_chapter_production_event")
+        sequences = event_sequences.setdefault(event.production_id, set())
+        if event.sequence in sequences:
+            raise InvalidProjectArchiveError("invalid_chapter_production_event_sequence")
+        sequences.add(event.sequence)
+
+    outline_versions: dict[str, tuple[dict[str, Any], ChapterOutline]] = {}
+    outline_versions_by_candidate_revision: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in tables["chapter_outline_candidate_versions"]:
+        content = ChapterOutline.model_validate_json(str(row["content_json"]))
+        trace = _chapter_production_trace(row)
+        outline_version_model = OutlineCandidateVersion.model_validate(
+            {
+                **row,
+                "content": content,
+                "trace": trace,
+            }
+        )
+        if not compare_digest(
+            _sha256_json(content.model_dump(mode="json")),
+            outline_version_model.content_sha256,
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_outline_hash")
+        key = (outline_version_model.candidate_id, outline_version_model.revision)
+        if key in outline_versions_by_candidate_revision:
+            raise InvalidProjectArchiveError("invalid_chapter_outline_revision")
+        outline_versions[outline_version_model.id] = (row, content)
+        outline_versions_by_candidate_revision[key] = row
+
+    outline_candidates: dict[str, dict[str, Any]] = {}
+    for row in tables["chapter_outline_candidates"]:
+        production_row = productions.get(str(row["production_id"]))
+        current_outline_version_row = outline_versions_by_candidate_revision.get(
+            (str(row["id"]), int(row["current_revision"]))
+        )
+        if (
+            production_row is None
+            or current_outline_version_row is None
+            or current_outline_version_row["content_sha256"]
+            != row["current_content_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_outline_candidate")
+        outline_candidates[str(row["id"])] = row
+
+    for production_row in productions.values():
+        current_outline_id = production_row["current_outline_candidate_id"]
+        if current_outline_id is None:
+            continue
+        outline = outline_candidates.get(str(current_outline_id))
+        if outline is None or outline["production_id"] != production_row["id"]:
+            raise InvalidProjectArchiveError("invalid_current_chapter_outline")
+
+    for row in tables["chapter_preflight_checks"]:
+        missing_fields = _parse_json(row["missing_fields_json"])
+        if not isinstance(missing_fields, list):
+            raise InvalidProjectArchiveError("invalid_chapter_preflight")
+        check = PreflightCheck.model_validate(
+            {
+                **row,
+                "reader_promise": bool(row["reader_promise"]),
+                "opening_hook": bool(row["opening_hook"]),
+                "state_change": bool(row["state_change"]),
+                "emotional_payoff": bool(row["emotional_payoff"]),
+                "ending_cliffhanger": bool(row["ending_cliffhanger"]),
+                "missing_fields": missing_fields,
+                "passed": bool(row["passed"]),
+            }
+        )
+        version_entry = outline_versions.get(check.outline_version_id)
+        candidate = outline_candidates.get(check.outline_candidate_id)
+        if (
+            version_entry is None
+            or candidate is None
+            or candidate["production_id"] != check.production_id
+            or version_entry[0]["candidate_id"] != check.outline_candidate_id
+            or version_entry[0]["revision"] != check.outline_revision
+            or version_entry[0]["content_sha256"] != check.outline_content_sha256
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_preflight_lineage")
+
+    draft_versions: dict[str, dict[str, Any]] = {}
+    draft_versions_by_candidate_revision: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in tables["chapter_draft_candidate_versions"]:
+        trace = _chapter_production_trace(row)
+        draft_version_model = DraftCandidateVersion.model_validate({**row, "trace": trace})
+        if not draft_version_model.content or not compare_digest(
+            hashlib.sha256(draft_version_model.content.encode("utf-8")).hexdigest(),
+            draft_version_model.content_sha256,
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_draft_hash")
+        key = (draft_version_model.candidate_id, draft_version_model.revision)
+        if key in draft_versions_by_candidate_revision:
+            raise InvalidProjectArchiveError("invalid_chapter_draft_revision")
+        draft_versions[draft_version_model.id] = row
+        draft_versions_by_candidate_revision[key] = row
+
+    draft_candidates: dict[str, dict[str, Any]] = {}
+    for row in tables["chapter_draft_candidates"]:
+        production_row = productions.get(str(row["production_id"]))
+        current_draft_version_row = draft_versions_by_candidate_revision.get(
+            (str(row["id"]), int(row["current_revision"]))
+        )
+        if (
+            production_row is None
+            or current_draft_version_row is None
+            or current_draft_version_row["content_sha256"]
+            != row["current_content_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_draft_candidate")
+        lineage = (
+            row["source_outline_candidate_id"],
+            row["source_outline_version_id"],
+            row["source_outline_revision"],
+            row["source_outline_content_sha256"],
+        )
+        if any(value is not None for value in lineage):
+            if not all(value is not None for value in lineage):
+                raise InvalidProjectArchiveError("invalid_chapter_outline_lineage")
+            outline = outline_candidates.get(str(lineage[0]))
+            outline_version = outline_versions.get(str(lineage[1]))
+            if (
+                outline is None
+                or outline["production_id"] != row["production_id"]
+                or outline_version is None
+                or outline_version[0]["candidate_id"] != lineage[0]
+                or outline_version[0]["revision"] != lineage[2]
+                or outline_version[0]["content_sha256"] != lineage[3]
+            ):
+                raise InvalidProjectArchiveError("invalid_chapter_outline_lineage")
+        draft_candidates[str(row["id"])] = row
+
+    for row in tables["chapter_draft_candidate_locks"]:
+        lock = CandidateLock.model_validate(row)
+        candidate = draft_candidates.get(lock.candidate_id)
+        created_from = draft_versions.get(lock.created_from_version_id)
+        current = (
+            draft_versions_by_candidate_revision.get(
+                (lock.candidate_id, int(candidate["current_revision"]))
+            )
+            if candidate is not None
+            else None
+        )
+        if (
+            candidate is None
+            or created_from is None
+            or created_from["candidate_id"] != lock.candidate_id
+            or current is None
+            or lock.end_char > len(str(current["content"]))
+            or str(current["content"])[lock.start_char : lock.end_char] != lock.locked_text
+            or not compare_digest(
+                hashlib.sha256(lock.locked_text.encode("utf-8")).hexdigest(),
+                lock.locked_text_sha256,
+            )
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_candidate_lock")
+
+    for row in tables["chapter_candidate_reviews"]:
+        findings = _parse_json(row["findings_json"])
+        trace = _chapter_production_trace(row)
+        if not isinstance(findings, list) or trace is None:
+            raise InvalidProjectArchiveError("invalid_chapter_candidate_review")
+        review = CandidateReview.model_validate({**row, "trace": trace, "findings": findings})
+        candidate = draft_candidates.get(review.candidate_id)
+        review_version_row = draft_versions.get(review.candidate_version_id)
+        if (
+            candidate is None
+            or review_version_row is None
+            or review_version_row["candidate_id"] != review.candidate_id
+            or review_version_row["revision"] != review.candidate_revision
+            or review_version_row["content_sha256"] != review.candidate_content_sha256
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_candidate_review_lineage")
+
+    merge_ordinals: set[tuple[str, int]] = set()
+    for row in tables["chapter_candidate_merge_sources"]:
+        source = MergeSource.model_validate(
+            {
+                "candidate_id": row["source_candidate_id"],
+                "candidate_version_id": row["source_version_id"],
+                "candidate_revision": row["source_revision"],
+                "candidate_content_sha256": row["source_content_sha256"],
+                "start_char": row["start_char"],
+                "end_char": row["end_char"],
+                "selected_text_sha256": row["selected_text_sha256"],
+            }
+        )
+        result_candidate = draft_candidates.get(str(row["result_candidate_id"]))
+        result_version = draft_versions.get(str(row["result_version_id"]))
+        source_candidate = draft_candidates.get(source.candidate_id)
+        source_version = draft_versions.get(source.candidate_version_id)
+        key = (str(row["result_candidate_id"]), int(row["ordinal"]))
+        source_content = str(source_version["content"]) if source_version is not None else ""
+        if (
+            key in merge_ordinals
+            or result_candidate is None
+            or result_version is None
+            or result_version["candidate_id"] != row["result_candidate_id"]
+            or source_candidate is None
+            or source_version is None
+            or source_version["candidate_id"] != source.candidate_id
+            or source_version["revision"] != source.candidate_revision
+            or source_version["content_sha256"] != source.candidate_content_sha256
+            or source.end_char > len(source_content)
+            or not compare_digest(
+                hashlib.sha256(
+                    source_content[source.start_char : source.end_char].encode("utf-8")
+                ).hexdigest(),
+                source.selected_text_sha256,
+            )
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_candidate_merge")
+        merge_ordinals.add(key)
+
+    for row in tables["chapter_writing_outcomes"]:
+        adoption_detail = _parse_json(row["adoption_detail_json"])
+        if not isinstance(adoption_detail, dict):
+            raise InvalidProjectArchiveError("invalid_chapter_writing_outcome")
+        outcome = WritingOutcome.model_validate({**row, "adoption_detail": adoption_detail})
+        outcome_production_row = productions.get(outcome.production_id)
+        candidate = draft_candidates.get(outcome.candidate_id)
+        outcome_version_row = draft_versions.get(outcome.candidate_version_id)
+        if (
+            outcome_production_row is None
+            or candidate is None
+            or candidate["production_id"] != outcome.production_id
+            or outcome_version_row is None
+            or outcome_version_row["candidate_id"] != outcome.candidate_id
+            or outcome_version_row["revision"] != outcome.candidate_revision
+            or outcome_version_row["content_sha256"] != outcome.candidate_content_sha256
+            or candidate["source_outline_candidate_id"]
+            != outcome.source_outline_candidate_id
+            or candidate["source_outline_version_id"] != outcome.source_outline_version_id
+            or candidate["source_outline_revision"] != outcome.source_outline_revision
+            or candidate["source_outline_content_sha256"]
+            != outcome.source_outline_content_sha256
+        ):
+            raise InvalidProjectArchiveError("invalid_chapter_writing_outcome_lineage")
+        if outcome.decision.value == "adopted":
+            canonical = chapter_versions.get(str(outcome.chapter_version_id))
+            if (
+                canonical is None
+                or canonical["chapter_id"] != outcome_production_row["chapter_id"]
+                or canonical["chapter_revision"] != outcome.final_chapter_revision
+                or canonical["content_sha256"] != outcome.final_chapter_content_sha256
+                or bool(canonical["is_candidate"])
+            ):
+                raise InvalidProjectArchiveError("invalid_chapter_writing_outcome_version")
+
+
+def _m34_scope_is_valid(
+    row: dict[str, Any],
+    *,
+    projects: dict[str, dict[str, Any]],
+    chapters: dict[str, dict[str, Any]],
+) -> bool:
+    project = projects.get(str(row["project_id"]))
+    if project is None:
+        return False
+    if row["scope_kind"] == "project":
+        return row["scope_value"] == row["project_id"]
+    if row["scope_kind"] == "genre":
+        return row["scope_value"] == project["genre"]
+    if row["scope_kind"] == "chapter":
+        chapter = chapters.get(str(row["scope_value"]))
+        return chapter is not None and chapter["project_id"] == row["project_id"]
+    return False
+
+
+def _m34_analysis(
+    reconciliation: dict[str, Any],
+    canon_rows: list[dict[str, Any]],
+    preference_rows: list[dict[str, Any]],
+) -> ReconciliationAnalysis:
+    canon_candidates: list[dict[str, Any]] = []
+    for row in sorted(canon_rows, key=lambda item: (int(item["ordinal"]), str(item["id"]))):
+        canon_candidates.append(
+            {
+                "kind": row["kind"],
+                "subject_key": row["subject_key"],
+                "summary": row["summary"],
+                "payload": _parse_json(row["payload_json"]),
+                "evidence": _parse_json(row["evidence_json"]),
+                "conflicts": _parse_json(row["conflicts_json"]),
+            }
+        )
+    preference_candidates: list[dict[str, Any]] = []
+    for row in sorted(
+        preference_rows,
+        key=lambda item: (int(item["ordinal"]), str(item["id"])),
+    ):
+        preference_candidates.append(
+            {
+                "scope_kind": row["scope_kind"],
+                "scope_value": row["scope_value"],
+                "dimension": row["dimension"],
+                "compact_rule": row["compact_rule"],
+                "confidence": row["confidence"],
+                "comparison_metrics": _parse_json(row["comparison_metrics_json"]),
+                "source_writing_outcome_id": row["source_writing_outcome_id"],
+                "source_candidate_version_id": row["source_candidate_version_id"],
+                "candidate_content_sha256": row["candidate_content_sha256"],
+                "final_content_sha256": row["final_content_sha256"],
+            }
+        )
+    return ReconciliationAnalysis.model_validate(
+        {
+            "context_packet_id": reconciliation["context_packet_id"],
+            "context_packet_sha256": reconciliation["context_packet_sha256"],
+            "context_dependency_fingerprint_sha256": reconciliation[
+                "context_dependency_fingerprint_sha256"
+            ],
+            "canon_candidates": canon_candidates,
+            "preference_candidates": preference_candidates,
+            "preference_skip_reason": reconciliation["preference_skip_reason"],
+        }
+    )
+
+
+def _refresh_m34_analysis_hashes(tables: dict[str, list[dict[str, Any]]]) -> None:
+    canon_by_reconciliation: dict[str, list[dict[str, Any]]] = {}
+    for row in tables["canon_delta_candidates"]:
+        canon_by_reconciliation.setdefault(str(row["reconciliation_id"]), []).append(row)
+    preference_by_reconciliation: dict[str, list[dict[str, Any]]] = {}
+    for row in tables["author_preference_candidates"]:
+        preference_by_reconciliation.setdefault(
+            str(row["reconciliation_id"]), []
+        ).append(row)
+    for row in tables["canon_reconciliations"]:
+        if row["analysis_sha256"] is None:
+            continue
+        analysis = _m34_analysis(
+            row,
+            canon_by_reconciliation.get(str(row["id"]), []),
+            preference_by_reconciliation.get(str(row["id"]), []),
+        )
+        row["analysis_sha256"] = _sha256_json(analysis.model_dump(mode="json"))
+
+
+def _validate_m34_archive_rows(tables: dict[str, Any]) -> None:
+    try:
+        projects = {str(row["id"]): row for row in tables["projects"]}
+        chapters = {str(row["id"]): row for row in tables["chapters"]}
+        versions = {str(row["id"]): row for row in tables["chapter_versions"]}
+        productions = {str(row["id"]): row for row in tables["chapter_productions"]}
+        draft_versions = {
+            str(row["id"]): row for row in tables["chapter_draft_candidate_versions"]
+        }
+        outcomes = {str(row["id"]): row for row in tables["chapter_writing_outcomes"]}
+        jobs = {str(row["id"]): row for row in tables["jobs"]}
+        packets = {str(row["id"]): row for row in tables["context_packets"]}
+
+        approvals: dict[str, dict[str, Any]] = {}
+        for approval_row in tables["chapter_approvals"]:
+            approval_model = ChapterApproval.model_validate(approval_row)
+            approval_chapter_row = chapters.get(approval_model.chapter_id)
+            approval_version_row = versions.get(approval_model.chapter_version_id)
+            approval_outcome_row = (
+                outcomes.get(approval_model.source_writing_outcome_id)
+                if approval_model.source_writing_outcome_id is not None
+                else None
+            )
+            approval_production_row = (
+                productions.get(str(approval_outcome_row["production_id"]))
+                if approval_outcome_row is not None
+                else None
+            )
+            if (
+                approval_chapter_row is None
+                or approval_chapter_row["project_id"] != approval_model.project_id
+                or approval_version_row is None
+                or approval_version_row["chapter_id"] != approval_model.chapter_id
+                or approval_version_row["chapter_revision"]
+                != approval_model.chapter_revision
+                or approval_version_row["content_sha256"]
+                != approval_model.chapter_content_sha256
+                or approval_version_row["source"] != "approval"
+                or approval_version_row["source_id"] != approval_model.id
+                or bool(approval_version_row["is_candidate"])
+                or not compare_digest(
+                    hashlib.sha256(
+                        str(approval_version_row["content"]).encode("utf-8")
+                    ).hexdigest(),
+                    approval_model.chapter_content_sha256,
+                )
+                or (
+                    approval_model.source_writing_outcome_id is not None
+                    and (
+                        approval_outcome_row is None
+                        or approval_production_row is None
+                        or approval_outcome_row["decision"] != "adopted"
+                        or approval_production_row["chapter_id"]
+                        != approval_model.chapter_id
+                    )
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_chapter_approval_lineage")
+            approvals[approval_model.id] = approval_row
+
+        reconciliations: dict[str, dict[str, Any]] = {}
+        for reconciliation_row in tables["canon_reconciliations"]:
+            reconciliation_model = CanonReconciliation.model_validate(reconciliation_row)
+            reconciliation_approval_row = approvals.get(reconciliation_model.approval_id)
+            reconciliation_job_row = jobs.get(reconciliation_model.job_id)
+            reconciliation_packet_row = (
+                packets.get(reconciliation_model.context_packet_id)
+                if reconciliation_model.context_packet_id is not None
+                else None
+            )
+            reconciliation_job_input = (
+                _parse_json(reconciliation_job_row["input_json"])
+                if reconciliation_job_row is not None
+                else None
+            )
+            if (
+                reconciliation_approval_row is None
+                or reconciliation_approval_row["project_id"]
+                != reconciliation_model.project_id
+                or reconciliation_approval_row["chapter_id"]
+                != reconciliation_model.chapter_id
+                or reconciliation_job_row is None
+                or reconciliation_job_row["project_id"]
+                != reconciliation_model.project_id
+                or reconciliation_job_row["chapter_id"]
+                != reconciliation_model.chapter_id
+                or reconciliation_job_row["kind"] != "review"
+                or reconciliation_job_row["workflow"] != "canon_reconciliation_v1"
+                or not isinstance(reconciliation_job_input, dict)
+                or reconciliation_job_input.get("approval_id")
+                != reconciliation_model.approval_id
+                or reconciliation_job_input.get("chapter_version_id")
+                != reconciliation_approval_row["chapter_version_id"]
+                or reconciliation_job_input.get("chapter_revision")
+                != reconciliation_approval_row["chapter_revision"]
+                or reconciliation_job_input.get("chapter_content_sha256")
+                != reconciliation_approval_row["chapter_content_sha256"]
+                or (
+                    reconciliation_packet_row is not None
+                    and (
+                        reconciliation_packet_row["project_id"]
+                        != reconciliation_model.project_id
+                        or reconciliation_packet_row["chapter_id"]
+                        != reconciliation_model.chapter_id
+                        or reconciliation_packet_row["packet_sha256"]
+                        != reconciliation_model.context_packet_sha256
+                        or reconciliation_packet_row["dependency_fingerprint_sha256"]
+                        != reconciliation_model.context_dependency_fingerprint_sha256
+                    )
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_reconciliation_lineage")
+            reconciliations[reconciliation_model.id] = reconciliation_row
+
+        canon_records: dict[str, dict[str, Any]] = {}
+        for canon_record_row in tables["canon_records"]:
+            record_kind = CanonKind(str(canon_record_row["kind"]))
+            record_payload = _parse_json(canon_record_row["payload_json"])
+            if not isinstance(record_payload, dict) or not compare_digest(
+                _sha256_json(record_payload), str(canon_record_row["payload_sha256"])
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_payload_hash")
+            typed_record_payload = CANON_PAYLOAD_MODELS[record_kind].model_validate(
+                record_payload
+            )
+            CanonRecord.model_validate(
+                {
+                    key: value
+                    for key, value in {
+                        **canon_record_row,
+                        "kind": record_kind,
+                        "payload": typed_record_payload,
+                    }.items()
+                    if key != "payload_json"
+                }
+            )
+            if str(canon_record_row["project_id"]) not in projects:
+                raise InvalidProjectArchiveError("invalid_canon_record_project")
+            canon_records[str(canon_record_row["id"])] = canon_record_row
+
+        canon_by_reconciliation: dict[str, list[dict[str, Any]]] = {}
+        canon_candidates: dict[str, dict[str, Any]] = {}
+        canon_ordinals: set[tuple[str, int]] = set()
+        for canon_candidate_row in tables["canon_delta_candidates"]:
+            candidate_reconciliation_row = reconciliations.get(
+                str(canon_candidate_row["reconciliation_id"])
+            )
+            candidate_kind = CanonKind(str(canon_candidate_row["kind"]))
+            candidate_payload = _parse_json(canon_candidate_row["payload_json"])
+            candidate_evidence_value = _parse_json(canon_candidate_row["evidence_json"])
+            candidate_conflicts_value = _parse_json(
+                canon_candidate_row["conflicts_json"]
+            )
+            if not isinstance(candidate_payload, dict) or not isinstance(
+                candidate_conflicts_value, list
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_candidate")
+            typed_candidate_payload = CANON_PAYLOAD_MODELS[candidate_kind].model_validate(
+                candidate_payload
+            )
+            candidate_evidence = CanonEvidence.model_validate(candidate_evidence_value)
+            candidate_conflicts = [
+                CanonConflict.model_validate(item) for item in candidate_conflicts_value
+            ]
+            candidate_model = CanonDeltaCandidate.model_validate(
+                {
+                    key: value
+                    for key, value in {
+                        **canon_candidate_row,
+                        "kind": candidate_kind,
+                        "payload": typed_candidate_payload,
+                        "evidence": candidate_evidence,
+                        "conflicts": candidate_conflicts,
+                    }.items()
+                    if key not in {"payload_json", "evidence_json", "conflicts_json"}
+                }
+            )
+            candidate_approval_row = (
+                approvals.get(str(candidate_reconciliation_row["approval_id"]))
+                if candidate_reconciliation_row is not None
+                else None
+            )
+            candidate_version_row = (
+                versions.get(str(candidate_approval_row["chapter_version_id"]))
+                if candidate_approval_row is not None
+                else None
+            )
+            candidate_marker = (candidate_model.reconciliation_id, candidate_model.ordinal)
+            accepted_record_row = (
+                canon_records.get(candidate_model.accepted_record_id)
+                if candidate_model.accepted_record_id is not None
+                else None
+            )
+            candidate_excerpt = (
+                str(candidate_version_row["content"])[
+                    candidate_evidence.start_char : candidate_evidence.end_char
+                ]
+                if candidate_version_row is not None
+                and candidate_evidence.end_char
+                <= len(str(candidate_version_row["content"]))
+                else None
+            )
+            if (
+                candidate_marker in canon_ordinals
+                or candidate_reconciliation_row is None
+                or candidate_reconciliation_row["project_id"] != candidate_model.project_id
+                or candidate_approval_row is None
+                or candidate_version_row is None
+                or candidate_evidence.approval_version_id
+                != candidate_approval_row["chapter_version_id"]
+                or candidate_evidence.chapter_id != candidate_approval_row["chapter_id"]
+                or candidate_evidence.chapter_revision
+                != candidate_approval_row["chapter_revision"]
+                or candidate_evidence.chapter_content_sha256
+                != candidate_approval_row["chapter_content_sha256"]
+                or candidate_excerpt != candidate_evidence.excerpt
+                or not compare_digest(
+                    hashlib.sha256(candidate_evidence.excerpt.encode("utf-8")).hexdigest(),
+                    candidate_evidence.excerpt_sha256,
+                )
+                or not compare_digest(
+                    _sha256_json(candidate_payload), candidate_model.payload_sha256
+                )
+                or not compare_digest(
+                    _sha256_json(candidate_evidence_value),
+                    candidate_model.evidence_sha256,
+                )
+                or any(
+                    candidate_conflict.existing_record_id is not None
+                    and (
+                        candidate_conflict.existing_record_id not in canon_records
+                        or canon_records[candidate_conflict.existing_record_id]["project_id"]
+                        != candidate_model.project_id
+                    )
+                    for candidate_conflict in candidate_conflicts
+                )
+                or (
+                    accepted_record_row is not None
+                    and accepted_record_row["project_id"] != candidate_model.project_id
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_candidate_lineage")
+            canon_ordinals.add(candidate_marker)
+            canon_candidates[candidate_model.id] = canon_candidate_row
+            canon_by_reconciliation.setdefault(
+                candidate_model.reconciliation_id, []
+            ).append(canon_candidate_row)
+
+        for canon_record_row in canon_records.values():
+            source_candidate_id = canon_record_row["source_candidate_id"]
+            if source_candidate_id is None:
+                continue
+            source_candidate_row = canon_candidates.get(str(source_candidate_id))
+            if (
+                source_candidate_row is None
+                or source_candidate_row["project_id"] != canon_record_row["project_id"]
+                or source_candidate_row["state"] != "accepted"
+                or source_candidate_row["accepted_record_id"] != canon_record_row["id"]
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_record_source")
+
+        preferences: dict[str, dict[str, Any]] = {}
+        for preference_row in tables["author_preferences"]:
+            preference_model = AuthorPreference.model_validate(preference_row)
+            expected_fingerprint = _sha256_json(
+                {
+                    "schema_version": 1,
+                    "scope_kind": preference_model.scope_kind.value,
+                    "scope_value": preference_model.scope_value,
+                    "dimension": preference_model.dimension.value,
+                    "compact_rule": preference_model.compact_rule,
+                }
+            )
+            if (
+                not _m34_scope_is_valid(
+                    preference_row, projects=projects, chapters=chapters
+                )
+                or not compare_digest(
+                    hashlib.sha256(
+                        preference_model.compact_rule.encode("utf-8")
+                    ).hexdigest(),
+                    preference_model.rule_sha256,
+                )
+                or not compare_digest(
+                    expected_fingerprint, preference_model.fingerprint_sha256
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_author_preference")
+            preferences[preference_model.id] = preference_row
+
+        preference_by_reconciliation: dict[str, list[dict[str, Any]]] = {}
+        preference_candidates: dict[str, dict[str, Any]] = {}
+        preference_ordinals: set[tuple[str, int]] = set()
+        for preference_candidate_row in tables["author_preference_candidates"]:
+            preference_reconciliation_row = reconciliations.get(
+                str(preference_candidate_row["reconciliation_id"])
+            )
+            comparison_metrics = _parse_json(
+                preference_candidate_row["comparison_metrics_json"]
+            )
+            preference_candidate_model = AuthorPreferenceCandidate.model_validate(
+                {
+                    key: value
+                    for key, value in {
+                        **preference_candidate_row,
+                        "comparison_metrics": comparison_metrics,
+                    }.items()
+                    if key != "comparison_metrics_json"
+                }
+            )
+            candidate_outcome_row = outcomes.get(
+                preference_candidate_model.source_writing_outcome_id
+            )
+            candidate_production_row = (
+                productions.get(str(candidate_outcome_row["production_id"]))
+                if candidate_outcome_row is not None
+                else None
+            )
+            source_draft_version_row = draft_versions.get(
+                preference_candidate_model.source_candidate_version_id
+            )
+            preference_approval_row = (
+                approvals.get(str(preference_reconciliation_row["approval_id"]))
+                if preference_reconciliation_row is not None
+                else None
+            )
+            confirmed_preference_row = (
+                preferences.get(preference_candidate_model.confirmed_preference_id)
+                if preference_candidate_model.confirmed_preference_id is not None
+                else None
+            )
+            preference_marker = (
+                preference_candidate_model.reconciliation_id,
+                preference_candidate_model.ordinal,
+            )
+            if (
+                preference_marker in preference_ordinals
+                or not isinstance(comparison_metrics, dict)
+                or preference_reconciliation_row is None
+                or preference_reconciliation_row["project_id"]
+                != preference_candidate_model.project_id
+                or preference_approval_row is None
+                or candidate_outcome_row is None
+                or candidate_production_row is None
+                or source_draft_version_row is None
+                or candidate_production_row["chapter_id"]
+                != preference_approval_row["chapter_id"]
+                or candidate_outcome_row["decision"] != "adopted"
+                or candidate_outcome_row["adoption_mode"] != "whole"
+                or candidate_outcome_row["candidate_version_id"]
+                != preference_candidate_model.source_candidate_version_id
+                or candidate_outcome_row["candidate_content_sha256"]
+                != preference_candidate_model.candidate_content_sha256
+                or source_draft_version_row["content_sha256"]
+                != preference_candidate_model.candidate_content_sha256
+                or preference_candidate_model.final_content_sha256
+                != preference_approval_row["chapter_content_sha256"]
+                or not _m34_scope_is_valid(
+                    preference_candidate_row,
+                    projects=projects,
+                    chapters=chapters,
+                )
+                or not compare_digest(
+                    hashlib.sha256(
+                        preference_candidate_model.compact_rule.encode("utf-8")
+                    ).hexdigest(),
+                    preference_candidate_model.rule_sha256,
+                )
+                or (
+                    confirmed_preference_row is not None
+                    and (
+                        confirmed_preference_row["project_id"]
+                        != preference_candidate_model.project_id
+                        or confirmed_preference_row["scope_kind"]
+                        != preference_candidate_model.scope_kind.value
+                        or confirmed_preference_row["scope_value"]
+                        != preference_candidate_model.scope_value
+                        or confirmed_preference_row["dimension"]
+                        != preference_candidate_model.dimension.value
+                        or confirmed_preference_row["compact_rule"]
+                        != preference_candidate_model.compact_rule
+                    )
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_preference_candidate_lineage")
+            preference_ordinals.add(preference_marker)
+            preference_candidates[preference_candidate_model.id] = preference_candidate_row
+            preference_by_reconciliation.setdefault(
+                preference_candidate_model.reconciliation_id, []
+            ).append(preference_candidate_row)
+
+        source_candidates: set[str] = set()
+        for preference_source_row in tables["author_preference_sources"]:
+            source_preference_row = preferences.get(
+                str(preference_source_row["preference_id"])
+            )
+            source_preference_candidate_row = preference_candidates.get(
+                str(preference_source_row["candidate_id"])
+            )
+            source_reconciliation_row = (
+                reconciliations.get(
+                    str(source_preference_candidate_row["reconciliation_id"])
+                )
+                if source_preference_candidate_row is not None
+                else None
+            )
+            if (
+                preference_source_row["candidate_id"] in source_candidates
+                or source_preference_row is None
+                or source_preference_candidate_row is None
+                or source_reconciliation_row is None
+                or source_preference_candidate_row["state"] != "confirmed"
+                or source_preference_candidate_row["confirmed_preference_id"]
+                != preference_source_row["preference_id"]
+                or source_preference_candidate_row["source_writing_outcome_id"]
+                != preference_source_row["source_writing_outcome_id"]
+                or source_preference_candidate_row["source_candidate_version_id"]
+                != preference_source_row["source_candidate_version_id"]
+                or source_reconciliation_row["approval_id"]
+                != preference_source_row["approval_id"]
+            ):
+                raise InvalidProjectArchiveError("invalid_author_preference_source")
+            source_candidates.add(str(preference_source_row["candidate_id"]))
+
+        batches: dict[str, dict[str, Any]] = {}
+        batch_results: list[tuple[dict[str, Any], CanonDecisionBatchResult]] = []
+        for batch_row in tables["canon_decision_batches"]:
+            batch_reconciliation_row = reconciliations.get(
+                str(batch_row["reconciliation_id"])
+            )
+            batch_result = CanonDecisionBatchResult.model_validate(
+                _parse_json(batch_row["response_json"])
+            )
+            if (
+                batch_reconciliation_row is None
+                or batch_reconciliation_row["project_id"] != batch_row["project_id"]
+                or batch_result.batch_id != batch_row["id"]
+                or batch_result.reconciliation_id != batch_row["reconciliation_id"]
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_decision_batch")
+            batches[str(batch_row["id"])] = batch_row
+            batch_results.append((batch_row, batch_result))
+
+        replenishments: dict[str, dict[str, Any]] = {}
+        volume_plans = {str(row["id"]): row for row in tables["volume_plans"]}
+        blueprints = {str(row["id"]): row for row in tables["book_blueprints"]}
+        for replenishment_row in tables["rolling_plan_replenishments"]:
+            source_record_ids = _parse_json(
+                replenishment_row["source_canon_record_ids_json"]
+            )
+            protected_chapter_numbers = _parse_json(
+                replenishment_row["protected_chapter_numbers_json"]
+            )
+            replenishment_plans = _parse_json(replenishment_row["plans_json"])
+            replenishment_model = RollingPlanReplenishment.model_validate(
+                {
+                    key: value
+                    for key, value in {
+                        **replenishment_row,
+                        "source_canon_record_ids": source_record_ids,
+                        "protected_chapter_numbers": protected_chapter_numbers,
+                        "plans": replenishment_plans,
+                    }.items()
+                    if key
+                    not in {
+                        "source_canon_record_ids_json",
+                        "protected_chapter_numbers_json",
+                        "plans_json",
+                    }
+                }
+            )
+            replenishment_reconciliation_row = reconciliations.get(
+                replenishment_model.reconciliation_id
+            )
+            replenishment_chapter_row = chapters.get(
+                replenishment_model.source_chapter_id
+            )
+            replenishment_batch_row = (
+                batches.get(replenishment_model.source_decision_batch_id)
+                if replenishment_model.source_decision_batch_id is not None
+                else None
+            )
+            replenishment_volume_row = (
+                volume_plans.get(replenishment_model.volume_plan_id)
+                if replenishment_model.volume_plan_id is not None
+                else None
+            )
+            replenishment_blueprint_row = (
+                blueprints.get(replenishment_model.base_blueprint_id)
+                if replenishment_model.base_blueprint_id is not None
+                else None
+            )
+            if (
+                not isinstance(source_record_ids, list)
+                or not all(isinstance(item, str) for item in source_record_ids)
+                or len(source_record_ids) != len(set(source_record_ids))
+                or not isinstance(protected_chapter_numbers, list)
+                or not isinstance(replenishment_plans, list)
+                or not compare_digest(
+                    _sha256_json(replenishment_plans),
+                    replenishment_model.plans_sha256,
+                )
+                or replenishment_reconciliation_row is None
+                or replenishment_reconciliation_row["project_id"]
+                != replenishment_model.project_id
+                or replenishment_chapter_row is None
+                or replenishment_chapter_row["project_id"]
+                != replenishment_model.project_id
+                or any(
+                    record_id not in canon_records
+                    or canon_records[record_id]["project_id"]
+                    != replenishment_model.project_id
+                    for record_id in source_record_ids
+                )
+                or (
+                    replenishment_model.source_decision_batch_id is not None
+                    and (
+                        replenishment_batch_row is None
+                        or replenishment_batch_row["project_id"]
+                        != replenishment_model.project_id
+                        or replenishment_batch_row["reconciliation_id"]
+                        != replenishment_model.reconciliation_id
+                    )
+                )
+                or (
+                    replenishment_model.volume_plan_id is not None
+                    and (
+                        replenishment_volume_row is None
+                        or replenishment_volume_row["project_id"]
+                        != replenishment_model.project_id
+                    )
+                )
+                or (
+                    replenishment_model.base_blueprint_id is not None
+                    and (
+                        replenishment_blueprint_row is None
+                        or replenishment_blueprint_row["project_id"]
+                        != replenishment_model.project_id
+                    )
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_rolling_plan_replenishment")
+            replenishments[replenishment_model.id] = replenishment_row
+
+        for _batch_row, decision_result in batch_results:
+            if (
+                any(
+                    record_id not in canon_records
+                    for record_id in decision_result.accepted_canon_record_ids
+                )
+                or any(
+                    preference_id not in preferences
+                    for preference_id in decision_result.confirmed_preference_ids
+                )
+                or any(
+                    candidate_id not in canon_candidates
+                    and candidate_id not in preference_candidates
+                    for candidate_id in decision_result.rejected_candidate_ids
+                )
+                or (
+                    decision_result.rolling_plan_replenishment_id is not None
+                    and decision_result.rolling_plan_replenishment_id
+                    not in replenishments
+                )
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_decision_response")
+
+        for reconciliation_id, reconciliation_row in reconciliations.items():
+            canon_rows = canon_by_reconciliation.get(reconciliation_id, [])
+            preference_rows = preference_by_reconciliation.get(reconciliation_id, [])
+            if reconciliation_row["analysis_sha256"] is None:
+                if canon_rows or preference_rows:
+                    raise InvalidProjectArchiveError("missing_canon_analysis_hash")
+                continue
+            analysis = _m34_analysis(reconciliation_row, canon_rows, preference_rows)
+            if not compare_digest(
+                _sha256_json(analysis.model_dump(mode="json")),
+                str(reconciliation_row["analysis_sha256"]),
+            ):
+                raise InvalidProjectArchiveError("invalid_canon_analysis_hash")
+    except InvalidProjectArchiveError:
+        raise
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        raise InvalidProjectArchiveError("invalid_m34_values") from error
+
+
+def _rebind_m34_scope(row: dict[str, Any], id_map: dict[str, str]) -> None:
+    if row["scope_kind"] not in {"project", "chapter"}:
+        return
+    old_scope = row["scope_value"]
+    if not isinstance(old_scope, str) or old_scope not in id_map:
+        raise InvalidProjectArchiveError("external_author_preference_scope")
+    row["scope_value"] = id_map[old_scope]
+
+
+def _rebind_m34_rows(
+    tables: dict[str, list[dict[str, Any]]],
+    *,
+    imported_at: str,
+) -> None:
+    jobs = {str(row["id"]): row for row in tables["jobs"]}
+    stale_reconciliations: set[str] = set()
+    for row in tables["canon_reconciliations"]:
+        job = jobs.get(str(row["job_id"]))
+        if job is None:
+            raise InvalidProjectArchiveError("invalid_canon_reconciliation_job")
+        if row["state"] == "pending" or (
+            job["workflow"] == "canon_reconciliation_v1"
+            and job["state"] in {"interrupted", "failed"}
+        ):
+            if row["state"] != "stale" or row["error_message"] != (
+                "restored_requires_resubmission"
+            ):
+                row["revision"] = int(row["revision"]) + 1
+            row["state"] = "stale"
+            row["error_message"] = "restored_requires_resubmission"
+            row["updated_at"] = imported_at
+            row["completed_at"] = imported_at
+            stale_reconciliations.add(str(row["id"]))
+
+    for table_name in ("canon_delta_candidates", "author_preference_candidates"):
+        for row in tables[table_name]:
+            if (
+                row["reconciliation_id"] in stale_reconciliations
+                and row["state"] == "candidate"
+            ):
+                row["state"] = "stale"
+                row["revision"] = int(row["revision"]) + 1
+                row["updated_at"] = imported_at
+
+    _refresh_m34_analysis_hashes(tables)
+
+
+def _rebind_context_packet_row(
+    row: dict[str, Any],
+    *,
+    old_id: str,
+    old_packet_sha256: object,
+    old_source_fingerprint_sha256: object,
+    old_dependency_fingerprint_sha256: object,
+    id_map: dict[str, str],
+) -> None:
+    packet = _parse_json(row["packet_json"])
+    if not isinstance(packet, dict):
+        raise InvalidProjectArchiveError("invalid_context_packet")
+    subject = _parse_json(row["subject_json"])
+    dependency_value = _parse_json(row["dependency_snapshot_json"])
+    blocking_reasons = _parse_json(row["blocking_reasons_json"])
+    if (
+        not isinstance(subject, dict)
+        or not isinstance(dependency_value, dict)
+        or not isinstance(blocking_reasons, list)
+        or not isinstance(packet.get("items"), list)
+        or not isinstance(packet.get("conflict_notes"), list)
+    ):
+        raise InvalidProjectArchiveError("invalid_context_packet")
+    if "restored_dependency_snapshot" not in blocking_reasons:
+        blocking_reasons.append("restored_dependency_snapshot")
+    dependency = ContextDependencySnapshot.model_validate(dependency_value)
+    dependency_payload = dependency.canonical_payload()
+    dependency_fingerprint = _sha256_json(dependency_payload)
+    rendered_value = _parse_json(str(row["rendered_context"]))
+    rendered_context = json.dumps(
+        _remap_json(rendered_value, id_map),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    profile = dependency.writing_pattern_profile
+    profile_fingerprint = profile.content_sha256 if profile is not None else None
+    source_fingerprint = _sha256_json(
+        {
+            "compiler_version": row["compiler_version"],
+            "purpose": row["purpose"],
+            "subject": subject,
+            "dependencies": dependency_payload,
+            "items": packet["items"],
+        }
+    )
+    hash_payload = {
+        "project_id": row["project_id"],
+        "purpose": row["purpose"],
+        "subject": subject,
+        "task_type": row["task_type"],
+        "compiler_version": row["compiler_version"],
+        "token_budget": row["token_budget"],
+        "used_tokens": row["used_tokens"],
+        "source_fingerprint_sha256": source_fingerprint,
+        "profile_fingerprint_sha256": profile_fingerprint,
+        "dependency_fingerprint_sha256": dependency_fingerprint,
+        "rendered_context": rendered_context,
+        "items": packet["items"],
+        "conflict_notes": packet["conflict_notes"],
+        "blocking_reasons": blocking_reasons,
+    }
+    packet_sha256 = _sha256_json(hash_payload)
+    packet_id = str(uuid5(NAMESPACE_URL, f"mozhou:creative-context:{packet_sha256}"))
+    packet.update(
+        {
+            "id": packet_id,
+            "project_id": row["project_id"],
+            "chapter_id": row["chapter_id"],
+            "chapter_revision": row["chapter_revision"],
+            "task_type": row["task_type"],
+            "purpose": row["purpose"],
+            "subject": subject,
+            "profile_fingerprint_sha256": profile_fingerprint,
+            "dependency_snapshot": dependency_payload,
+            "dependency_fingerprint_sha256": dependency_fingerprint,
+            "blocking_reasons": blocking_reasons,
+            "packet_sha256": packet_sha256,
+            "source_fingerprint_sha256": source_fingerprint,
+            "rendered_context": rendered_context,
+        }
+    )
+    ContextPacket.model_validate(packet)
+    row.update(
+        {
+            "id": packet_id,
+            "profile_fingerprint_sha256": profile_fingerprint,
+            "dependency_fingerprint_sha256": dependency_fingerprint,
+            "blocking_reasons_json": json.dumps(
+                blocking_reasons,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "packet_sha256": packet_sha256,
+            "source_fingerprint_sha256": source_fingerprint,
+            "rendered_context": rendered_context,
+            "packet_json": json.dumps(
+                packet,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+    )
+    id_map[old_id] = packet_id
+    for old_value, new_value in (
+        (old_packet_sha256, packet_sha256),
+        (old_source_fingerprint_sha256, source_fingerprint),
+        (old_dependency_fingerprint_sha256, dependency_fingerprint),
+    ):
+        if isinstance(old_value, str):
+            id_map[old_value] = new_value
+
+
+def _craft_asset_material(row: dict[str, Any]) -> CraftPatternMaterial:
+    return CraftPatternMaterial.model_validate(
+        {
+            "title": row["title"],
+            "summary": row["summary"],
+            "craft_items": _parse_json(row["craft_items_json"]),
+        }
+    )
+
+
+def _craft_asset_content_hash(row: dict[str, Any]) -> str:
+    material = _craft_asset_material(row)
+    payload = {
+        "schema_version": row["schema_version"],
+        "asset_type": row["asset_type"],
+        "source_work_ids": _parse_json(row["source_work_ids_json"]),
+        "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+        "source_asset_version_ids": _parse_json(row["source_asset_version_ids_json"]),
+        "title": material.title,
+        "summary": material.summary,
+        "author_focus": row["author_focus"],
+        "craft_items": [item.model_dump(mode="json") for item in material.craft_items],
+        "provider": row["provider"],
+        "model": row["model"],
+        "prompt_version": row["prompt_version"],
+        "evidence_validator_version": row["evidence_validator_version"],
+        "source_fingerprint_sha256": row["source_fingerprint_sha256"],
+    }
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
+
+
+def _craft_asset_series_id(row: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        canonical_json(
+            {
+                "asset_type": row["asset_type"],
+                "source_work_ids": _parse_json(row["source_work_ids_json"]),
+                "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+                "source_asset_version_ids": _parse_json(row["source_asset_version_ids_json"]),
+            }
+        )
+    ).hexdigest()
+
+
+def _validate_craft_pattern_rows(tables: dict[str, Any]) -> None:
+    required_dimensions = {
+        "era",
+        "core_desire",
+        "conflict_causality",
+        "resource_system",
+        "key_scene_sequence",
+        "ending",
+        "hook_mechanics",
+        "promise_payoff_cadence",
+        "emotional_rhythm",
+        "scene_design",
+        "pov_narrative_distance",
+        "expression_parameters",
+        "information_reveal",
+        "foreshadowing_cycle",
+        "power_progression",
+    }
+    assets: dict[str, tuple[dict[str, Any], CraftPatternMaterial]] = {}
+    for row in tables["craft_pattern_assets"]:
+        if row["schema_version"] != 2:
+            raise InvalidProjectArchiveError("invalid_craft_schema_version")
+        asset_type = CraftPatternAssetType(str(row["asset_type"]))
+        work_ids = _parse_json(row["source_work_ids_json"])
+        segment_ids = _parse_json(row["source_segment_ids_json"])
+        parent_ids = _parse_json(row["source_asset_version_ids_json"])
+        if not all(
+            isinstance(items, list)
+            and all(isinstance(item, str) for item in items)
+            and len(items) == len(set(items))
+            for items in (work_ids, segment_ids, parent_ids)
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        if len(work_ids) > 30 or len(segment_ids) > 64 or len(parent_ids) > 64:
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        if any(
+            _valid_uuid(item) != item
+            for items in (work_ids, segment_ids, parent_ids)
+            for item in items
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        if not work_ids or not segment_ids:
+            raise InvalidProjectArchiveError("invalid_craft_sources")
+        material = _craft_asset_material(row)
+        dimensions = {item.dimension.value for item in material.craft_items}
+        if not required_dimensions <= dimensions:
+            raise InvalidProjectArchiveError("invalid_craft_dimensions")
+        evidence = [entry for item in material.craft_items for entry in item.evidence]
+        if any(
+            entry.work_id not in work_ids or entry.segment_id not in segment_ids
+            for entry in evidence
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_evidence_source")
+        if asset_type == CraftPatternAssetType.STAGE:
+            if len(work_ids) != 1 or len(segment_ids) != 1 or parent_ids:
+                raise InvalidProjectArchiveError("invalid_craft_stage")
+        elif asset_type == CraftPatternAssetType.BOOK_EVOLUTION:
+            if len(work_ids) != 1 or not parent_ids:
+                raise InvalidProjectArchiveError("invalid_craft_book")
+            if {entry.segment_id for entry in evidence} != set(segment_ids):
+                raise InvalidProjectArchiveError("invalid_craft_book_evidence")
+        else:
+            if len(work_ids) < 2 or not parent_ids:
+                raise InvalidProjectArchiveError("invalid_craft_fusion")
+            if {entry.work_id for entry in evidence} != set(work_ids):
+                raise InvalidProjectArchiveError("invalid_craft_fusion_evidence")
+        if not compare_digest(_craft_asset_content_hash(row), row["content_sha256"]):
+            raise InvalidProjectArchiveError("invalid_craft_content_hash")
+        assets[str(row["id"])] = (row, material)
+
+    for row, material in assets.values():
+        asset_type = CraftPatternAssetType(str(row["asset_type"]))
+        parent_ids = _parse_json(row["source_asset_version_ids_json"])
+        if not parent_ids:
+            continue
+        if any(parent_id not in assets for parent_id in parent_ids):
+            raise InvalidProjectArchiveError("external_craft_parent")
+        parent_values = [assets[parent_id] for parent_id in parent_ids]
+        if asset_type == CraftPatternAssetType.BOOK_EVOLUTION and any(
+            CraftPatternAssetType(str(parent[0]["asset_type"])) != CraftPatternAssetType.STAGE
+            for parent in parent_values
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_book_parent")
+        if asset_type == CraftPatternAssetType.FUSION_MATERIAL and any(
+            CraftPatternAssetType(str(parent[0]["asset_type"]))
+            == CraftPatternAssetType.FUSION_MATERIAL
+            for parent in parent_values
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_fusion_parent")
+        allowed = {
+            evidence.id: evidence
+            for _parent_row, parent_material in parent_values
+            for item in parent_material.craft_items
+            for evidence in item.evidence
+        }
+        for item in material.craft_items:
+            for entry in item.evidence:
+                if allowed.get(entry.id) != entry:
+                    raise InvalidProjectArchiveError("invalid_craft_evidence_reference")
+        if asset_type == CraftPatternAssetType.FUSION_MATERIAL:
+            cited_ids = {entry.id for item in material.craft_items for entry in item.evidence}
+            for _parent_row, parent_material in parent_values:
+                parent_ids = {
+                    entry.id for item in parent_material.craft_items for entry in item.evidence
+                }
+                if cited_ids.isdisjoint(parent_ids):
+                    raise InvalidProjectArchiveError("invalid_craft_fusion_parent_evidence")
+
+    for row in tables["project_craft_pattern_assets"]:
+        if (
+            row["lifecycle_state"] not in {"active", "archived"}
+            or not isinstance(row["lifecycle_revision"], int)
+            or row["lifecycle_revision"] < 0
+        ):
+            raise InvalidProjectArchiveError("invalid_craft_lifecycle")
+    ordinals_by_job: set[tuple[str, int]] = set()
+    for row in tables["craft_pattern_job_outputs"]:
+        marker = (str(row["job_id"]), int(row["ordinal"]))
+        if marker in ordinals_by_job or marker[1] < 0:
+            raise InvalidProjectArchiveError("invalid_craft_job_output")
+        ordinals_by_job.add(marker)
+
+
+def _validate_pattern_adaptation_rows(tables: dict[str, Any]) -> None:
+    proposals = {str(row["id"]): row for row in tables["writing_pattern_adaptation_proposals"]}
+    versions: dict[str, dict[str, Any]] = {}
+    versions_by_candidate: dict[str, dict[int, dict[str, Any]]] = {}
+    for row in tables["writing_pattern_adaptation_candidate_versions"]:
+        blueprint = BookBlueprintContent.model_validate(_parse_json(row["blueprint_json"]))
+        scenes = _parse_json(row["key_scene_sequence_json"])
+        notes = _parse_json(row["transformation_notes_json"])
+        if not isinstance(scenes, list) or not all(isinstance(item, str) for item in scenes):
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        if not isinstance(notes, list) or not all(isinstance(item, str) for item in notes):
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        if not compare_digest(
+            candidate_content_sha256(blueprint, scenes, notes),
+            str(row["content_sha256"]),
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_hash")
+        revision = int(row["revision"])
+        by_revision = versions_by_candidate.setdefault(str(row["candidate_id"]), {})
+        if revision in by_revision:
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        by_revision[revision] = row
+        versions[str(row["id"])] = row
+
+    candidates: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adaptation_candidates"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        current = versions_by_candidate.get(str(row["id"]), {}).get(int(row["current_revision"]))
+        if (
+            proposal is None
+            or current is None
+            or not compare_digest(
+                str(row["current_content_sha256"]), str(current["content_sha256"])
+            )
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adaptation_candidate")
+        candidates[str(row["id"])] = row
+    if set(versions_by_candidate) - set(candidates):
+        raise InvalidProjectArchiveError("orphan_pattern_candidate_version")
+
+    adoptions: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adoptions"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        candidate = candidates.get(str(row["candidate_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        if (
+            proposal is None
+            or candidate is None
+            or version is None
+            or candidate["proposal_id"] != proposal["id"]
+            or version["candidate_id"] != candidate["id"]
+            or proposal["project_id"] != row["project_id"]
+            or proposal["profile_fingerprint_sha256"] != row["profile_fingerprint_sha256"]
+            or proposal["recipe_content_sha256"] != row["recipe_content_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption")
+        adopted_content = _parse_json(version["blueprint_json"])
+        if not isinstance(adopted_content, dict) or not compare_digest(
+            hashlib.sha256(canonical_json(adopted_content)).hexdigest(),
+            str(row["blueprint_content_sha256"]),
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption_hash")
+        adoptions[str(row["id"])] = row
+
+    reports: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_originality_reports"]:
+        adoption = adoptions.get(str(row["adoption_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        if (
+            adoption is None
+            or version is None
+            or adoption["project_id"] != row["project_id"]
+            or adoption["candidate_version_id"] != version["id"]
+            or adoption["profile_fingerprint_sha256"] != row["profile_fingerprint_sha256"]
+            or adoption["recipe_content_sha256"] != row["recipe_content_sha256"]
+            or version["content_sha256"] != row["candidate_content_sha256"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_originality_report")
+        reports[str(row["id"])] = row
+    for row in tables["writing_pattern_originality_findings"]:
+        if str(row["report_id"]) not in reports:
+            raise InvalidProjectArchiveError("orphan_pattern_originality_finding")
+
+
 def _validate_business_rows(
     tables: dict[str, Any],
     ids_by_table: dict[str, set[str]],
@@ -858,41 +3718,158 @@ def _validate_business_rows(
         for row in tables["projects"]:
             Project.model_validate(row)
         for row in tables["book_blueprints"]:
-            BookBlueprint.model_validate({
-                **row,
-                "content": _parse_json(row["content_json"]),
-                "locks": _parse_json(row["locks_json"]),
-                "field_versions": _parse_json(row["field_versions_json"]),
-                "stale_fields": _parse_json(row["stale_fields_json"]),
-                "plan_stale": bool(row["plan_stale"]),
-            })
-        for row in tables["volume_plans"]:
-            volume_content = VolumePlanContent.model_validate(
-                _parse_json(row["content_json"])
+            BookBlueprint.model_validate(
+                {
+                    **row,
+                    "content": _parse_json(row["content_json"]),
+                    "locks": _parse_json(row["locks_json"]),
+                    "field_versions": _parse_json(row["field_versions_json"]),
+                    "stale_fields": _parse_json(row["stale_fields_json"]),
+                    "plan_stale": bool(row["plan_stale"]),
+                }
             )
-            VolumePlan.model_validate({
-                **volume_content.model_dump(mode="json"),
-                "id": row["id"],
-                "project_id": row["project_id"],
-                "revision": row["revision"],
-                "locked": bool(row["locked"]),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            })
+        if len(tables["topic_decisions"]) > 1:
+            raise InvalidProjectArchiveError("invalid_topic_decision_count")
+        topic_decisions_by_id: dict[str, TopicDecision] = {}
+        for row in tables["topic_decisions"]:
+            if row["onboarding_required"] not in {0, 1}:
+                raise InvalidProjectArchiveError("invalid_topic_onboarding_state")
+            confirmed_revision = row["confirmed_revision"]
+            status = (
+                TopicDecisionStatus.DRAFT
+                if confirmed_revision is None
+                else TopicDecisionStatus.CONFIRMED
+                if confirmed_revision == row["revision"]
+                else TopicDecisionStatus.PENDING_RECONFIRMATION
+            )
+            topic = TopicDecision.model_validate(
+                {
+                    **row,
+                    "content": _parse_json(row["content_json"]),
+                    "status": status,
+                    "locks": _parse_json(row["locks_json"]),
+                    "field_versions": _parse_json(row["field_versions_json"]),
+                    "rejection_reasons": _parse_json(row["rejection_reasons_json"]),
+                    "source_candidate_ids": _parse_json(row["source_candidate_ids_json"]),
+                    "plan_stale": bool(row["plan_stale"]),
+                }
+            )
+            topic_decisions_by_id[topic.id] = topic
+
+        topic_versions_by_revision: dict[int, TopicDecisionVersion] = {}
+        for row in tables["topic_decision_versions"]:
+            content = _parse_json(row["content_json"])
+            topic_version = TopicDecisionVersion.model_validate(
+                {
+                    **row,
+                    "content": content,
+                    "locks": _parse_json(row["locks_json"]),
+                    "field_versions": _parse_json(row["field_versions_json"]),
+                    "rejection_reasons": _parse_json(row["rejection_reasons_json"]),
+                    "source_candidate_ids": _parse_json(row["source_candidate_ids_json"]),
+                }
+            )
+            if (
+                set(topic_version.locks) != set(TopicDecisionField)
+                or set(topic_version.field_versions) != set(TopicDecisionField)
+                or any(value < 1 for value in topic_version.field_versions.values())
+            ):
+                raise InvalidProjectArchiveError("invalid_topic_version_field_state")
+            decision = topic_decisions_by_id.get(topic_version.topic_decision_id)
+            if (
+                decision is None
+                or decision.project_id != topic_version.project_id
+                or topic_version.revision > decision.revision
+                or topic_version.revision in topic_versions_by_revision
+            ):
+                raise InvalidProjectArchiveError("invalid_topic_version")
+            expected_hash = hashlib.sha256(canonical_json(content)).hexdigest()
+            if not compare_digest(expected_hash, topic_version.content_sha256):
+                raise InvalidProjectArchiveError("invalid_topic_version_hash")
+            topic_versions_by_revision[topic_version.revision] = topic_version
+        if topic_decisions_by_id:
+            topic = next(iter(topic_decisions_by_id.values()))
+            if (
+                topic.confirmed_revision is not None
+                and topic.confirmed_revision not in topic_versions_by_revision
+            ):
+                raise InvalidProjectArchiveError("missing_confirmed_topic_version")
+
+        candidates_by_set: dict[str, list[TopicDecisionCandidate]] = {}
+        candidate_projects: dict[str, str] = {}
+        for row in tables["topic_decision_candidates"]:
+            candidate = TopicDecisionCandidate.model_validate(
+                {
+                    **row,
+                    "content": _parse_json(row["content_json"]),
+                    "changed_fields": _parse_json(row["changed_fields_json"]),
+                    "risks": _parse_json(row["risks_json"]),
+                }
+            )
+            candidates_by_set.setdefault(row["candidate_set_id"], []).append(candidate)
+            candidate_projects[candidate.id] = row["project_id"]
+        seen_candidate_sets: set[str] = set()
+        for row in tables["topic_decision_candidate_sets"]:
+            decision = topic_decisions_by_id.get(row["topic_decision_id"])
+            if decision is None or decision.project_id != row["project_id"]:
+                raise InvalidProjectArchiveError("invalid_topic_candidate_set")
+            candidates = sorted(
+                candidates_by_set.get(row["id"], []),
+                key=lambda candidate: candidate.ordinal,
+            )
+            if any(
+                candidate_projects[candidate.id] != row["project_id"] for candidate in candidates
+            ):
+                raise InvalidProjectArchiveError("invalid_topic_candidate")
+            TopicDecisionCandidateSet.model_validate(
+                {
+                    "job_id": row["source_job_id"],
+                    "project_id": row["project_id"],
+                    "based_on_revision": row["based_on_revision"],
+                    "target_field": row["target_field"],
+                    "candidates": candidates,
+                }
+            )
+            seen_candidate_sets.add(row["id"])
+        if set(candidates_by_set) != seen_candidate_sets:
+            raise InvalidProjectArchiveError("orphan_topic_candidate")
+
+        archived_candidate_ids = ids_by_table["topic_decision_candidates"]
+        for topic in topic_decisions_by_id.values():
+            if not set(topic.source_candidate_ids) <= archived_candidate_ids:
+                raise InvalidProjectArchiveError("external_topic_candidate")
+        for confirmed_topic_version in topic_versions_by_revision.values():
+            if not set(confirmed_topic_version.source_candidate_ids) <= archived_candidate_ids:
+                raise InvalidProjectArchiveError("external_topic_candidate")
+        for row in tables["volume_plans"]:
+            volume_content = VolumePlanContent.model_validate(_parse_json(row["content_json"]))
+            VolumePlan.model_validate(
+                {
+                    **volume_content.model_dump(mode="json"),
+                    "id": row["id"],
+                    "project_id": row["project_id"],
+                    "revision": row["revision"],
+                    "locked": bool(row["locked"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
         for row in tables["rolling_chapter_plans"]:
             rolling_content = RollingChapterPlanContent.model_validate(
                 _parse_json(row["content_json"])
             )
-            RollingChapterPlan.model_validate({
-                **rolling_content.model_dump(mode="json"),
-                "id": row["id"],
-                "project_id": row["project_id"],
-                "volume_plan_id": row["volume_plan_id"],
-                "revision": row["revision"],
-                "locked": bool(row["locked"]),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            })
+            RollingChapterPlan.model_validate(
+                {
+                    **rolling_content.model_dump(mode="json"),
+                    "id": row["id"],
+                    "project_id": row["project_id"],
+                    "volume_plan_id": row["volume_plan_id"],
+                    "revision": row["revision"],
+                    "locked": bool(row["locked"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
         for row in tables["manuscript_volumes"]:
             ManuscriptVolume.model_validate(row)
         for row in tables["chapters"]:
@@ -922,12 +3899,12 @@ def _validate_business_rows(
                 raise InvalidProjectArchiveError("invalid_serial_goal")
             datetime.fromisoformat(row["goal_date"])
         for row in tables["chapter_versions"]:
-            version = ChapterVersion.model_validate(
+            chapter_version = ChapterVersion.model_validate(
                 {**row, "is_candidate": bool(row["is_candidate"])}
             )
             if not compare_digest(
-                hashlib.sha256(version.content.encode("utf-8")).hexdigest(),
-                version.content_sha256,
+                hashlib.sha256(chapter_version.content.encode("utf-8")).hexdigest(),
+                chapter_version.content_sha256,
             ):
                 raise InvalidProjectArchiveError("invalid_chapter_version_hash")
         for row in tables["context_directives"]:
@@ -942,10 +3919,7 @@ def _validate_business_rows(
                 "source_card": "source_cards",
                 "blueprint": "reference_pattern_applications",
             }.get(directive.source_kind)
-            if (
-                target_table is None
-                or directive.source_id not in ids_by_table[target_table]
-            ):
+            if target_table is None or directive.source_id not in ids_by_table[target_table]:
                 raise InvalidProjectArchiveError("external_context_directive_source")
         for row in tables["generation_runs"]:
             GenerationRun.model_validate(row)
@@ -966,11 +3940,13 @@ def _validate_business_rows(
             content = row["content"]
             if not isinstance(spans, list) or not isinstance(content, str) or not content:
                 raise InvalidProjectArchiveError("invalid_source_document")
-            SourceDocument.model_validate({
-                **row,
-                "source_spans": spans,
-                "total_characters": len(content),
-            })
+            SourceDocument.model_validate(
+                {
+                    **row,
+                    "source_spans": spans,
+                    "total_characters": len(content),
+                }
+            )
 
         changes_by_set: dict[str, list[dict[str, Any]]] = {}
         for row in tables["fact_changes"]:
@@ -994,11 +3970,13 @@ def _validate_business_rows(
             spans = _parse_json(row["source_spans_json"])
             if not isinstance(spans, list):
                 raise InvalidProjectArchiveError("invalid_reference_spans")
-            ReferenceWork.model_validate({
-                **row,
-                "source_spans": spans,
-                "segments": segments_by_work.get(row["id"], []),
-            })
+            ReferenceWork.model_validate(
+                {
+                    **row,
+                    "source_spans": spans,
+                    "segments": segments_by_work.get(row["id"], []),
+                }
+            )
 
         segment_ids = ids_by_table["reference_segments"]
         for row in tables["reference_pattern_cards"]:
@@ -1039,9 +4017,8 @@ def _validate_business_rows(
             state = ReferenceBlueprintState.model_validate(blueprint)
             if (
                 not isinstance(changed_dimensions, list)
-                or not set(changed_dimensions) <= {
-                    dimension.value for dimension in state.dimensions
-                }
+                or not set(changed_dimensions)
+                <= {dimension.value for dimension in state.dimensions}
                 or row["relationship_changed"] not in {0, 1}
             ):
                 raise InvalidProjectArchiveError("invalid_blueprint_version")
@@ -1056,6 +4033,34 @@ def _validate_business_rows(
                     "evidence": evidence,
                     "source_segment_ids": source_segment_ids,
                     "legal_notice": LEGAL_NOTICE,
+                }
+            )
+        findings_by_check: dict[str, list[dict[str, Any]]] = {}
+        for row in tables["scene_originality_findings"]:
+            finding = SceneOriginalityFinding.model_validate(
+                {
+                    **row,
+                    "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+                }
+            )
+            findings_by_check.setdefault(row["check_id"], []).append(
+                finding.model_dump(mode="json")
+            )
+        for row in tables["scene_originality_checks"]:
+            SceneOriginalityCheck.model_validate(
+                {
+                    **row,
+                    "candidate_graph": _parse_json(row["candidate_graph_json"]),
+                    "source_segment_ids": _parse_json(row["source_segment_ids_json"]),
+                    "findings": findings_by_check.get(row["id"], []),
+                    "status": (
+                        "blocked"
+                        if row["risk_level"] == "high"
+                        else "review_required"
+                        if row["risk_level"] == "medium" and row["acknowledged_at"] is None
+                        else "passed"
+                    ),
+                    "legal_notice": "场景语义与情节图检测用于创作风控，不是抄袭认定或法律结论。",
                 }
             )
 
@@ -1094,27 +4099,49 @@ def _validate_business_rows(
                 raise InvalidProjectArchiveError("invalid_job_event_detail")
             JobEvent.model_validate({**row, "detail": detail})
 
+        _validate_craft_pattern_rows(tables)
+        validate_writing_pattern_tables(tables)
+        _validate_pattern_adaptation_rows(tables)
+        _validate_m32_archive_rows(tables)
+        _validate_m33_archive_rows(tables)
+        _validate_m34_archive_rows(tables)
+
+        for row in tables["comic_projects"]:
+            source_ids = _parse_json(row["source_chapter_ids_json"])
+            snapshot = _parse_json(row["source_snapshot_json"])
+            if not isinstance(source_ids, list) or not isinstance(snapshot, list):
+                raise InvalidProjectArchiveError("invalid_comic_source_snapshot")
+            ComicProject.model_validate({**row, "source_chapter_ids": source_ids})
+        for row in tables["comic_episodes"]:
+            source_ids = _parse_json(row["source_chapter_ids_json"])
+            if not isinstance(source_ids, list):
+                raise InvalidProjectArchiveError("invalid_comic_episode_sources")
+            ComicEpisode.model_validate({**row, "source_chapter_ids": source_ids})
+        for row in tables["comic_versions"]:
+            content = _parse_json(row["content_json"])
+            if not isinstance(content, dict):
+                raise InvalidProjectArchiveError("invalid_comic_version_content")
+            ComicVersion.model_validate({**row, "content": content})
+        for row in tables["comic_scenes"]:
+            content = _parse_json(row["content_json"])
+            source_ids = _parse_json(row["source_chapter_ids_json"])
+            if not isinstance(content, dict) or not isinstance(source_ids, list):
+                raise InvalidProjectArchiveError("invalid_comic_scene_content")
+            ComicScene.model_validate({**row, "content": content, "source_chapter_ids": source_ids})
+
         for row in tables["review_findings"]:
-            ReviewFinding.model_validate(
-                {**row, "evidence": _parse_json(row["evidence_json"])}
-            )
+            ReviewFinding.model_validate({**row, "evidence": _parse_json(row["evidence_json"])})
         text_changes_by_set: dict[str, list[dict[str, Any]]] = {}
         for row in tables["text_changes"]:
             TextChange.model_validate(
                 {
                     **row,
-                    "selected": (
-                        bool(row["selected"])
-                        if row["selected"] is not None
-                        else None
-                    ),
+                    "selected": (bool(row["selected"]) if row["selected"] is not None else None),
                 }
             )
             text_changes_by_set.setdefault(row["change_set_id"], []).append(row)
         for row in tables["text_change_sets"]:
-            TextChangeSet.model_validate(
-                {**row, "changes": text_changes_by_set.get(row["id"], [])}
-            )
+            TextChangeSet.model_validate({**row, "changes": text_changes_by_set.get(row["id"], [])})
 
         nullable_timestamps = {
             "lease_expires_at",
@@ -1122,8 +4149,12 @@ def _validate_business_rows(
             "started_at",
             "completed_at",
             "viewed_at",
+            "acknowledged_at",
             "deleted_at",
             "undone_at",
+            "reviewed_at",
+            "decided_at",
+            "adopted_at",
         }
         for table in ARCHIVE_TABLES:
             for row in tables[table.name]:
@@ -1139,6 +4170,190 @@ def _validate_business_rows(
         raise
     except (TypeError, ValueError, ValidationError) as error:
         raise InvalidProjectArchiveError("invalid_business_values") from error
+
+
+def _rebind_pattern_adaptation_rows(tables: dict[str, list[dict[str, Any]]]) -> None:
+    """Rebind immutable lineage and invalidate pre-import execution decisions."""
+    profiles = {str(row["id"]): row for row in tables["writing_pattern_profile_versions"]}
+    recipes = {str(row["id"]): row for row in tables["writing_pattern_recipe_versions"]}
+    topics = {str(row["id"]): row for row in tables["topic_decision_versions"]}
+    jobs = {str(row["id"]): row for row in tables["jobs"]}
+    blueprints = {str(row["id"]): row for row in tables["book_blueprints"]}
+    proposals: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adaptation_proposals"]:
+        profile = profiles.get(str(row["profile_version_id"]))
+        recipe = recipes.get(str(row["recipe_version_id"]))
+        topic = topics.get(str(row["topic_decision_version_id"]))
+        job = jobs.get(str(row["job_id"]))
+        blueprint = (
+            blueprints.get(str(row["base_blueprint_id"]))
+            if row["base_blueprint_id"] is not None
+            else None
+        )
+        if (
+            profile is None
+            or recipe is None
+            or topic is None
+            or job is None
+            or profile["recipe_version_id"] != recipe["id"]
+            or profile["project_id"] != row["project_id"]
+            or topic["project_id"] != row["project_id"]
+            or job["project_id"] != row["project_id"]
+            or (blueprint is not None and blueprint["project_id"] != row["project_id"])
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adaptation_proposal")
+        row["profile_fingerprint_sha256"] = profile["profile_fingerprint_sha256"]
+        row["recipe_content_sha256"] = recipe["content_sha256"]
+        row["result_state"] = "stale"
+        row["stale_reason"] = "restored_requires_resubmission"
+        proposals[str(row["id"])] = row
+
+    versions: dict[str, dict[str, Any]] = {}
+    versions_by_candidate: dict[str, dict[int, dict[str, Any]]] = {}
+    for row in tables["writing_pattern_adaptation_candidate_versions"]:
+        try:
+            candidate_blueprint = BookBlueprintContent.model_validate(
+                _parse_json(row["blueprint_json"])
+            )
+            scenes = _parse_json(row["key_scene_sequence_json"])
+            notes = _parse_json(row["transformation_notes_json"])
+            if not isinstance(scenes, list) or not all(isinstance(item, str) for item in scenes):
+                raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+            if not isinstance(notes, list) or not all(isinstance(item, str) for item in notes):
+                raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+            row["content_sha256"] = candidate_content_sha256(
+                candidate_blueprint, scenes, notes
+            )
+            revision = int(row["revision"])
+        except (TypeError, ValueError, ValidationError) as error:
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version") from error
+        versions[str(row["id"])] = row
+        by_revision = versions_by_candidate.setdefault(str(row["candidate_id"]), {})
+        if revision in by_revision:
+            raise InvalidProjectArchiveError("invalid_pattern_candidate_version")
+        by_revision[revision] = row
+
+    candidates: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adaptation_candidates"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        current = versions_by_candidate.get(str(row["id"]), {}).get(int(row["current_revision"]))
+        if proposal is None or current is None:
+            raise InvalidProjectArchiveError("invalid_pattern_adaptation_candidate")
+        row["current_content_sha256"] = current["content_sha256"]
+        candidates[str(row["id"])] = row
+    if set(versions_by_candidate) - set(candidates):
+        raise InvalidProjectArchiveError("orphan_pattern_candidate_version")
+
+    adoptions: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_adoptions"]:
+        proposal = proposals.get(str(row["proposal_id"]))
+        candidate = candidates.get(str(row["candidate_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        blueprint = blueprints.get(str(row["blueprint_id"]))
+        if (
+            proposal is None
+            or candidate is None
+            or version is None
+            or blueprint is None
+            or candidate["proposal_id"] != proposal["id"]
+            or version["candidate_id"] != candidate["id"]
+            or proposal["project_id"] != row["project_id"]
+            or blueprint["project_id"] != row["project_id"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption")
+        adopted_content = _parse_json(version["blueprint_json"])
+        if not isinstance(adopted_content, dict) or not compare_digest(
+            hashlib.sha256(canonical_json(adopted_content)).hexdigest(),
+            str(row["blueprint_content_sha256"]),
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_adoption")
+        row["profile_fingerprint_sha256"] = proposal["profile_fingerprint_sha256"]
+        row["recipe_content_sha256"] = proposal["recipe_content_sha256"]
+        adoptions[str(row["id"])] = row
+
+    reports: dict[str, dict[str, Any]] = {}
+    for row in tables["writing_pattern_originality_reports"]:
+        adoption = adoptions.get(str(row["adoption_id"]))
+        version = versions.get(str(row["candidate_version_id"]))
+        blueprint = blueprints.get(str(row["blueprint_id"]))
+        if (
+            adoption is None
+            or version is None
+            or blueprint is None
+            or adoption["project_id"] != row["project_id"]
+            or adoption["candidate_version_id"] != version["id"]
+            or adoption["blueprint_id"] != blueprint["id"]
+        ):
+            raise InvalidProjectArchiveError("invalid_pattern_originality_report")
+        row["profile_fingerprint_sha256"] = adoption["profile_fingerprint_sha256"]
+        row["recipe_content_sha256"] = adoption["recipe_content_sha256"]
+        row["candidate_content_sha256"] = version["content_sha256"]
+        reports[str(row["id"])] = row
+    for row in tables["writing_pattern_originality_findings"]:
+        if str(row["report_id"]) not in reports:
+            raise InvalidProjectArchiveError("orphan_pattern_originality_finding")
+
+
+def _insert_legacy_topic_decision(
+    connection: sqlite3.Connection,
+    project: dict[str, Any],
+    blueprints: list[dict[str, Any]],
+) -> None:
+    blueprint = blueprints[0] if blueprints else None
+    blueprint_content = _parse_json(blueprint["content_json"]) if blueprint is not None else {}
+    if not isinstance(blueprint_content, dict):
+        raise InvalidProjectArchiveError("invalid_legacy_topic_blueprint")
+
+    def blueprint_text(field: str) -> str:
+        value = blueprint_content.get(field, "")
+        if not isinstance(value, str):
+            raise InvalidProjectArchiveError("invalid_legacy_topic_blueprint")
+        return value
+
+    content = TopicDecisionContent(
+        target_platform="",
+        target_audience=blueprint_text("target_audience"),
+        subgenre=topic_subgenre_label(Genre(str(project["genre"]))),
+        premise=(str(blueprint["idea"]) if blueprint is not None else str(project["title"])),
+        core_desire=blueprint_text("core_desire"),
+        long_term_promise=blueprint_text("long_term_promise"),
+        first_three_chapter_promise="",
+        constraints=[],
+        forbidden_elements=[],
+        reference_purpose="",
+        reality_anchor=f"{project['rebirth_year']} · {project['rebirth_location']}",
+        first_ten_chapter_goal="",
+    )
+    timestamp = str(project["updated_at"])
+    connection.execute(
+        """
+        INSERT INTO topic_decisions (
+            id, project_id, content_json, locks_json, field_versions_json,
+            rejection_reasons_json, source_template_id, source_job_id,
+            source_candidate_ids_json, revision, confirmed_revision,
+            plan_stale, onboarding_required, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, '{}', NULL, NULL, '[]', 0, NULL, 0, 0, ?, ?)
+        """,
+        (
+            str(uuid4()),
+            project["id"],
+            content.model_dump_json(),
+            json.dumps(
+                {field.value: False for field in TopicDecisionField},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            json.dumps(
+                {field.value: 1 for field in TopicDecisionField},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            timestamp,
+            timestamp,
+        ),
+    )
 
 
 class ProjectArchiveService:
@@ -1161,15 +4376,26 @@ class ProjectArchiveService:
             tables: dict[str, list[dict[str, Any]]] = {}
             for table in ARCHIVE_TABLES:
                 if (
-                    table.name in {"reference_works", "reference_segments", "source_documents"}
+                    table.name
+                    in {
+                        "reference_works",
+                        "reference_segments",
+                        "source_documents",
+                        "research_sessions",
+                        "research_sources",
+                        "research_findings",
+                    }
                     and not include_reference_assets
                 ):
                     tables[table.name] = []
                     continue
                 columns = ", ".join(table.columns)
+                parameters = (
+                    (project_id, project_id) if table.name == "source_documents" else (project_id,)
+                )
                 rows = connection.execute(
                     f"SELECT {columns} FROM {table.name} WHERE {table.scope} ORDER BY rowid",
-                    (project_id,),
+                    parameters,
                 ).fetchall()
                 table_rows = [dict(row) for row in rows]
                 if table.name == "reference_works":
@@ -1181,7 +4407,34 @@ class ProjectArchiveService:
                 if table.name == "source_cards" and not include_reference_assets:
                     for row in table_rows:
                         row["source_document_id"] = None
+                if table.name == "craft_pattern_assets":
+                    for row in table_rows:
+                        source_job_id = row["source_job_id"]
+                        if (
+                            source_job_id is not None
+                            and connection.execute(
+                                "SELECT 1 FROM jobs WHERE id = ? AND project_id = ?",
+                                (source_job_id, project_id),
+                            ).fetchone()
+                            is None
+                        ):
+                            # The immutable asset is global; a reused asset may
+                            # have been produced by a different project's job.
+                            row["source_job_id"] = None
+                if table.name == "writing_pattern_recipes":
+                    for row in table_rows:
+                        created_from_project_id = row["created_from_project_id"]
+                        if created_from_project_id != project_id:
+                            # A globally reused recipe can outlive its origin project.
+                            # The exported immutable versions remain complete without
+                            # claiming that the restored project authored the series.
+                            row["created_from_project_id"] = None
                 tables[table.name] = table_rows
+
+        # Early M34 builds kept the extractor hash after an author edited a
+        # candidate. Export the materialized candidate-set fingerprint so
+        # those otherwise valid local projects remain recoverable.
+        _refresh_m34_analysis_hashes(tables)
 
         payload: dict[str, Any] = {
             "format": ARCHIVE_FORMAT,
@@ -1198,24 +4451,45 @@ class ProjectArchiveService:
     def import_project(self, raw_archive: bytes) -> str:
         if len(raw_archive) > MAX_ARCHIVE_BYTES:
             raise ProjectArchiveTooLargeError("archive_too_large")
-        archive = self._validate_archive(_parse_json(raw_archive))
+        parsed_archive = _parse_json(raw_archive)
+        source_archive_version = (
+            parsed_archive.get("format_version") if isinstance(parsed_archive, dict) else None
+        )
+        archive = self._validate_archive(parsed_archive)
+        assert isinstance(source_archive_version, int)
         tables = archive["tables"]
         assert isinstance(tables, dict)
+        if source_archive_version >= 12 and not tables["topic_decisions"]:
+            raise InvalidProjectArchiveError("missing_topic_decision")
 
         ids_by_table: dict[str, set[str]] = {}
         id_map: dict[str, str] = {}
-        for table in ARCHIVE_TABLES:
-            rows = tables[table.name]
-            assert isinstance(rows, list)
-            table_ids: set[str] = set()
-            for row in rows:
-                assert isinstance(row, dict)
-                old_id = _valid_uuid(row["id"])
-                if old_id != row["id"] or old_id in id_map:
-                    raise InvalidProjectArchiveError("duplicate_or_noncanonical_uuid")
-                table_ids.add(old_id)
-                id_map[old_id] = str(uuid4())
-            ids_by_table[table.name] = table_ids
+        reused_craft_asset_ids: set[str] = set()
+        has_raw_reference_assets = bool(tables["reference_works"] or tables["reference_segments"])
+        with self.database.connect() as lookup:
+            for table in ARCHIVE_TABLES:
+                rows = tables[table.name]
+                assert isinstance(rows, list)
+                table_ids: set[str] = set()
+                for row in rows:
+                    assert isinstance(row, dict)
+                    if table.identity_column is None:
+                        continue
+                    old_id = _valid_uuid(row[table.identity_column])
+                    if old_id != row["id"] or old_id in id_map:
+                        raise InvalidProjectArchiveError("duplicate_or_noncanonical_uuid")
+                    table_ids.add(old_id)
+                    existing_id: str | None = None
+                    if table.name == "craft_pattern_assets" and not has_raw_reference_assets:
+                        existing = lookup.execute(
+                            "SELECT id FROM craft_pattern_assets WHERE content_sha256 = ?",
+                            (row["content_sha256"],),
+                        ).fetchone()
+                        if existing is not None:
+                            existing_id = str(existing["id"])
+                            reused_craft_asset_ids.add(old_id)
+                    id_map[old_id] = existing_id or str(uuid4())
+                ids_by_table[table.name] = table_ids
 
         source_project_id = _valid_uuid(archive["source_project_id"])
         project_rows = tables["projects"]
@@ -1224,10 +4498,15 @@ class ProjectArchiveService:
         assert isinstance(project_row, dict)
         if project_row["id"] != source_project_id:
             raise InvalidProjectArchiveError("source_project_mismatch")
+        restored_project_id = id_map[source_project_id]
+        for prefix in ("canon-state", "author-preference-state"):
+            id_map[f"{prefix}:{source_project_id}"] = f"{prefix}:{restored_project_id}"
 
         _validate_business_rows(tables, ids_by_table)
 
         remapped: dict[str, list[dict[str, Any]]] = {}
+        comic_source_hash_map: dict[str, str] = {}
+        imported_at = datetime.now(UTC).isoformat()
         for table in ARCHIVE_TABLES:
             source_rows = tables[table.name]
             assert isinstance(source_rows, list)
@@ -1235,9 +4514,11 @@ class ProjectArchiveService:
             for source_row in source_rows:
                 assert isinstance(source_row, dict)
                 row = dict(source_row)
-                old_id = row["id"]
-                assert isinstance(old_id, str)
-                row["id"] = id_map[old_id]
+                row_old_id: str | None = None
+                if table.identity_column is not None:
+                    row_old_id = row[table.identity_column]
+                    assert isinstance(row_old_id, str)
+                    row[table.identity_column] = id_map[row_old_id]
                 for column, target_table, nullable in table.foreign_keys:
                     old_reference = row[column]
                     if old_reference is None and nullable:
@@ -1256,6 +4537,133 @@ class ProjectArchiveService:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
+                if table.name == "canon_reconciliations":
+                    for fingerprint_column in (
+                        "context_packet_sha256",
+                        "context_dependency_fingerprint_sha256",
+                    ):
+                        old_fingerprint = row[fingerprint_column]
+                        if (
+                            isinstance(old_fingerprint, str)
+                            and old_fingerprint in id_map
+                        ):
+                            row[fingerprint_column] = id_map[old_fingerprint]
+                if table.name == "canon_delta_candidates":
+                    payload = _parse_json(str(row["payload_json"]))
+                    evidence = _parse_json(str(row["evidence_json"]))
+                    row["payload_sha256"] = _sha256_json(payload)
+                    row["evidence_sha256"] = _sha256_json(evidence)
+                if table.name == "canon_records":
+                    row["payload_sha256"] = _sha256_json(
+                        _parse_json(str(row["payload_json"]))
+                    )
+                if table.name in {
+                    "author_preference_candidates",
+                    "author_preferences",
+                }:
+                    _rebind_m34_scope(row, id_map)
+                    row["rule_sha256"] = hashlib.sha256(
+                        str(row["compact_rule"]).encode("utf-8")
+                    ).hexdigest()
+                    if table.name == "author_preferences":
+                        row["fingerprint_sha256"] = _sha256_json(
+                            {
+                                "schema_version": 1,
+                                "scope_kind": row["scope_kind"],
+                                "scope_value": row["scope_value"],
+                                "dimension": row["dimension"],
+                                "compact_rule": row["compact_rule"],
+                            }
+                        )
+                if table.name == "rolling_plan_replenishments":
+                    row["plans_sha256"] = _sha256_json(
+                        _parse_json(str(row["plans_json"]))
+                    )
+                if table.name == "creative_plan_dependencies":
+                    old_subject_id = row["subject_id"]
+                    if not isinstance(old_subject_id, str) or old_subject_id not in id_map:
+                        raise InvalidProjectArchiveError(
+                            "external_creative_plan_subject"
+                        )
+                    row["subject_id"] = id_map[old_subject_id]
+                    dependency = ContextDependencySnapshot.model_validate_json(
+                        str(row["dependency_snapshot_json"])
+                    )
+                    old_fingerprint = row["dependency_fingerprint_sha256"]
+                    dependency_payload = (
+                        dependency.canonical_payload()
+                        if source_archive_version < 18
+                        else dependency.model_dump(mode="json")
+                    )
+                    new_fingerprint = _sha256_json(dependency_payload)
+                    row["dependency_fingerprint_sha256"] = new_fingerprint
+                    if isinstance(old_fingerprint, str):
+                        id_map[old_fingerprint] = new_fingerprint
+                if table.name == "plan_rebase_candidates":
+                    if row["book_blueprint_json"] is not None:
+                        blueprint = _parse_json(str(row["book_blueprint_json"]))
+                        row["book_blueprint_json"] = json.dumps(
+                            _remap_json(blueprint, id_map),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                    impact = _parse_json(str(row["impact_json"]))
+                    if not isinstance(impact, dict):
+                        raise InvalidProjectArchiveError("invalid_plan_rebase_candidate")
+                    dependency_value = impact.get("current_dependency")
+                    if not isinstance(dependency_value, dict):
+                        raise InvalidProjectArchiveError("invalid_plan_rebase_candidate")
+                    dependency = ContextDependencySnapshot.model_validate(
+                        dependency_value
+                    )
+                    dependency_payload = (
+                        dependency.canonical_payload()
+                        if source_archive_version < 18
+                        else dependency.model_dump(mode="json")
+                    )
+                    target_fingerprint = _sha256_json(dependency_payload)
+                    impact["current_dependency_fingerprint_sha256"] = target_fingerprint
+                    row["impact_json"] = json.dumps(
+                        impact,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    row["target_dependency_fingerprint_sha256"] = target_fingerprint
+                    if row["state"] == PlanRebaseCandidateState.CANDIDATE.value:
+                        row["state"] = PlanRebaseCandidateState.STALE.value
+                        row["revision"] = int(row["revision"]) + 1
+                        row["adoption_idempotency_key"] = None
+                        row["updated_at"] = imported_at
+                if table.name == "context_packets":
+                    assert row_old_id is not None
+                    _rebind_context_packet_row(
+                        row,
+                        old_id=row_old_id,
+                        old_packet_sha256=source_row["packet_sha256"],
+                        old_source_fingerprint_sha256=source_row[
+                            "source_fingerprint_sha256"
+                        ],
+                        old_dependency_fingerprint_sha256=source_row[
+                            "dependency_fingerprint_sha256"
+                        ],
+                        id_map=id_map,
+                    )
+                if table.name in {
+                    "chapter_outline_candidate_versions",
+                    "chapter_draft_candidate_versions",
+                    "chapter_candidate_reviews",
+                }:
+                    for fingerprint_column in (
+                        "context_packet_sha256",
+                        "context_dependency_fingerprint_sha256",
+                        "profile_fingerprint_sha256",
+                    ):
+                        old_fingerprint = row[fingerprint_column]
+                        if (
+                            isinstance(old_fingerprint, str)
+                            and old_fingerprint in id_map
+                        ):
+                            row[fingerprint_column] = id_map[old_fingerprint]
                 if table.name == "directory_events":
                     old_node_id = row["node_id"]
                     if not isinstance(old_node_id, str) or old_node_id not in id_map:
@@ -1270,11 +4678,32 @@ class ProjectArchiveService:
                     source_id = row["source_id"]
                     if isinstance(source_id, str) and source_id in id_map:
                         row["source_id"] = id_map[source_id]
+                if table.name == "comic_versions":
+                    old_target_id = row["target_id"]
+                    if not isinstance(old_target_id, str) or old_target_id not in id_map:
+                        raise InvalidProjectArchiveError("external_comic_version_target")
+                    row["target_id"] = id_map[old_target_id]
+                    old_snapshot_hash = row["source_snapshot_sha256"]
+                    if (
+                        isinstance(old_snapshot_hash, str)
+                        and old_snapshot_hash in comic_source_hash_map
+                    ):
+                        row["source_snapshot_sha256"] = comic_source_hash_map[old_snapshot_hash]
+                    content_json = row["content_json"]
+                    if not isinstance(content_json, str):
+                        raise InvalidProjectArchiveError("invalid_comic_version_content")
+                    row["content_sha256"] = hashlib.sha256(content_json.encode("utf-8")).hexdigest()
+                if table.name == "comic_projects":
+                    old_snapshot_hash = row["source_snapshot_sha256"]
+                    snapshot_json = row["source_snapshot_json"]
+                    if not isinstance(old_snapshot_hash, str) or not isinstance(snapshot_json, str):
+                        raise InvalidProjectArchiveError("invalid_comic_source_snapshot")
+                    new_snapshot_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+                    comic_source_hash_map[old_snapshot_hash] = new_snapshot_hash
+                    row["source_snapshot_sha256"] = new_snapshot_hash
                 if table.name == "job_artifacts" and row["content_type"] == "application/json":
                     embedded_payload = (
-                        _parse_json(row["payload"])
-                        if isinstance(row["payload"], str)
-                        else None
+                        _parse_json(row["payload"]) if isinstance(row["payload"], str) else None
                     )
                     if embedded_payload is None:
                         raise InvalidProjectArchiveError("invalid_job_artifact_json")
@@ -1286,8 +4715,150 @@ class ProjectArchiveService:
                     row["payload_sha256"] = hashlib.sha256(
                         row["payload"].encode("utf-8")
                     ).hexdigest()
+                if table.name == "jobs" and row["state"] in {
+                    "queued",
+                    "running",
+                    "pause_requested",
+                }:
+                    row["state"] = "interrupted"
+                    row["lease_owner"] = None
+                    row["lease_expires_at"] = None
+                    row["heartbeat_at"] = None
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的 AI 任务需要重新预检并提交"
+                    row["updated_at"] = imported_at
+                    row["completed_at"] = imported_at
+                if (
+                    table.name == "jobs"
+                    and row["workflow"] in {"craft_pattern_analysis_v2", "craft_pattern_fusion_v2"}
+                    and row["state"] != "succeeded"
+                ):
+                    # Imported craft jobs are historical records. Retrying must
+                    # always start from a fresh preflight and fresh consent,
+                    # including archives whose job was already failed/cancelled.
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的写作模式任务需要重新预检并提交"
+                if (
+                    table.name == "jobs"
+                    and row["workflow"]
+                    in {
+                        "chapter_production_outline",
+                        "chapter_production_draft",
+                        "chapter_production_rewrite",
+                        "chapter_production_review",
+                    }
+                    and row["state"] != "succeeded"
+                ):
+                    # Consent, cost approval and the frozen CreativeContext all
+                    # belong to the source project. Restored work is history,
+                    # never an executable continuation in the new project.
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的章节生产任务需要重新预检并提交"
+                if (
+                    table.name == "jobs"
+                    and row["workflow"] == "canon_reconciliation_v1"
+                    and row["state"] != "succeeded"
+                ):
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的 Canon 回流任务需要重新批准并提交"
+                if table.name == "job_chunks" and row["state"] in {"queued", "running"}:
+                    row["state"] = "interrupted"
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的任务块不会自动继续"
+                    row["updated_at"] = imported_at
+                if table.name == "job_attempts" and row["state"] == "running":
+                    row["state"] = "interrupted"
+                    row["error_code"] = "restored_requires_resubmission"
+                    row["error_message"] = "恢复的调用不会自动继续"
+                    row["completed_at"] = imported_at
+                if (
+                    table.name == "craft_pattern_assets"
+                    and row_old_id in reused_craft_asset_ids
+                ):
+                    continue
                 remapped_rows.append(row)
             remapped[table.name] = remapped_rows
+
+        evidence_id_map: dict[str, str] = {}
+        for row in remapped["craft_pattern_assets"]:
+            craft_items = _parse_json(row["craft_items_json"])
+            if not isinstance(craft_items, list):
+                raise InvalidProjectArchiveError("invalid_craft_items")
+            for item in craft_items:
+                if not isinstance(item, dict) or not isinstance(item.get("evidence"), list):
+                    raise InvalidProjectArchiveError("invalid_craft_items")
+                for evidence in item["evidence"]:
+                    if not isinstance(evidence, dict):
+                        raise InvalidProjectArchiveError("invalid_craft_evidence")
+                    old_evidence_id = _valid_uuid(evidence.get("id"))
+                    identity = (
+                        "mozhou-craft-evidence:"
+                        f"{evidence.get('work_id')}:{evidence.get('segment_id')}:"
+                        f"{evidence.get('absolute_start_char')}:"
+                        f"{evidence.get('absolute_end_char')}:"
+                        f"{evidence.get('evidence_sha256')}"
+                    )
+                    new_evidence_id = str(uuid5(NAMESPACE_URL, identity))
+                    previous = evidence_id_map.setdefault(old_evidence_id, new_evidence_id)
+                    if previous != new_evidence_id:
+                        raise InvalidProjectArchiveError("inconsistent_craft_evidence_identity")
+        for row in remapped["craft_pattern_assets"]:
+            craft_items = _parse_json(row["craft_items_json"])
+            row["craft_items_json"] = json.dumps(
+                _remap_json(craft_items, evidence_id_map),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            row["series_id"] = _craft_asset_series_id(row)
+            row["content_sha256"] = _craft_asset_content_hash(row)
+            row["generation_fingerprint_sha256"] = hashlib.sha256(
+                canonical_json(
+                    {
+                        "archive_import_asset_id": row["id"],
+                        "content_sha256": row["content_sha256"],
+                    }
+                )
+            ).hexdigest()
+
+        # Validate the actual post-remap graph before opening the write
+        # transaction. Abstract-only archives may reuse immutable global
+        # versions; raw-inclusive archives remap the complete graph so that old
+        # and new provenance identities are never mixed in one closure.
+        validation_assets = list(remapped["craft_pattern_assets"])
+        if reused_craft_asset_ids:
+            reused_ids = sorted({id_map[old_id] for old_id in reused_craft_asset_ids})
+            placeholders = ",".join("?" for _ in reused_ids)
+            with self.database.connect() as lookup:
+                rows = lookup.execute(
+                    f"SELECT * FROM craft_pattern_assets WHERE id IN ({placeholders})",
+                    reused_ids,
+                ).fetchall()
+            if len(rows) != len(reused_ids):
+                raise InvalidProjectArchiveError("external_craft_parent")
+            validation_assets.extend(dict(row) for row in rows)
+        _validate_craft_pattern_rows(
+            {
+                "craft_pattern_assets": validation_assets,
+                "project_craft_pattern_assets": remapped["project_craft_pattern_assets"],
+                "craft_pattern_job_outputs": remapped["craft_pattern_job_outputs"],
+            }
+        )
+        try:
+            rebind_writing_pattern_rows(
+                remapped,
+                craft_asset_rows=validation_assets,
+            )
+            _rebind_pattern_adaptation_rows(remapped)
+            validate_writing_pattern_tables(
+                remapped,
+                craft_asset_rows=validation_assets,
+            )
+        except InvalidWritingPatternArchiveError as error:
+            raise InvalidProjectArchiveError(str(error)) from error
+        _rebind_m34_rows(remapped, imported_at=imported_at)
+        _validate_m32_archive_rows(remapped)
+        _validate_m33_archive_rows(remapped)
+        _validate_m34_archive_rows(remapped)
 
         restored_project = remapped["projects"][0]
         title = restored_project["title"]
@@ -1299,12 +4870,23 @@ class ProjectArchiveService:
 
         try:
             with self.database.connect() as connection:
+                connection.execute("BEGIN")
+                connection.execute("PRAGMA defer_foreign_keys=ON")
                 for table in ARCHIVE_TABLES:
                     placeholders = ", ".join("?" for _ in table.columns)
                     columns = ", ".join(table.columns)
                     connection.executemany(
                         f"INSERT INTO {table.name} ({columns}) VALUES ({placeholders})",
-                        [tuple(row[column] for column in table.columns) for row in remapped[table.name]],
+                        [
+                            tuple(row[column] for column in table.columns)
+                            for row in remapped[table.name]
+                        ],
+                    )
+                if source_archive_version < 12:
+                    _insert_legacy_topic_decision(
+                        connection,
+                        restored_project,
+                        remapped["book_blueprints"],
                     )
                 connection.executemany(
                     """
@@ -1320,6 +4902,8 @@ class ProjectArchiveService:
                         for row in remapped["reference_works"]
                     ],
                 )
+                if connection.execute("PRAGMA foreign_key_check").fetchall():
+                    raise InvalidProjectArchiveError("invalid_foreign_key_graph")
         except sqlite3.Error as error:
             raise InvalidProjectArchiveError("invalid_table_values") from error
         project_id = restored_project["id"]
@@ -1365,9 +4949,10 @@ class ProjectArchiveService:
 
     def list_recovery_points(self, project_id: str) -> list[RecoveryPointSummary]:
         with self.database.connect() as connection:
-            if connection.execute(
-                "SELECT id FROM projects WHERE id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+                is None
+            ):
                 raise NotFoundError(project_id)
             rows = connection.execute(
                 """
@@ -1427,7 +5012,26 @@ class ProjectArchiveService:
         }
         if set(value) != expected_keys:
             raise InvalidProjectArchiveError("invalid_archive_fields")
-        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {1, 2, 3, 4, 5, 6}:
+        if value["format"] != ARCHIVE_FORMAT or value["format_version"] not in {
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+        }:
             raise InvalidProjectArchiveError("unsupported_archive_format")
         if not isinstance(value["schema_version"], int) or value["schema_version"] < 0:
             raise InvalidProjectArchiveError("invalid_schema_version")
@@ -1456,6 +5060,30 @@ class ProjectArchiveService:
             value = self._upgrade_v4_archive(value)
         if value["format_version"] == 5:
             value = self._upgrade_v5_archive(value)
+        if value["format_version"] == 6:
+            value = self._upgrade_v6_archive(value)
+        if value["format_version"] == 7:
+            value = self._upgrade_v7_archive(value)
+        if value["format_version"] == 8:
+            value = self._upgrade_v8_archive(value)
+        if value["format_version"] == 9:
+            value = self._upgrade_v9_archive(value)
+        if value["format_version"] == 10:
+            value = self._upgrade_v10_archive(value)
+        if value["format_version"] == 11:
+            value = self._upgrade_v11_archive(value)
+        if value["format_version"] == 12:
+            value = self._upgrade_v12_archive(value)
+        if value["format_version"] == 13:
+            value = self._upgrade_v13_archive(value)
+        if value["format_version"] == 14:
+            value = self._upgrade_v14_archive(value)
+        if value["format_version"] == 15:
+            value = self._upgrade_v15_archive(value)
+        if value["format_version"] == 16:
+            value = self._upgrade_v16_archive(value)
+        if value["format_version"] == 17:
+            value = self._upgrade_v17_archive(value)
 
         tables = value["tables"]
         if not isinstance(tables, dict) or set(tables) != {table.name for table in ARCHIVE_TABLES}:
@@ -1492,8 +5120,15 @@ class ProjectArchiveService:
             contents_by_work[work_id] = contents_by_work.get(work_id, "") + content
         upgraded_works: list[dict[str, Any]] = []
         legacy_columns = {
-            "id", "project_id", "title", "source_filename", "source_format",
-            "rights_basis", "total_characters", "segment_target_characters", "created_at",
+            "id",
+            "project_id",
+            "title",
+            "source_filename",
+            "source_format",
+            "rights_basis",
+            "total_characters",
+            "segment_target_characters",
+            "created_at",
         }
         for work in work_rows:
             if not isinstance(work, dict) or set(work) != legacy_columns:
@@ -1502,22 +5137,23 @@ class ProjectArchiveService:
             created_at = work["created_at"]
             if not isinstance(work_id, str) or not isinstance(created_at, str):
                 raise InvalidProjectArchiveError("invalid_business_values")
-            upgraded_works.append({
-                key: item for key, item in work.items() if key != "project_id"
-            } | {
-                "content_sha256": hashlib.sha256(
-                    contents_by_work.get(work_id, "").encode("utf-8")
-                ).hexdigest(),
-                "source_sha256": hashlib.sha256(
-                    contents_by_work.get(work_id, "").encode("utf-8")
-                ).hexdigest(),
-                "source_encoding": "utf-8",
-                "encoding_confidence": 1.0,
-                "import_state": "ready",
-                "source_spans_json": "[]",
-                "duplicate_of_id": None,
-                "updated_at": created_at,
-            })
+            upgraded_works.append(
+                {key: item for key, item in work.items() if key != "project_id"}
+                | {
+                    "content_sha256": hashlib.sha256(
+                        contents_by_work.get(work_id, "").encode("utf-8")
+                    ).hexdigest(),
+                    "source_sha256": hashlib.sha256(
+                        contents_by_work.get(work_id, "").encode("utf-8")
+                    ).hexdigest(),
+                    "source_encoding": "utf-8",
+                    "encoding_confidence": 1.0,
+                    "import_state": "ready",
+                    "source_spans_json": "[]",
+                    "duplicate_of_id": None,
+                    "updated_at": created_at,
+                }
+            )
         upgraded = dict(value)
         upgraded_tables = dict(tables)
         upgraded_tables["source_documents"] = []
@@ -1570,8 +5206,13 @@ class ProjectArchiveService:
         upgraded_applications: list[dict[str, Any]] = []
         versions: list[dict[str, Any]] = []
         expected_columns = {
-            "id", "project_id", "pattern_card_id", "selected_dimensions_json",
-            "dimensions_json", "relationship_recomposition", "application_note",
+            "id",
+            "project_id",
+            "pattern_card_id",
+            "selected_dimensions_json",
+            "dimensions_json",
+            "relationship_recomposition",
+            "application_note",
             "created_at",
         }
         for row in application_rows:
@@ -1585,9 +5226,7 @@ class ProjectArchiveService:
                 or not isinstance(dimensions, dict)
                 or not isinstance(proposal, dict)
                 or not all(
-                    isinstance(name, str)
-                    and name in proposal
-                    and name in dimensions
+                    isinstance(name, str) and name in proposal and name in dimensions
                     for name in selected
                 )
             ):
@@ -1618,28 +5257,30 @@ class ProjectArchiveService:
                 },
             }
             ReferenceBlueprintState.model_validate(blueprint)
-            blueprint_json = json.dumps(
-                blueprint, ensure_ascii=False, separators=(",", ":")
+            blueprint_json = json.dumps(blueprint, ensure_ascii=False, separators=(",", ":"))
+            upgraded_applications.append(
+                {
+                    **row,
+                    "blueprint_json": blueprint_json,
+                    "originality_status": "needs_check",
+                    "risk_level": None,
+                    "latest_report_id": None,
+                    "threshold_version": None,
+                    "revision": 0,
+                    "updated_at": row["created_at"],
+                }
             )
-            upgraded_applications.append({
-                **row,
-                "blueprint_json": blueprint_json,
-                "originality_status": "needs_check",
-                "risk_level": None,
-                "latest_report_id": None,
-                "threshold_version": None,
-                "revision": 0,
-                "updated_at": row["created_at"],
-            })
-            versions.append({
-                "id": str(uuid4()),
-                "application_id": row["id"],
-                "blueprint_revision": 0,
-                "blueprint_json": blueprint_json,
-                "changed_dimensions_json": row["selected_dimensions_json"],
-                "relationship_changed": 1,
-                "created_at": row["created_at"],
-            })
+            versions.append(
+                {
+                    "id": str(uuid4()),
+                    "application_id": row["id"],
+                    "blueprint_revision": 0,
+                    "blueprint_json": blueprint_json,
+                    "changed_dimensions_json": row["selected_dimensions_json"],
+                    "relationship_changed": 1,
+                    "created_at": row["created_at"],
+                }
+            )
 
         upgraded = dict(value)
         upgraded_tables = dict(tables)
@@ -1756,17 +5397,19 @@ class ProjectArchiveService:
         ):
             volume_id = str(uuid4())
             volume_ids[volume_number] = volume_id
-            volume_rows.append({
-                "id": volume_id,
-                "project_id": project_id,
-                "volume_number": volume_number,
-                "title": f"第{volume_number}卷",
-                "sort_key": ordinal * 1024,
-                "revision": 0,
-                "deleted_at": None,
-                "created_at": created_at,
-                "updated_at": updated_at,
-            })
+            volume_rows.append(
+                {
+                    "id": volume_id,
+                    "project_id": project_id,
+                    "volume_number": volume_number,
+                    "title": f"第{volume_number}卷",
+                    "sort_key": ordinal * 1024,
+                    "revision": 0,
+                    "deleted_at": None,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+            )
         upgraded_chapters = [
             {
                 **row,
@@ -1784,7 +5427,275 @@ class ProjectArchiveService:
         upgraded_tables["directory_events"] = []
         upgraded_tables["serial_daily_goals"] = []
         upgraded["tables"] = upgraded_tables
-        upgraded["format_version"] = ARCHIVE_FORMAT_VERSION
+        upgraded["format_version"] = 6
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v6_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        originality_rows = tables.get("originality_reports")
+        if not isinstance(originality_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["originality_reports"] = [
+            {**row, "acknowledged_at": None} for row in originality_rows
+        ]
+        upgraded_tables["scene_originality_checks"] = []
+        upgraded_tables["scene_originality_findings"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 7
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v7_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["research_sessions"] = []
+        upgraded_tables["research_sources"] = []
+        upgraded_tables["research_findings"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 8
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v8_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["author_ideas"] = []
+        upgraded_tables["chapter_annotations"] = []
+        upgraded_tables["story_relationships"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 9
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v9_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["comic_projects"] = []
+        upgraded_tables["comic_episodes"] = []
+        upgraded_tables["comic_versions"] = []
+        upgraded_tables["comic_scenes"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 10
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v10_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        application_rows = tables.get("reference_pattern_applications")
+        if not isinstance(application_rows, list):
+            raise InvalidProjectArchiveError("invalid_tables")
+        application_table = next(
+            table for table in ARCHIVE_TABLES if table.name == "reference_pattern_applications"
+        )
+        legacy_columns = set(application_table.columns) - {
+            "lifecycle_state",
+            "lifecycle_revision",
+        }
+        upgraded_applications: list[dict[str, Any]] = []
+        for row in application_rows:
+            if not isinstance(row, dict) or set(row) != legacy_columns:
+                raise InvalidProjectArchiveError("invalid_columns")
+            upgraded_applications.append(
+                {
+                    **row,
+                    "lifecycle_state": "active",
+                    "lifecycle_revision": 0,
+                }
+            )
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["reference_pattern_applications"] = upgraded_applications
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 11
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v11_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["topic_decisions"] = []
+        upgraded_tables["topic_decision_versions"] = []
+        upgraded_tables["topic_decision_candidate_sets"] = []
+        upgraded_tables["topic_decision_candidates"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 12
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v12_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["craft_pattern_assets"] = []
+        upgraded_tables["project_craft_pattern_assets"] = []
+        upgraded_tables["craft_pattern_job_outputs"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 13
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v13_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["writing_pattern_recipes"] = []
+        upgraded_tables["writing_pattern_recipe_versions"] = []
+        upgraded_tables["writing_pattern_recipe_sources"] = []
+        upgraded_tables["writing_pattern_profile_versions"] = []
+        upgraded_tables["project_writing_pattern_profiles"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 14
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v14_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        for table_name in (
+            "generation_runs",
+            "fact_change_sets",
+            "text_change_sets",
+        ):
+            rows = upgraded_tables.get(table_name, [])
+            if isinstance(rows, list):
+                upgraded_tables[table_name] = [
+                    {**row, "creative_safety_json": row.get("creative_safety_json")}
+                    if isinstance(row, dict)
+                    else row
+                    for row in rows
+                ]
+        upgraded_tables["writing_pattern_adaptation_proposals"] = []
+        upgraded_tables["writing_pattern_adaptation_candidates"] = []
+        upgraded_tables["writing_pattern_adaptation_candidate_versions"] = []
+        upgraded_tables["writing_pattern_adoptions"] = []
+        upgraded_tables["writing_pattern_originality_reports"] = []
+        upgraded_tables["writing_pattern_originality_findings"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 15
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v15_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        upgraded_tables["context_packets"] = []
+        upgraded_tables["creative_plan_dependencies"] = []
+        upgraded_tables["plan_rebase_candidates"] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 16
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v16_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        for table_name in (
+            "chapter_productions",
+            "chapter_production_events",
+            "chapter_outline_candidates",
+            "chapter_outline_candidate_versions",
+            "chapter_preflight_checks",
+            "chapter_draft_candidates",
+            "chapter_draft_candidate_versions",
+            "chapter_draft_candidate_locks",
+            "chapter_candidate_reviews",
+            "chapter_candidate_merge_sources",
+            "chapter_writing_outcomes",
+        ):
+            upgraded_tables[table_name] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 17
+        unsigned = dict(upgraded)
+        unsigned.pop("checksum_sha256", None)
+        upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+        return upgraded
+
+    @staticmethod
+    def _upgrade_v17_archive(value: dict[str, Any]) -> dict[str, Any]:
+        tables = value.get("tables")
+        if not isinstance(tables, dict):
+            raise InvalidProjectArchiveError("invalid_tables")
+        upgraded = dict(value)
+        upgraded_tables = dict(tables)
+        for table_name in (
+            "chapter_approvals",
+            "canon_reconciliations",
+            "canon_delta_candidates",
+            "canon_records",
+            "author_preference_candidates",
+            "author_preferences",
+            "author_preference_sources",
+            "canon_decision_batches",
+            "rolling_plan_replenishments",
+        ):
+            upgraded_tables[table_name] = []
+        upgraded["tables"] = upgraded_tables
+        upgraded["format_version"] = 18
         unsigned = dict(upgraded)
         unsigned.pop("checksum_sha256", None)
         upgraded["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()

@@ -8,6 +8,7 @@ import type {
 import { useState } from 'react'
 
 import { api } from '../api'
+import { isRebirthGenre } from '../genre'
 
 interface FutureKnowledgePanelProps {
   workspace: WorkspaceSummary
@@ -37,6 +38,8 @@ export function FutureKnowledgePanel({
   const [isAdding, setIsAdding] = useState(false)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const rebirthStory = isRebirthGenre(workspace.project.genre)
+  const knowledgeLabel = rebirthStory ? '未来知识' : '先验 / 预言知识'
   const reviewCount = workspace.future_knowledge.filter((item) => item.status === 'candidate_invalid').length
 
   function replaceKnowledge(updated: FutureKnowledge) {
@@ -88,11 +91,13 @@ export function FutureKnowledgePanel({
   return (
     <section className="future-knowledge-card" aria-labelledby="future-knowledge-title">
       <div className="pulse-heading">
-        <h3 id="future-knowledge-title">未来知识账本</h3>
-        <span>{reviewCount > 0 ? `${reviewCount} 条待复核` : `${workspace.future_knowledge.length} 条记忆`}</span>
+        <h3 id="future-knowledge-title">{knowledgeLabel}账本</h3>
+        <span>{reviewCount > 0 ? `${reviewCount} 条待复核` : `${workspace.future_knowledge.length} 条记录`}</span>
       </div>
       <p className="knowledge-intro">
-        小说时间线发生分歧时，只把相关年份之后的记忆标为待复核，不会自动删除。
+        {rebirthStory
+          ? '小说时间线发生分歧时，只把相关年份之后的记忆标为待复核，不会自动删除。'
+          : '记录角色明确掌握的预言、推演或先验信息；世界线变化后只标记待复核，不会自动当成事实。'}
       </p>
       {workspace.future_knowledge.length > 0 ? (
         <ol className="knowledge-list">
@@ -122,14 +127,14 @@ export function FutureKnowledgePanel({
             </li>
           ))}
         </ol>
-      ) : <p className="knowledge-empty">先记录一条主角确信自己知道的未来事件。</p>}
+      ) : <p className="knowledge-empty">{rebirthStory ? '先记录一条主角确信自己知道的未来事件。' : '先记录一条角色明确知道的预言、推演或先验信息。'}</p>}
       <details className="knowledge-add">
-        <summary>记录未来知识</summary>
+        <summary>记录{knowledgeLabel}</summary>
         <div className="knowledge-form-row">
           <label>
             发生年份
             <input
-              aria-label="未来知识年份"
+              aria-label={`${knowledgeLabel}年份`}
               type="number"
               min={workspace.project.rebirth_year}
               max={2100}
@@ -153,29 +158,29 @@ export function FutureKnowledgePanel({
         <label>
           记忆内容
           <textarea
-            aria-label="未来知识内容"
+            aria-label={`${knowledgeLabel}内容`}
             maxLength={500}
             rows={2}
             value={content}
             onChange={(event) => setContent(event.target.value)}
-            placeholder="例如：2003 年建阳会开出第一家大型连锁超市"
+            placeholder={rebirthStory ? '例如：2003 年建阳会开出第一家大型连锁超市' : '例如：赤月升起后的第三天，北境结界会出现裂隙'}
           />
         </label>
         <label>
           来源说明
           <input
-            aria-label="未来知识来源"
+            aria-label={`${knowledgeLabel}来源`}
             maxLength={500}
             value={sourceNote}
             onChange={(event) => setSourceNote(event.target.value)}
-            placeholder="上一世亲历、新闻记忆或他人告知"
+            placeholder={rebirthStory ? '上一世亲历、新闻记忆或他人告知' : '预言文本、占星推演、导师告知或角色亲历'}
           />
         </label>
         <button
           type="button"
           onClick={addKnowledge}
           disabled={isAdding || !content.trim() || !Number.isInteger(Number(futureYear))}
-        >{isAdding ? '正在记录…' : '写入未来知识账本'}</button>
+        >{isAdding ? '正在记录…' : `写入${knowledgeLabel}账本`}</button>
       </details>
       {error ? <p className="knowledge-error" role="alert">{error}</p> : null}
     </section>

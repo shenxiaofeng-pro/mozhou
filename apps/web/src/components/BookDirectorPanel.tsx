@@ -12,7 +12,9 @@ import type {
   DirectorRegenerationImpact,
   DirectorStartupProposalSet,
   GenerationRun,
+  Genre,
   Job,
+  PatternOriginalityGateState,
   Project,
   RollingChapterPlan,
   RollingChapterPlanContent,
@@ -21,9 +23,17 @@ import type {
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useEffect, useState } from 'react'
+import { creativeContextCanSubmit } from '@mozhou/contracts'
+import { lazy, Suspense, useEffect, useState } from 'react'
 
 import { api } from '../api'
+import { genreOptions, getStoryAnchorLabels } from '../genre'
+import { ContextPacketPanel } from './ContextPacketPanel'
+
+const PlanRebaseWorkbench = lazy(async () => {
+  const module = await import('./PlanRebaseWorkbench')
+  return { default: module.PlanRebaseWorkbench }
+})
 
 interface BookDirectorPanelProps {
   project: Project
@@ -33,6 +43,7 @@ interface BookDirectorPanelProps {
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
   onAdoptBrief: (proposal: AiChapterBriefProposal) => void
   onDraftGenerated: (run: GenerationRun) => void
+  onOpenChapterProduction?: () => void
 }
 
 type DirectorTask = 'startup' | 'expansion' | 'field' | 'pipeline'
@@ -82,9 +93,18 @@ function updateBlueprintValue(
     }
   }
   if (field === 'genre') {
-    return { ...content, genre: rawValue === 'historical_rebirth' ? 'historical_rebirth' : 'urban_rebirth' }
+    return { ...content, genre: rawValue as Genre }
   }
   return { ...content, [field]: rawValue }
+}
+
+function blueprintFieldLabel(field: BookBlueprintField, genre: Genre): string {
+  const configured = blueprintFields.find((item) => item.field === field)?.label ?? field
+  const anchorLabels = getStoryAnchorLabels(genre)
+  if (field === 'rebirth_year') return anchorLabels.year
+  if (field === 'rebirth_location') return anchorLabels.location
+  if (field === 'divergence_point') return anchorLabels.divergence
+  return configured
 }
 
 function previewCost(preview: DirectorOutboundPreview): string {
@@ -100,6 +120,7 @@ export function BookDirectorPanel({
   onWorkspaceChanged,
   onAdoptBrief,
   onDraftGenerated,
+  onOpenChapterProduction,
 }: BookDirectorPanelProps) {
   const initialSnapshot: DirectorPlanningSnapshot = {
     book_blueprint: workspace.book_blueprint,
@@ -107,8 +128,8 @@ export function BookDirectorPanel({
     rolling_chapter_plans: workspace.rolling_chapter_plans,
   }
   const [snapshot, setSnapshot] = useState(initialSnapshot)
-  const [idea, setIdea] = useState('')
-  const [realityAnchor, setRealityAnchor] = useState('')
+  const [idea, setIdea] = useState(workspace.topic_decision?.content.premise ?? '')
+  const [realityAnchor, setRealityAnchor] = useState(workspace.topic_decision?.content.reality_anchor ?? '')
   const [authorIntent, setAuthorIntent] = useState('')
   const [startupResult, setStartupResult] = useState<DirectorStartupProposalSet | null>(null)
   const [expansionResult, setExpansionResult] = useState<DirectorExpansionProposal | null>(null)
@@ -129,6 +150,17 @@ export function BookDirectorPanel({
   )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const originalityGateKey = `${project.id}:${snapshot.book_blueprint?.revision ?? 'none'}`
+  const [originalityGateResult, setOriginalityGateResult] = useState<{
+    key: string
+    state: PatternOriginalityGateState | null
+  } | null>(null)
+  const [originalityBusy, setOriginalityBusy] = useState(false)
+  const [originalityError, setOriginalityError] = useState<string | null>(null)
+
+  const originalityGate = originalityGateResult?.key === originalityGateKey
+    ? originalityGateResult.state
+    : null
 
   const activeJobId = activeJob?.id
   const activeJobState = activeJob?.state
@@ -168,6 +200,20 @@ export function BookDirectorPanel({
       if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [activeJobId, activeJobState, activeTask])
+
+  useEffect(() => {
+    let active = true
+    api.getPatternOriginalityGate(project.id)
+      .then((state) => {
+        if (active) setOriginalityGateResult({ key: originalityGateKey, state })
+      })
+      .catch((caught: unknown) => {
+        if (!active) return
+        setOriginalityGateResult({ key: originalityGateKey, state: null })
+        setOriginalityError(caught instanceof Error ? caught.message : '无法读取原创性门禁')
+      })
+    return () => { active = false }
+  }, [originalityGateKey, project.id])
 
   async function refreshWorkspace(nextSnapshot?: DirectorPlanningSnapshot) {
     if (nextSnapshot) setSnapshot(nextSnapshot)
@@ -248,6 +294,8 @@ export function BookDirectorPanel({
 
   async function confirmPreview() {
     if (!preview || !previewTask) return
+    const contextPacket = preview.context_packet
+    if (contextPacket && !creativeContextCanSubmit(contextPacket)) return
     setBusy(true)
     setError(null)
     try {
@@ -398,8 +446,52 @@ export function BookDirectorPanel({
     }
   }
 
+  async function runCurrentBlueprintOriginalityCheck() {
+    if (!originalityGate?.adoption
+      || originalityGate.blueprint_revision === null
+      || originalityGate.blueprint_content_sha256 === null
+    ) return
+    setOriginalityBusy(true)
+    setOriginalityError(null)
+    try {
+      const report = await api.runPatternOriginalityCheck(project.id, {
+        expected_blueprint_revision: originalityGate.blueprint_revision,
+        expected_blueprint_content_sha256: originalityGate.blueprint_content_sha256,
+        expected_profile_fingerprint_sha256: originalityGate.adoption.profile_fingerprint_sha256,
+        expected_recipe_content_sha256: originalityGate.adoption.recipe_content_sha256,
+      })
+      setOriginalityGateResult({
+        key: originalityGateKey,
+        state: {
+          ...originalityGate,
+          state: report.status === 'blocked'
+            ? 'blocked'
+            : report.status === 'review_required' ? 'review_required' : report.status === 'passed' ? 'passed' : 'needs_check',
+          reason: report.status,
+          requires_check: report.status !== 'passed',
+          blueprint_id: report.blueprint_id,
+          blueprint_revision: report.blueprint_revision,
+          blueprint_content_sha256: report.blueprint_content_sha256,
+          latest_report: report,
+          report_is_current: true,
+        },
+      })
+    } catch (caught) {
+      setOriginalityError(caught instanceof Error ? caught.message : '无法重新运行原创性检查')
+    } finally {
+      setOriginalityBusy(false)
+    }
+  }
+
   const blueprint = snapshot.book_blueprint
   const hasLockedField = blueprint ? Object.values(blueprint.locks).some(Boolean) : false
+  const previewContextPacket = preview
+    ? preview.context_packet
+    : null
+  const needsPlanRebase = Boolean(
+    blueprint
+    && (blueprint.plan_stale || blueprint.stale_fields.length > 0 || workspace.next_action === 'review_downstream_plans'),
+  )
 
   return (
     <section className="book-director" aria-labelledby="book-director-title">
@@ -420,17 +512,21 @@ export function BookDirectorPanel({
               onChange={(event) => { setIdea(event.target.value); setPreview(null) }}
               maxLength={3000}
               rows={4}
-              placeholder="例：1998 年回到南平，从一家濒临倒闭的木竹厂开始，改变家族和城市的命运。"
+              placeholder={project.genre === 'eastern_fantasy'
+                ? '例：边城少年发现每次突破都会遗失一段记忆，只能在变强与保住自我之间选择。'
+                : project.genre === 'western_fantasy'
+                  ? '例：边境学徒继承禁忌誓印，被法师行会、教会与旧王室同时追捕。'
+                  : '例：1998 年回到南平，从一家濒临倒闭的木竹厂开始，改变家族和城市的命运。'}
             />
           </label>
           <label>
-            现实锚点（可选）
+            资料与规则锚点（可选）
             <textarea
               value={realityAnchor}
               onChange={(event) => { setRealityAnchor(event.target.value); setPreview(null) }}
               maxLength={1500}
               rows={2}
-              placeholder="地点、年代、行业或你已确认的现实材料。"
+              placeholder="地点、纪年、行业、修炼/魔法规则，或你已确认的资料。"
             />
           </label>
           <button type="button" onClick={() => { void showPreview('startup') }} disabled={busy || idea.trim().length === 0}>
@@ -445,10 +541,12 @@ export function BookDirectorPanel({
               <small>{hasLockedField ? '含锁定字段' : '可继续编辑'} · {blueprint.plan_stale ? '计划待更新' : '计划已同步'}</small>
             </summary>
             {blueprint.stale_fields.length > 0 ? (
-              <p className="director-warning">待联动复核：{blueprint.stale_fields.map((field) => blueprintFields.find((item) => item.field === field)?.label ?? field).join('、')}</p>
+              <p className="director-warning">待联动复核：{blueprint.stale_fields.map((field) => blueprintFieldLabel(field, blueprintDraft?.genre ?? project.genre)).join('、')}</p>
             ) : null}
             <div className="blueprint-grid">
-              {blueprintDraft ? blueprintFields.map(({ field, label, multiline }) => (
+              {blueprintDraft ? blueprintFields.map(({ field, multiline }) => {
+                const label = blueprintFieldLabel(field, blueprintDraft.genre)
+                return (
                 <label key={field} data-locked={blueprint.locks[field]}>
                   <span>{label}</span>
                   {field === 'genre' ? (
@@ -457,8 +555,7 @@ export function BookDirectorPanel({
                       disabled={blueprint.locks[field]}
                       onChange={(event) => setBlueprintDraft(updateBlueprintValue(blueprintDraft, field, event.target.value))}
                     >
-                      <option value="historical_rebirth">历史重生</option>
-                      <option value="urban_rebirth">都市重生</option>
+                      {genreOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   ) : multiline ? (
                     <textarea
@@ -483,10 +580,54 @@ export function BookDirectorPanel({
                     aria-label={`${blueprint.locks[field] ? '解锁' : '锁定'}${label}`}
                   >{blueprint.locks[field] ? '已锁定' : '锁定'}</button>
                 </label>
-              )) : null}
+                )
+              }) : null}
             </div>
             <button type="button" onClick={() => { void saveBlueprint() }} disabled={busy}>保存蓝图修改</button>
           </details>
+
+          {needsPlanRebase ? (
+            <Suspense fallback={<p className="plan-rebase-status" role="status">正在打开计划复核…</p>}>
+              <PlanRebaseWorkbench
+                projectId={project.id}
+                active
+                onAdopted={async (planning) => {
+                  setSnapshot(planning)
+                  setBlueprintDraft(planning.book_blueprint?.content ?? null)
+                  setPreview(null)
+                  setPreviewTask(null)
+                  await refreshWorkspace(planning)
+                }}
+              />
+            </Suspense>
+          ) : null}
+
+          {originalityGate && !['legacy', 'needs_adaptation'].includes(originalityGate.state) ? (
+            <aside className="director-originality-gate" data-state={originalityGate.state} aria-label="实际蓝图原创性门禁">
+              <div>
+                <strong>{originalityGate.state === 'passed'
+                  ? '原创性门禁已通过'
+                  : originalityGate.state === 'review_required'
+                    ? '原创性报告等待作者确认'
+                    : originalityGate.state === 'blocked'
+                      ? '高风险：当前蓝图已阻断'
+                      : originalityGate.state === 'stale'
+                        ? '蓝图已修改，旧报告已过期'
+                        : '蓝图等待原创性检查'}</strong>
+                <span>{originalityGate.state === 'blocked'
+                  ? '先编辑并保存当前实际蓝图；版本变化后再运行检查。'
+                  : originalityGate.state === 'review_required'
+                    ? '请到写作配方页查看完整报告并明确确认。'
+                    : '检查始终绑定当前实际蓝图的版本与内容指纹。'}</span>
+              </div>
+              {['needs_check', 'stale'].includes(originalityGate.state) && originalityGate.adoption ? (
+                <button type="button" disabled={originalityBusy} onClick={() => { void runCurrentBlueprintOriginalityCheck() }}>
+                  {originalityBusy ? '正在检查…' : originalityGate.state === 'stale' ? '按当前蓝图重新检查' : '运行原创性检查'}
+                </button>
+              ) : null}
+            </aside>
+          ) : null}
+          {originalityError ? <p className="ai-coauthor-error" role="alert">{originalityError}</p> : null}
 
           <div className="director-command-row">
             <label>
@@ -512,18 +653,33 @@ export function BookDirectorPanel({
                 setPreview(null)
                 setPreviewTask(null)
               }}>
-                {blueprintFields.map(({ field, label }) => <option key={field} value={field}>{label}</option>)}
+                {blueprintFields.map(({ field }) => <option key={field} value={field}>{blueprintFieldLabel(field, blueprint.content.genre)}</option>)}
               </select>
               <button type="button" onClick={() => { void showPreview('field') }} disabled={busy || blueprint.locks[fieldTarget]}>
                 只重生成这一项
               </button>
             </div>
-            <button type="button" className="pipeline-action" onClick={() => { void showPreview('pipeline') }} disabled={busy || !canUseChapter || blueprint.plan_stale}>
-              一键跑完：上下文 → 章纲 → 写前审查 → 候选稿
-            </button>
+            {onOpenChapterProduction ? (
+              <button type="button" className="pipeline-action" onClick={onOpenChapterProduction}>
+                单章纲要与正文已迁移 · 打开新工作台
+              </button>
+            ) : (
+              <button type="button" className="pipeline-action" onClick={() => { void showPreview('pipeline') }} disabled={busy || !canUseChapter || blueprint.plan_stale}>
+                一键跑完：上下文 → 章纲 → 写前审查 → 候选稿
+              </button>
+            )}
           </div>
         </>
       )}
+
+      {originalityGate?.state === 'needs_adaptation' ? (
+        <aside className="director-originality-gate" data-state="needs_adaptation" aria-label="写作模式原创迁移提示">
+          <div>
+            <strong>当前模式尚未生成原创蓝图候选</strong>
+            <span>请到“写作配方”完成作者意图、三套候选比较与采用；这里不会直接套用参考模式。</span>
+          </div>
+        </aside>
+      ) : null}
 
       {preview ? (
         <article className="director-outbound" aria-label="总导演外发确认">
@@ -532,8 +688,13 @@ export function BookDirectorPanel({
           <p>{preview.character_count.toLocaleString()} 字符 · {preview.estimated_calls} 次模型调用 · 估算 {previewCost(preview)}</p>
           <p>数据类型：{preview.data_types.join('、')}</p>
           {impact ? <p>联动影响：{impact.downstream_affected.join('、') || '无'}{impact.locked_conflicts.length ? `；锁定冲突：${impact.locked_conflicts.join('、')}` : ''}</p> : null}
+          {previewContextPacket ? <ContextPacketPanel packet={previewContextPacket} /> : null}
           <div>
-            <button type="button" onClick={() => { void confirmPreview() }} disabled={busy || Boolean(impact?.locked_conflicts.length)}>确认外发并启动</button>
+            <button
+              type="button"
+              onClick={() => { void confirmPreview() }}
+              disabled={busy || Boolean(impact?.locked_conflicts.length) || Boolean(previewContextPacket && !creativeContextCanSubmit(previewContextPacket))}
+            >确认外发并启动</button>
             <button type="button" className="quiet-action" onClick={() => { setPreview(null); setPreviewTask(null) }}>取消</button>
           </div>
         </article>

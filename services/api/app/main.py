@@ -5,6 +5,7 @@ from pathlib import Path
 from re import fullmatch
 from secrets import compare_digest
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -18,7 +19,6 @@ from starlette.responses import Response
 from app.ai import (
     AiGatewayManager,
     AiNotConfiguredError,
-    AiProviderError,
     AiWritingService,
     ReferenceAnalysisService,
 )
@@ -28,6 +28,20 @@ from app.archive import (
     ProjectArchiveService,
     ProjectArchiveTooLargeError,
 )
+from app.author_productivity import (
+    AuthorIdea,
+    AuthorProductivityService,
+    ChapterAnnotation,
+    CreateAnnotationRequest,
+    CreateIdeaRequest,
+    CreateRelationshipRequest,
+    PrepareIdeaRequest,
+    ResolveAnnotationRequest,
+    StoryGraphs,
+    StoryRelationship,
+    UpdateIdeaRequest,
+    WritingCalendar,
+)
 from app.beta import (
     BetaEvaluationReport,
     BetaEvaluationService,
@@ -36,7 +50,36 @@ from app.beta import (
     BetaTemplate,
     CreateBetaFeedbackRequest,
 )
+from app.canon_reconciliation.repository import (
+    CanonReconciliationConflictError,
+    CanonReconciliationNotFoundError,
+    CanonReconciliationRepository,
+    CanonReconciliationStaleError,
+)
+from app.canon_reconciliation.routes import canon_reconciliation_router
+from app.canon_reconciliation.service import CanonReconciliationService
 from app.chapter_jobs import ChapterJobService
+from app.chapter_production.repository import ChapterProductionRepository
+from app.chapter_production.routes import chapter_production_router
+from app.chapter_production.service import ChapterProductionService
+from app.comic_drama import (
+    AdoptComicSeasonRequest,
+    ComicAiPreview,
+    ComicAsset,
+    ComicAuditIssue,
+    ComicDeleteImpact,
+    ComicDramaNotFoundError,
+    ComicDramaService,
+    ComicEpisodeScriptRequest,
+    ComicEpisodeSubmission,
+    ComicSeasonPlanRequest,
+    ComicSeasonSubmission,
+    ComicStateConflictError,
+    InvalidComicSourceError,
+    ReviewComicEpisodeRequest,
+    SubmitComicEpisodeScriptRequest,
+    SubmitComicSeasonPlanRequest,
+)
 from app.config import default_database_path
 from app.context import (
     ContextDirective,
@@ -44,9 +87,18 @@ from app.context import (
     ContextDirectiveRequest,
     ContextPacket,
     ContextRepository,
+    CreativeContextService,
     InvalidContextDirectiveError,
     InvalidContextPacketError,
     StaleContextDirectiveError,
+)
+from app.context.plan_repository import PlanRebaseRepository
+from app.context.plan_routes import plan_rebase_router
+from app.context.routes import creative_context_router
+from app.craft_patterns import (
+    CraftPatternRepository,
+    CraftPatternService,
+    InvalidCraftPatternError,
 )
 from app.database import Database
 from app.diagnostics import (
@@ -70,9 +122,11 @@ from app.jobs import (
     Job,
     JobArtifactContent,
     JobDetail,
+    JobExecutionError,
     JobKind,
     JobNotFoundError,
     JobRepository,
+    JobRequiresNewPreflightError,
     JobRuntime,
 )
 from app.jobs.runtime import JobExecutionContext
@@ -98,9 +152,20 @@ from app.models import (
     BookBlueprint,
     Chapter,
     ChapterVersion,
+    ComicProject,
+    ComicWorkspace,
     ConfigureAiRequest,
     ConfirmManuscriptImportRequest,
+    ConfirmTopicDecisionRequest,
+    CraftPatternAnalysisPreviewRequest,
+    CraftPatternAsset,
+    CraftPatternAssetPage,
+    CraftPatternAssetSummary,
+    CraftPatternAssetType,
+    CraftPatternFusionPreviewRequest,
+    CraftPatternPreflight,
     CreateChapterRequest,
+    CreateComicProjectRequest,
     CreateDirectoryNodeRequest,
     CreateFutureKnowledgeRequest,
     CreateProjectRequest,
@@ -146,6 +211,7 @@ from app.models import (
     ReferenceWorkImpactResponse,
     RejectFactChangeSetRequest,
     RejectTextChangeSetRequest,
+    RejectTopicDecisionCandidateRequest,
     RenameDirectoryNodeRequest,
     ReviewChapterRequest,
     ReviewFinding,
@@ -154,7 +220,9 @@ from app.models import (
     ReviewOutboundPreview,
     RollbackChapterVersionRequest,
     RollingChapterPlan,
+    SceneOriginalityCheck,
     SelectDirectorCandidateRequest,
+    SelectTopicDecisionCandidateRequest,
     SerialDashboard,
     SetSerialDailyGoalRequest,
     SetSourceCardConfirmationRequest,
@@ -165,22 +233,35 @@ from app.models import (
     StartGenerationRequest,
     StoryEntity,
     StoryThread,
+    SubmitCraftPatternAnalysisRequest,
+    SubmitCraftPatternFusionRequest,
     TextChangeSet,
     TimelineEvent,
+    TopicDecision,
+    TopicDecisionCandidate,
+    TopicDecisionCandidateRequest,
+    TopicDecisionCandidateSet,
+    TopicDecisionOutboundPreview,
+    TopicDecisionRegenerationRequest,
     TransitionChapterRequest,
     TransitionStoryThreadRequest,
     UpdateBookBlueprintRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateCraftPatternLifecycleRequest,
+    UpdateReferenceApplicationLifecycleRequest,
     UpdateReferenceBlueprintRequest,
     UpdateRollingChapterPlanRequest,
     UpdateStoryEntityRequest,
+    UpdateTopicDecisionRequest,
     UpdateVolumePlanRequest,
     VolumePlan,
     Workspace,
     WorkspaceSearchResult,
     WorkspaceSummary,
 )
+from app.pattern_adaptation.routes import pattern_adaptation_router
+from app.pattern_adaptation.service import PatternAdaptationService
 from app.providers import (
     ActivateModelProfileRequest,
     AiOutboundPreview,
@@ -199,8 +280,6 @@ from app.providers import (
 from app.reference_jobs import ReferenceJobService
 from app.repository import (
     InvalidChapterStateError,
-    InvalidFactChangeSetStateError,
-    InvalidFactSelectionError,
     InvalidFutureKnowledgeStateError,
     InvalidReferenceApplicationError,
     InvalidReferenceImportError,
@@ -211,6 +290,17 @@ from app.repository import (
     ProjectRepository,
     StaleChapterSequenceError,
     StaleRevisionError,
+)
+from app.research import (
+    ResearchFinding,
+    ResearchPreview,
+    ResearchRequest,
+    ResearchService,
+    ResearchSession,
+    ResearchSubmission,
+    ResearchWorkspace,
+    ReviewResearchFindingRequest,
+    SubmitResearchRequest,
 )
 from app.review.repository import (
     InvalidTextChangeError,
@@ -244,6 +334,21 @@ from app.sandbox import (
     SandboxValidationError,
     SandboxWorkspace,
 )
+from app.sandbox_ai import (
+    SandboxAiPreview,
+    SandboxAiService,
+    SubmitSandboxAiRoundRequest,
+)
+from app.topic_decisions import (
+    InvalidTopicDecisionChangeError,
+    InvalidTopicTemplateError,
+    StaleTopicDecisionError,
+    TopicDecisionNotConfirmedError,
+    TopicDecisionNotFoundError,
+    TopicDecisionService,
+)
+from app.writing_patterns.routes import writing_pattern_router
+from app.writing_patterns.service import WritingPatternService
 
 
 def create_app(
@@ -276,11 +381,49 @@ def create_app(
         application.state.serial_service = SerialService(database)
         application.state.model_profiles = ModelProfileRepository(database)
         application.state.context_repository = ContextRepository(database)
+        application.state.creative_context_service = CreativeContextService(
+            application.state.repository,
+            application.state.context_repository,
+        )
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
+        application.state.canon_reconciliation_repository = (
+            CanonReconciliationRepository(database)
+        )
+        application.state.canon_reconciliation_service = CanonReconciliationService(
+            application.state.repository,
+            application.state.canon_reconciliation_repository,
+            application.state.job_repository,
+            application.state.creative_context_service,
+        )
+        application.state.sandbox_ai_service = SandboxAiService(
+            application.state.narrative_sandbox,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
+        application.state.research_service = ResearchService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
+        application.state.author_productivity = AuthorProductivityService(database)
+        application.state.comic_drama_service = ComicDramaService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
         application.state.director_repository = DirectorRepository(database)
         application.state.review_repository = ReviewRepository(database)
         application.state.reference_job_service = ReferenceJobService(
+            application.state.repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
+        application.state.craft_pattern_service = CraftPatternService(
             application.state.repository,
             application.state.job_repository,
             application.state.ai_manager,
@@ -292,6 +435,19 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
             application.state.context_repository,
+            creative_context=application.state.creative_context_service,
+        )
+        application.state.chapter_production_repository = ChapterProductionRepository(
+            database
+        )
+        application.state.chapter_production_service = ChapterProductionService(
+            application.state.repository,
+            application.state.chapter_production_repository,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+            application.state.context_repository,
+            application.state.creative_context_service,
         )
         application.state.director_service = DirectorService(
             application.state.repository,
@@ -300,6 +456,43 @@ def create_app(
             application.state.ai_manager,
             application.state.model_profiles,
             application.state.context_repository,
+            creative_context=application.state.creative_context_service,
+        )
+        application.state.topic_decision_service = TopicDecisionService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+        )
+        application.state.writing_pattern_service = WritingPatternService(
+            database,
+            application.state.topic_decision_service,
+        )
+        application.state.pattern_adaptation_service = PatternAdaptationService(
+            database,
+            application.state.job_repository,
+            application.state.ai_manager,
+            application.state.model_profiles,
+            application.state.topic_decision_service,
+        )
+        application.state.plan_rebase_service = PlanRebaseRepository(
+            database,
+            application.state.pattern_adaptation_service,
+        )
+        application.state.director_service.plan_rebase = (
+            application.state.plan_rebase_service
+        )
+        application.state.repository.set_creative_safety_gate(
+            application.state.pattern_adaptation_service
+        )
+        application.state.review_repository.set_creative_safety_gate(
+            application.state.repository
+        )
+        application.state.director_repository.set_creative_safety_gate(
+            application.state.repository
+        )
+        application.state.sandbox_ai_service.set_creative_safety_gate(
+            application.state.repository
         )
 
         application.state.review_service = ReviewService(
@@ -308,21 +501,68 @@ def create_app(
             application.state.job_repository,
             application.state.ai_manager,
             application.state.model_profiles,
+            application.state.context_repository,
+            application.state.creative_context_service,
         )
 
         def handle_review_job(context: JobExecutionContext, job: Job) -> None:
-            if job.workflow == REVIEW_WORKFLOW:
+            if application.state.canon_reconciliation_service.handles(job):
+                application.state.canon_reconciliation_service.handle(context, job)
+            elif application.state.chapter_production_service.handles(job):
+                application.state.chapter_production_service.handle(context, job)
+            elif job.workflow == REVIEW_WORKFLOW:
                 application.state.review_service.handle(context, job)
             else:
+                if job.workflow == "director_startup":
+                    try:
+                        application.state.topic_decision_service.guard_director_startup_job(job.id)
+                    except TopicDecisionNotConfirmedError as error:
+                        raise JobExecutionError(
+                            "topic_not_confirmed",
+                            "请先确认当前选题",
+                        ) from error
+                    except StaleTopicDecisionError as error:
+                        raise JobExecutionError(
+                            "topic_changed",
+                            "选题已更新，请重新生成开书方向",
+                        ) from error
                 application.state.director_service.handle(context, job)
+
+        def handle_reference_job(context: JobExecutionContext, job: Job) -> None:
+            if application.state.craft_pattern_service.handles(job):
+                application.state.craft_pattern_service.handle(context, job)
+            else:
+                application.state.reference_job_service.handle(context, job)
+
+        def handle_chapter_brief_job(context: JobExecutionContext, job: Job) -> None:
+            if application.state.chapter_production_service.handles(job):
+                application.state.chapter_production_service.handle(context, job)
+            else:
+                application.state.chapter_job_service.handle_brief(context, job)
+
+        def handle_chapter_draft_job(context: JobExecutionContext, job: Job) -> None:
+            if application.state.chapter_production_service.handles(job):
+                application.state.chapter_production_service.handle(context, job)
+            else:
+                application.state.chapter_job_service.handle_draft(context, job)
 
         application.state.job_runtime = JobRuntime(
             application.state.job_repository,
             {
-                JobKind.REFERENCE_FUSION: application.state.reference_job_service.handle,
-                JobKind.CHAPTER_BRIEF: application.state.chapter_job_service.handle_brief,
-                JobKind.CHAPTER_DRAFT: application.state.chapter_job_service.handle_draft,
+                JobKind.REFERENCE_FUSION: handle_reference_job,
+                JobKind.CHAPTER_BRIEF: handle_chapter_brief_job,
+                JobKind.CHAPTER_DRAFT: handle_chapter_draft_job,
                 JobKind.REVIEW: handle_review_job,
+                JobKind.SANDBOX_AI_ROUND: application.state.sandbox_ai_service.handle,
+                JobKind.RESEARCH_EXTRACTION: application.state.research_service.handle,
+                JobKind.COMIC_SEASON_PLAN: (
+                    application.state.comic_drama_service.handle_season_plan
+                ),
+                JobKind.COMIC_EPISODE_SCRIPT: (
+                    application.state.comic_drama_service.handle_episode_script
+                ),
+                JobKind.TOPIC_DECISION: application.state.topic_decision_service.handle,
+                JobKind.PATTERN_ADAPTATION: (application.state.pattern_adaptation_service.handle),
             },
         )
         if not defer_job_runtime:
@@ -339,6 +579,22 @@ def create_app(
         redoc_url=None,
         lifespan=lifespan,
     )
+    application.include_router(writing_pattern_router)
+    application.include_router(pattern_adaptation_router)
+    application.include_router(creative_context_router)
+    application.include_router(plan_rebase_router)
+    application.include_router(chapter_production_router)
+    application.include_router(canon_reconciliation_router)
+
+    @application.exception_handler(OriginalityGateBlockedError)
+    async def creative_safety_gate_error(
+        _request: Request,
+        _error: OriginalityGateBlockedError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "创作依赖已变化，请先完成当前蓝图原创性检查"},
+        )
 
     @application.exception_handler(RequestValidationError)
     async def sanitized_validation_error(
@@ -517,9 +773,7 @@ def create_app(
         body: CreateSandboxSnapshotRequest,
     ) -> SandboxSnapshot:
         try:
-            return application.state.narrative_sandbox.create_snapshot(
-                str(project_id), body
-            )
+            return application.state.narrative_sandbox.create_snapshot(str(project_id), body)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         except SandboxValidationError as error:
@@ -535,9 +789,7 @@ def create_app(
         body: CreateSandboxBranchRequest,
     ) -> SandboxBranch:
         try:
-            return application.state.narrative_sandbox.create_branch(
-                str(snapshot_id), body
-            )
+            return application.state.narrative_sandbox.create_branch(str(snapshot_id), body)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="沙盘快照不存在") from error
         except SandboxValidationError as error:
@@ -581,6 +833,64 @@ def create_app(
         except SandboxConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @application.get(
+        "/api/sandbox/runs/{run_id}/ai-preview",
+        response_model=SandboxAiPreview,
+    )
+    def preview_sandbox_ai_round(run_id: UUID) -> SandboxAiPreview:
+        try:
+            return application.state.sandbox_ai_service.preview(str(run_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置剧情沙盘模型线路") from error
+        except (SandboxValidationError, SandboxConflictError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            messages = {
+                "sandbox_run_not_found": "沙盘运行不存在",
+                "sandbox_context_too_large": "沙盘外发上下文超过安全上限",
+                "originality_gate_blocked": "场景原创性检查为高风险，AI 沙盘已阻断",
+            }
+            raise HTTPException(
+                status_code=409,
+                detail=messages.get(str(error), "当前 AI 沙盘无法预览"),
+            ) from error
+
+    @application.post(
+        "/api/sandbox/runs/{run_id}/ai-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_sandbox_ai_round(
+        run_id: UUID,
+        body: SubmitSandboxAiRoundRequest,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = application.state.sandbox_ai_service.submit(str(run_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置剧情沙盘模型线路") from error
+        except (SandboxValidationError, SandboxConflictError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            messages = {
+                "sandbox_run_not_found": "沙盘运行不存在",
+                "sandbox_context_too_large": "沙盘外发上下文超过安全上限",
+                "external_processing_not_confirmed": "请先确认本轮沙盘外发范围",
+                "estimated_cost_exceeds_limit": "预计费用超过本次上限",
+                "sandbox_state_changed": "沙盘状态已经变化，请重新预览",
+                "originality_gate_blocked": "场景原创性检查为高风险，AI 沙盘已阻断",
+            }
+            raise HTTPException(
+                status_code=409,
+                detail=messages.get(str(error), "当前 AI 沙盘任务无法提交"),
+            ) from error
+
     @application.post("/api/sandbox/runs/{run_id}/cancel", response_model=SandboxRun)
     def cancel_sandbox_run(run_id: UUID) -> SandboxRun:
         try:
@@ -589,6 +899,183 @@ def create_app(
             raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
         except SandboxConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @application.post("/api/projects/{project_id}/research/preview", response_model=ResearchPreview)
+    def preview_research(project_id: UUID, body: ResearchRequest) -> ResearchPreview:
+        try:
+            return application.state.research_service.preview(str(project_id), body)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置资料研究模型线路") from error
+        except ValueError as error:
+            messages = {
+                "research_source_not_found": "所选全局资料不存在",
+                "research_material_too_large": "本次研究资料超过 200 万字符上限",
+            }
+            raise HTTPException(
+                status_code=409, detail=messages.get(str(error), "研究预览失败")
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/research/jobs",
+        response_model=ResearchSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_research(
+        project_id: UUID,
+        body: SubmitResearchRequest,
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> ResearchSubmission:
+        try:
+            session, job = application.state.research_service.submit(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return ResearchSubmission(session=session, job=job)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置资料研究模型线路") from error
+        except ValueError as error:
+            messages = {
+                "research_source_not_found": "所选全局资料不存在",
+                "research_material_too_large": "本次研究资料超过 200 万字符上限",
+                "research_source_changed": "资料范围已变化，请重新预览",
+                "external_processing_not_confirmed": "请先确认研究资料外发范围",
+                "estimated_cost_exceeds_limit": "研究预计费用超过本次上限",
+            }
+            raise HTTPException(
+                status_code=409, detail=messages.get(str(error), "研究任务无法提交")
+            ) from error
+
+    @application.get(
+        "/api/projects/{project_id}/research/sessions", response_model=list[ResearchSession]
+    )
+    def list_research_sessions(project_id: UUID) -> list[ResearchSession]:
+        return application.state.research_service.list_sessions(str(project_id))
+
+    @application.get("/api/research/sessions/{session_id}", response_model=ResearchWorkspace)
+    def get_research_session(session_id: UUID) -> ResearchWorkspace:
+        try:
+            return application.state.research_service.get_session(str(session_id))
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="研究会话不存在") from error
+
+    @application.post("/api/research/findings/{finding_id}/review", response_model=ResearchFinding)
+    def review_research_finding(
+        finding_id: UUID, body: ReviewResearchFindingRequest
+    ) -> ResearchFinding:
+        try:
+            return application.state.research_service.review_finding(str(finding_id), body)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="研究候选不存在") from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "research_revision_conflict": "研究候选已在其他窗口更改",
+                    "research_finding_already_reviewed": "该研究候选已完成审核",
+                }.get(str(error), "研究候选无法审核"),
+            ) from error
+
+    @application.get("/api/projects/{project_id}/writing-calendar", response_model=WritingCalendar)
+    def get_writing_calendar(
+        project_id: UUID, days: Annotated[int, Query(ge=7, le=366)] = 42
+    ) -> WritingCalendar:
+        try:
+            return application.state.author_productivity.calendar(str(project_id), days)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/chapters/{chapter_id}/annotations", response_model=list[ChapterAnnotation]
+    )
+    def list_chapter_annotations(chapter_id: UUID) -> list[ChapterAnnotation]:
+        try:
+            return application.state.author_productivity.list_annotations(str(chapter_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+
+    @application.post(
+        "/api/chapters/{chapter_id}/annotations",
+        response_model=ChapterAnnotation,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_chapter_annotation(
+        chapter_id: UUID, body: CreateAnnotationRequest
+    ) -> ChapterAnnotation:
+        try:
+            return application.state.author_productivity.create_annotation(str(chapter_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="正文已变化，请重新选中批注范围") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="请先选中一段正文") from error
+
+    @application.post(
+        "/api/chapter-annotations/{annotation_id}/resolve", response_model=ChapterAnnotation
+    )
+    def resolve_chapter_annotation(
+        annotation_id: UUID, body: ResolveAnnotationRequest
+    ) -> ChapterAnnotation:
+        try:
+            return application.state.author_productivity.resolve_annotation(
+                str(annotation_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="批注不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="批注已在其他窗口更改") from error
+
+    @application.get("/api/author-ideas", response_model=list[AuthorIdea])
+    def list_author_ideas(project_id: UUID | None = None) -> list[AuthorIdea]:
+        return application.state.author_productivity.list_ideas(
+            str(project_id) if project_id else None
+        )
+
+    @application.post(
+        "/api/author-ideas", response_model=AuthorIdea, status_code=status.HTTP_201_CREATED
+    )
+    def create_author_idea(body: CreateIdeaRequest) -> AuthorIdea:
+        try:
+            return application.state.author_productivity.create_idea(body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="灵感所属作品不存在") from error
+
+    @application.patch("/api/author-ideas/{idea_id}", response_model=AuthorIdea)
+    def update_author_idea(idea_id: UUID, body: UpdateIdeaRequest) -> AuthorIdea:
+        try:
+            return application.state.author_productivity.update_idea(str(idea_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="灵感不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="灵感已在其他窗口更改") from error
+
+    @application.post("/api/author-ideas/{idea_id}/prepare", response_model=AuthorIdea)
+    def prepare_author_idea(idea_id: UUID, body: PrepareIdeaRequest) -> AuthorIdea:
+        try:
+            return application.state.author_productivity.prepare_idea(str(idea_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="灵感不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="灵感已在其他窗口更改") from error
+
+    @application.post(
+        "/api/projects/{project_id}/story-relationships",
+        response_model=StoryRelationship,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_story_relationship(
+        project_id: UUID, body: CreateRelationshipRequest
+    ) -> StoryRelationship:
+        try:
+            return application.state.author_productivity.create_relationship(str(project_id), body)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="人物关系的角色或来源章节无效") from error
+
+    @application.get("/api/projects/{project_id}/story-graphs", response_model=StoryGraphs)
+    def get_story_graphs(project_id: UUID) -> StoryGraphs:
+        return application.state.author_productivity.graphs(str(project_id))
 
     @application.post(
         "/api/sandbox/runs/{run_id}/replay",
@@ -652,9 +1139,7 @@ def create_app(
         decision: Literal["approve", "reject"],
     ) -> SandboxCandidate:
         try:
-            return application.state.narrative_sandbox.decide_candidate(
-                str(candidate_id), decision
-            )
+            return application.state.narrative_sandbox.decide_candidate(str(candidate_id), decision)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="沙盘候选不存在") from error
         except SandboxConflictError as error:
@@ -669,9 +1154,7 @@ def create_app(
         body: CompareSandboxRunsRequest,
     ) -> SandboxComparison:
         try:
-            return application.state.narrative_sandbox.compare_runs(
-                str(project_id), body.run_ids
-            )
+            return application.state.narrative_sandbox.compare_runs(str(project_id), body.run_ids)
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="沙盘运行不存在") from error
         except (SandboxValidationError, SandboxConflictError) as error:
@@ -781,6 +1264,8 @@ def create_app(
             work=impact.work,
             projects=impact.projects,
             cache_entries=impact.cache_entries,
+            retained_craft_asset_count=impact.retained_craft_asset_count,
+            affected_craft_job_count=impact.affected_craft_job_count,
         )
 
     @application.delete(
@@ -795,13 +1280,19 @@ def create_app(
         if not confirm_purge:
             raise HTTPException(status_code=409, detail="请先查看受影响作品并确认清理")
         try:
-            impact = repository.purge_reference_work(str(work_id))
+            impact = repository.get_reference_work_impact(str(work_id))
+            jobs: JobRepository = application.state.job_repository
+            for job_id in repository.active_craft_job_ids_for_reference_work(str(work_id)):
+                jobs.request_cancel(job_id)
+            repository.purge_reference_work(str(work_id))
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="参考资产不存在") from error
         return ReferenceWorkImpactResponse(
             work=impact.work,
             projects=impact.projects,
             cache_entries=impact.cache_entries,
+            retained_craft_asset_count=impact.retained_craft_asset_count,
+            affected_craft_job_count=impact.affected_craft_job_count,
         )
 
     @application.get("/api/jobs/{job_id}", response_model=JobDetail)
@@ -850,6 +1341,11 @@ def create_app(
             return job
         except JobNotFoundError as error:
             raise HTTPException(status_code=404, detail="任务不存在") from error
+        except JobRequiresNewPreflightError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="该拆书任务需要从写作模式工作台重新预检并提交",
+            ) from error
 
     @application.get("/api/ai/status", response_model=AiStatus)
     def get_ai_status(
@@ -1020,24 +1516,12 @@ def create_app(
     def propose_ai_chapter_brief(
         chapter_id: UUID,
         body: AiChapterBriefRequest,
-        service: Annotated[AiWritingService, Depends(get_ai_writing_service)],
     ) -> AiChapterBriefProposal:
-        try:
-            return service.propose_brief(str(chapter_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="章节不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="章节已有新版本，请重新生成章纲") from error
-        except InvalidChapterStateError as error:
-            raise HTTPException(status_code=409, detail="当前章节状态不允许生成章纲") from error
-        except OriginalityGateBlockedError as error:
-            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
-        except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
-        except InvalidContextPacketError as error:
-            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
-        except AiProviderError as error:
-            raise HTTPException(status_code=502, detail="AI 暂时未能生成可用章纲") from error
+        del chapter_id, body
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="该同步入口已停用，请先预览上下文与费用，再提交章纲任务",
+        )
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-brief-preview",
@@ -1111,24 +1595,12 @@ def create_app(
     def generate_ai_chapter_draft(
         chapter_id: UUID,
         body: AiDraftRequest,
-        service: Annotated[AiWritingService, Depends(get_ai_writing_service)],
     ) -> GenerationRun:
-        try:
-            return service.generate_draft(str(chapter_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="章节不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="章节已有新版本，请重新生成正文") from error
-        except InvalidChapterStateError as error:
-            raise HTTPException(status_code=409, detail="请先保存完整章纲再生成正文") from error
-        except OriginalityGateBlockedError as error:
-            raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
-        except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
-        except InvalidContextPacketError as error:
-            raise HTTPException(status_code=409, detail="上下文已变化，请重新预览后确认") from error
-        except AiProviderError as error:
-            raise HTTPException(status_code=502, detail="AI 暂时未能生成可用正文") from error
+        del chapter_id, body
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="该同步入口已停用，请先预览上下文与费用，再提交正文任务",
+        )
 
     @application.post(
         "/api/chapters/{chapter_id}/ai-draft-preview",
@@ -1205,7 +1677,210 @@ def create_app(
         body: CreateProjectRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> Workspace:
-        return repository.create_project(body)
+        try:
+            return repository.create_project(body)
+        except InvalidTopicTemplateError as error:
+            raise HTTPException(
+                status_code=422,
+                detail="起航模板不存在或与题材不匹配",
+            ) from error
+
+    @application.get(
+        "/api/projects/{project_id}/topic-decision",
+        response_model=TopicDecision,
+    )
+    def get_topic_decision(
+        project_id: UUID,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.get_decision(str(project_id))
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/topic-decision",
+        response_model=TopicDecision,
+    )
+    def update_topic_decision(
+        project_id: UUID,
+        body: UpdateTopicDecisionRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.update_decision(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题变更与字段锁或声明范围冲突",
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/confirm",
+        response_model=TopicDecision,
+    )
+    def confirm_topic_decision(
+        project_id: UUID,
+        body: ConfirmTopicDecisionRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.confirm_decision(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="请先补齐关键选题字段，已确认版本不能重复确认",
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidates-preview",
+        response_model=TopicDecisionOutboundPreview,
+    )
+    def preview_topic_candidates(
+        project_id: UUID,
+        body: TopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionOutboundPreview:
+        try:
+            return service.preview_candidates(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidate-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_topic_candidates(
+        project_id: UUID,
+        body: TopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_candidates(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="请先确认外发范围和费用上限") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/regeneration-preview",
+        response_model=TopicDecisionOutboundPreview,
+    )
+    def preview_topic_field_regeneration(
+        project_id: UUID,
+        body: TopicDecisionRegenerationRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionOutboundPreview:
+        try:
+            return service.preview_field_regeneration(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="目标选题字段已锁定") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/regeneration-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_topic_field_regeneration(
+        project_id: UUID,
+        body: TopicDecisionRegenerationRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+        jobs: Annotated[JobRepository, Depends(get_job_repository)],
+    ) -> Job:
+        try:
+            job = service.submit_field_regeneration(str(project_id), body)
+            get_job_runtime_from_repository(application, jobs).wake()
+            return job
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="选题草稿不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="选题已有新版本，请刷新") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="目标字段已锁定，或尚未确认外发和费用范围",
+            ) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/topic-decision-candidates",
+        response_model=TopicDecisionCandidateSet,
+    )
+    def get_topic_candidates(
+        job_id: UUID,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionCandidateSet:
+        try:
+            return service.get_candidate_set(str(job_id))
+        except (JobNotFoundError, TopicDecisionNotFoundError) as error:
+            raise HTTPException(status_code=404, detail="AI 选题任务不存在") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="AI 选题任务尚无可用候选") from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidate-selection",
+        response_model=TopicDecision,
+    )
+    def select_topic_candidate(
+        project_id: UUID,
+        body: SelectTopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecision:
+        try:
+            return service.select_candidate(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="AI 选题候选不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已过期，请重新生成") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(
+                status_code=409, detail="AI 选题候选已处理或与字段锁冲突"
+            ) from error
+
+    @application.post(
+        "/api/projects/{project_id}/topic-decision/candidate-rejection",
+        response_model=TopicDecisionCandidate,
+    )
+    def reject_topic_candidate(
+        project_id: UUID,
+        body: RejectTopicDecisionCandidateRequest,
+        service: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
+    ) -> TopicDecisionCandidate:
+        try:
+            return service.reject_candidate(str(project_id), body)
+        except TopicDecisionNotFoundError as error:
+            raise HTTPException(status_code=404, detail="AI 选题候选不存在") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已过期，请重新生成") from error
+        except InvalidTopicDecisionChangeError as error:
+            raise HTTPException(status_code=409, detail="AI 选题候选已处理") from error
 
     @application.get(
         "/api/projects/{project_id}/director",
@@ -1263,15 +1938,24 @@ def create_app(
         project_id: UUID,
         body: DirectorStartupRequest,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
     ) -> DirectorOutboundPreview:
         try:
-            return service.preview_startup(str(project_id), body)
-        except NotFoundError as error:
+            bound_body = topics.bind_director_startup_request(str(project_id), body)
+            return service.preview_startup(str(project_id), bound_body)
+        except (NotFoundError, TopicDecisionNotFoundError) as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         except OriginalityGateBlockedError as error:
             raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/director/startup-jobs",
@@ -1282,18 +1966,27 @@ def create_app(
         project_id: UUID,
         body: DirectorStartupRequest,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
         jobs: Annotated[JobRepository, Depends(get_job_repository)],
     ) -> Job:
         try:
-            job = service.submit_startup(str(project_id), body)
+            bound_body = topics.bind_director_startup_request(str(project_id), body)
+            job = service.submit_startup(str(project_id), bound_body)
             get_job_runtime_from_repository(application, jobs).wake()
             return job
-        except NotFoundError as error:
+        except (NotFoundError, TopicDecisionNotFoundError) as error:
             raise HTTPException(status_code=404, detail="作品不存在") from error
         except OriginalityGateBlockedError as error:
             raise HTTPException(status_code=409, detail="请先处理蓝图原创性检查") from error
         except AiNotConfiguredError as error:
             raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail="请确认外发范围和费用上限") from error
 
@@ -1304,11 +1997,20 @@ def create_app(
     def get_director_startup_result(
         job_id: UUID,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
     ) -> DirectorStartupProposalSet:
         try:
+            topics.guard_director_startup_job(str(job_id))
             return service.get_startup_result(str(job_id))
         except JobNotFoundError as error:
             raise HTTPException(status_code=404, detail="开书任务不存在") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail="开书任务尚无可用候选") from error
 
@@ -1320,15 +2022,31 @@ def create_app(
         project_id: UUID,
         body: SelectDirectorCandidateRequest,
         service: Annotated[DirectorService, Depends(get_director_service)],
+        topics: Annotated[TopicDecisionService, Depends(get_topic_decision_service)],
     ) -> BookBlueprint:
         try:
+            topics.guard_director_startup_job(
+                body.job_id,
+                expected_project_id=str(project_id),
+            )
             return service.select_startup_candidate(str(project_id), body)
-        except (DirectorNotFoundError, JobNotFoundError) as error:
+        except (
+            DirectorNotFoundError,
+            JobNotFoundError,
+            TopicDecisionNotFoundError,
+        ) as error:
             raise HTTPException(status_code=404, detail="开书候选不存在") from error
         except StaleDirectorRevisionError as error:
             raise HTTPException(status_code=409, detail="整书蓝图已有新版本，请刷新") from error
         except InvalidDirectorChangeError as error:
             raise HTTPException(status_code=409, detail="已经选择过开书方向") from error
+        except TopicDecisionNotConfirmedError as error:
+            raise HTTPException(status_code=409, detail="请先确认当前选题") from error
+        except StaleTopicDecisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="选题已更新，请重新生成开书方向",
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/director/expansion-preview",
@@ -1632,6 +2350,29 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=409, detail="作品没有可导出的正文") from error
 
+    @application.get("/api/projects/{project_id}/manuscript-export/{export_format}")
+    def export_manuscript_binary(
+        project_id: UUID,
+        export_format: Literal["docx", "epub"],
+        service: Annotated[ManuscriptService, Depends(get_manuscript_service)],
+    ) -> Response:
+        try:
+            exported = service.export_binary(str(project_id), export_format)
+            return Response(
+                content=exported.payload,
+                media_type=exported.media_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{quote(exported.filename)}",
+                    "X-Content-SHA256": exported.content_sha256,
+                    "X-Manuscript-Volumes": str(exported.volume_count),
+                    "X-Manuscript-Chapters": str(exported.chapter_count),
+                },
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="项目不存在") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail="作品没有可导出的正文") from error
+
     @application.post(
         "/api/project-imports",
         response_model=Workspace,
@@ -1766,6 +2507,8 @@ def create_app(
         if content_type not in {
             "application/octet-stream",
             "application/pdf",
+            "application/epub+zip",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/plain",
             "text/markdown",
         }:
@@ -1855,12 +2598,21 @@ def create_app(
             if code == "file_too_large":
                 raise HTTPException(status_code=413, detail="稿件文件不能超过 20 MiB") from error
             if code in {"unsupported_format", "unsupported_manuscript_format"}:
-                raise HTTPException(status_code=415, detail="请选择 TXT 或 Markdown 稿件") from error
+                raise HTTPException(
+                    status_code=415, detail="请选择 TXT、Markdown、DOCX 或 EPUB 稿件"
+                ) from error
             messages = {
                 "empty_content": "稿件没有可导入的正文",
                 "unsupported_or_mixed_encoding": "稿件编码混杂或不受支持",
                 "null_byte": "稿件包含不安全的空字节",
                 "unsafe_control_characters": "稿件包含过多控制字符",
+                "active_docx_content": "DOCX 包含宏、OLE 或嵌入对象，已拒绝",
+                "external_docx_relationship": "DOCX 包含外部链接或模板，已拒绝",
+                "active_epub_content": "EPUB 包含脚本或远程资源，已拒绝",
+                "encrypted_zip": "加密的 DOCX/EPUB 不允许导入",
+                "zip_unsafe_path": "文件包含越界路径，已拒绝",
+                "zip_expanded_limit": "文件包解压后超过安全上限",
+                "zip_expansion_ratio": "文件包压缩比异常，已拒绝",
             }
             raise HTTPException(
                 status_code=422,
@@ -2055,26 +2807,14 @@ def create_app(
         project_id: UUID,
         body: ReferenceSynthesisRequest,
     ) -> Job:
-        service: ReferenceJobService = application.state.reference_job_service
-        try:
-            job = service.submit(str(project_id), body)
-            application.state.job_runtime.wake()
-            return job
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
-        except InvalidReferenceSelectionError as error:
-            messages = {
-                "external_processing_not_confirmed": "必须确认允许把选中区段发送给当前 AI",
-                "multiple_works_required": "至少选择两本不同作品的区段",
-                "selection_too_large": "单次最多处理 200 万字参考内容",
-                "missing_or_cross_project_segment": "选择中包含无效参考区段",
-            }
-            raise HTTPException(
-                status_code=400,
-                detail=messages.get(str(error), "参考区段选择无效"),
-            ) from error
-        except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+        del project_id, body
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版拆书已转为只读，请使用写作模式工作台",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/reference-synthesis-proposals",
@@ -2085,19 +2825,210 @@ def create_app(
         body: ReferenceSynthesisRequest,
         service: Annotated[ReferenceAnalysisService, Depends(get_reference_analysis_service)],
     ) -> ReferencePatternCard:
+        del project_id, body, service
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版拆书已转为只读，请使用写作模式工作台",
+            },
+        )
+
+    def craft_pattern_error(error: Exception) -> HTTPException:
+        code = str(error)
+        messages = {
+            "single_work_required": "单书拆解只能选择同一本作品的区段",
+            "multiple_works_required": "融合至少需要两本不同作品的模式资产",
+            "asset_not_active": "选中的模式资产已归档",
+            "fusion_asset_cannot_be_source": "融合素材不能再次作为融合来源",
+            "preflight_changed": "预检条件已变化，请重新预览",
+            "external_processing_not_confirmed": "请确认允许发送本次未命中内容给当前 AI",
+            "unknown_cost_not_confirmed": "模型价格未知，请明确确认后再提交",
+            "cost_limit_required": "请设置本次任务的最高费用",
+            "estimated_cost_exceeds_limit": "当前预估费用超过了你设置的上限",
+            "missing_or_cross_project_segment": "选择中包含无效或未关联的参考区段",
+            "selection_too_large": "单次最多分析 2000 万字符",
+        }
+        conflict_codes = {
+            "preflight_changed",
+            "asset_not_active",
+            "external_processing_not_confirmed",
+            "unknown_cost_not_confirmed",
+            "cost_limit_required",
+            "estimated_cost_exceeds_limit",
+        }
+        return HTTPException(
+            status_code=409 if code in conflict_codes else 400,
+            detail={"code": code, "message": messages.get(code, "写作模式请求无效")},
+        )
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-analysis-preview",
+        response_model=CraftPatternPreflight,
+    )
+    def preview_craft_pattern_analysis(
+        project_id: UUID,
+        body: CraftPatternAnalysisPreviewRequest,
+    ) -> CraftPatternPreflight:
+        service: CraftPatternService = application.state.craft_pattern_service
         try:
-            return service.synthesize(str(project_id), body)
+            return service.preview_analysis(str(project_id), body)
         except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="项目不存在") from error
-        except InvalidReferenceSelectionError as error:
-            raise HTTPException(
-                status_code=400,
-                detail="请从至少两本书选择区段并确认外部处理；单次最多分析 200 万字",
-            ) from error
+            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
+        except (InvalidCraftPatternError, InvalidReferenceSelectionError) as error:
+            raise craft_pattern_error(error) from error
         except AiNotConfiguredError as error:
-            raise HTTPException(status_code=409, detail="请先配置 AI 模型") from error
-        except AiProviderError as error:
-            raise HTTPException(status_code=502, detail="AI 暂时未能完成多书结构萃取") from error
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-analysis-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_craft_pattern_analysis(
+        project_id: UUID,
+        body: SubmitCraftPatternAnalysisRequest,
+    ) -> Job:
+        service: CraftPatternService = application.state.craft_pattern_service
+        try:
+            job = service.submit_analysis(str(project_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或参考区段不存在") from error
+        except (InvalidCraftPatternError, InvalidReferenceSelectionError) as error:
+            raise craft_pattern_error(error) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-fusion-preview",
+        response_model=CraftPatternPreflight,
+    )
+    def preview_craft_pattern_fusion(
+        project_id: UUID,
+        body: CraftPatternFusionPreviewRequest,
+    ) -> CraftPatternPreflight:
+        service: CraftPatternService = application.state.craft_pattern_service
+        try:
+            return service.preview_fusion(str(project_id), body)
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或模式资产不存在") from error
+        except InvalidCraftPatternError as error:
+            raise craft_pattern_error(error) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.post(
+        "/api/projects/{project_id}/craft-pattern-fusion-jobs",
+        response_model=Job,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_craft_pattern_fusion(
+        project_id: UUID,
+        body: SubmitCraftPatternFusionRequest,
+    ) -> Job:
+        service: CraftPatternService = application.state.craft_pattern_service
+        try:
+            job = service.submit_fusion(str(project_id), body)
+            application.state.job_runtime.wake()
+            return job
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或模式资产不存在") from error
+        except InvalidCraftPatternError as error:
+            raise craft_pattern_error(error) from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置 AI") from error
+
+    @application.get(
+        "/api/projects/{project_id}/reference-craft-assets",
+        response_model=list[CraftPatternAssetSummary],
+    )
+    def list_project_craft_assets(project_id: UUID) -> list[CraftPatternAssetSummary]:
+        assets = CraftPatternRepository(database)
+        try:
+            return assets.list_project_summaries(str(project_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/reference-craft-assets",
+        response_model=CraftPatternAssetPage,
+    )
+    def list_global_craft_assets(
+        for_project_id: Annotated[UUID | None, Query()] = None,
+        asset_type: Annotated[CraftPatternAssetType | None, Query()] = None,
+        work_id: Annotated[UUID | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 30,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> CraftPatternAssetPage:
+        assets = CraftPatternRepository(database)
+        try:
+            return assets.list_global_summaries(
+                for_project_id=str(for_project_id) if for_project_id else None,
+                asset_type=asset_type,
+                work_id=str(work_id) if work_id else None,
+                limit=limit,
+                offset=offset,
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/reference-craft-assets/{asset_id}",
+        response_model=CraftPatternAsset,
+    )
+    def get_craft_asset(
+        asset_id: UUID,
+        for_project_id: Annotated[UUID | None, Query()] = None,
+    ) -> CraftPatternAsset:
+        try:
+            return CraftPatternRepository(database).get_asset(
+                str(asset_id),
+                for_project_id=str(for_project_id) if for_project_id else None,
+            )
+        except (NotFoundError, InvalidCraftPatternError) as error:
+            raise HTTPException(status_code=404, detail="写作模式资产不存在或已损坏") from error
+
+    @application.get(
+        "/api/jobs/{job_id}/reference-craft-assets",
+        response_model=list[CraftPatternAsset],
+    )
+    def get_job_craft_assets(job_id: UUID) -> list[CraftPatternAsset]:
+        try:
+            return CraftPatternRepository(database).get_job_assets(str(job_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="任务不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/reference-craft-assets/{asset_id}/reuse",
+        response_model=CraftPatternAsset,
+    )
+    def reuse_craft_asset(project_id: UUID, asset_id: UUID) -> CraftPatternAsset:
+        try:
+            return CraftPatternRepository(database).reuse(str(project_id), str(asset_id))
+        except (NotFoundError, InvalidCraftPatternError) as error:
+            raise HTTPException(status_code=404, detail="作品或写作模式资产不存在") from error
+
+    @application.patch(
+        "/api/projects/{project_id}/reference-craft-assets/{asset_id}/lifecycle",
+        response_model=CraftPatternAsset,
+    )
+    def update_craft_asset_lifecycle(
+        project_id: UUID,
+        asset_id: UUID,
+        body: UpdateCraftPatternLifecycleRequest,
+    ) -> CraftPatternAsset:
+        try:
+            return CraftPatternRepository(database).update_lifecycle(
+                str(project_id), str(asset_id), body
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品或写作模式资产不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(status_code=409, detail="资产状态已更新，请刷新后重试") from error
+        except InvalidCraftPatternError as error:
+            raise craft_pattern_error(error) from error
 
     @application.post(
         "/api/projects/{project_id}/reference-pattern-cards/{card_id}/applications",
@@ -2110,13 +3041,42 @@ def create_app(
         body: ApplyReferencePatternRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
+        del project_id, card_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版模式卡已转为只读，不能再创建应用",
+            },
+        )
+
+    @application.patch(
+        "/api/projects/{project_id}/reference-pattern-applications/{application_id}/lifecycle",
+        response_model=ReferencePatternApplication,
+    )
+    def update_reference_application_lifecycle(
+        project_id: UUID,
+        application_id: UUID,
+        body: UpdateReferenceApplicationLifecycleRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferencePatternApplication:
         try:
-            return repository.apply_reference_pattern(str(project_id), str(card_id), body)
+            return repository.update_reference_application_lifecycle(
+                str(project_id),
+                str(application_id),
+                body,
+            )
         except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="模式卡不存在于当前作品") from error
+            raise HTTPException(status_code=404, detail="参考应用不存在") from error
+        except StaleRevisionError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="参考应用已有新版本，请刷新后再处理",
+            ) from error
         except InvalidReferenceApplicationError as error:
             raise HTTPException(
-                status_code=409, detail="蓝图无法应用，请检查来源或是否已应用"
+                status_code=409,
+                detail="只有通过当前原创性检查的参考应用才能重新启用",
             ) from error
 
     @application.get(
@@ -2132,6 +3092,41 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="原创性报告不存在") from error
 
+    @application.post(
+        "/api/projects/{project_id}/reference-blueprints/{application_id}/scene-originality-checks",
+        response_model=SceneOriginalityCheck,
+    )
+    def get_or_run_scene_originality_check(
+        project_id: UUID,
+        application_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> SceneOriginalityCheck:
+        try:
+            return repository.get_latest_scene_originality_check(
+                str(project_id),
+                str(application_id),
+            )
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="场景原创性报告不存在") from error
+        except InvalidReferenceApplicationError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="蓝图缺少可重检的来源或旧版报告，请重新应用模式卡",
+            ) from error
+
+    @application.get(
+        "/api/scene-originality-checks/{check_id}",
+        response_model=SceneOriginalityCheck,
+    )
+    def get_scene_originality_check(
+        check_id: UUID,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> SceneOriginalityCheck:
+        try:
+            return repository.get_scene_originality_check(str(check_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="场景原创性报告不存在") from error
+
     @application.patch(
         "/api/projects/{project_id}/reference-blueprints/{application_id}",
         response_model=ReferencePatternApplication,
@@ -2142,16 +3137,14 @@ def create_app(
         body: UpdateReferenceBlueprintRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
-        try:
-            return repository.update_reference_blueprint(str(project_id), str(application_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="蓝图不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再修改") from error
-        except InvalidReferenceApplicationError as error:
-            raise HTTPException(
-                status_code=409, detail="蓝图修改不合法，请检查变更维度和锁定状态"
-            ) from error
+        del project_id, application_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版参考蓝图已转为只读，不能再修改",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/reference-blueprints/{application_id}/originality-acknowledgements",
@@ -2163,18 +3156,33 @@ def create_app(
         body: AcknowledgeOriginalityReportRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> ReferencePatternApplication:
-        try:
-            return repository.acknowledge_originality_report(
-                str(project_id), str(application_id), body
-            )
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="蓝图不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="蓝图已有新版本，请刷新后再处理") from error
-        except InvalidReferenceApplicationError as error:
-            raise HTTPException(
-                status_code=409, detail="当前报告不能确认，高风险蓝图必须先修改"
-            ) from error
+        del project_id, application_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版原创性报告已转为只读，不能再确认",
+            },
+        )
+
+    @application.post(
+        "/api/projects/{project_id}/reference-blueprints/{application_id}/scene-originality-acknowledgements",
+        response_model=ReferencePatternApplication,
+    )
+    def acknowledge_scene_originality_check(
+        project_id: UUID,
+        application_id: UUID,
+        body: AcknowledgeOriginalityReportRequest,
+        repository: Annotated[ProjectRepository, Depends(get_repository)],
+    ) -> ReferencePatternApplication:
+        del project_id, application_id, body, repository
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "reference_v1_read_only",
+                "message": "旧版场景原创性报告已转为只读，不能再确认",
+            },
+        )
 
     @application.get("/api/projects/{project_id}", response_model=Workspace)
     def get_project(
@@ -2198,6 +3206,232 @@ def create_app(
             return repository.get_workspace_summary(str(project_id))
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
+
+    @application.post(
+        "/api/projects/{project_id}/comic-projects",
+        response_model=ComicWorkspace,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_comic_project(
+        project_id: UUID,
+        body: CreateComicProjectRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.create_project(str(project_id), body)
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+        except InvalidComicSourceError as error:
+            raise HTTPException(status_code=422, detail="漫剧来源章节无效") from error
+
+    @application.get(
+        "/api/projects/{project_id}/comic-projects",
+        response_model=list[ComicProject],
+    )
+    def list_comic_projects(project_id: UUID) -> list[ComicProject]:
+        try:
+            return application.state.comic_drama_service.list_projects(str(project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="作品不存在") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}",
+        response_model=ComicWorkspace,
+    )
+    def get_comic_project(comic_project_id: UUID) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.get_workspace(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}/delete-impact",
+        response_model=ComicDeleteImpact,
+    )
+    def get_comic_project_delete_impact(comic_project_id: UUID) -> ComicDeleteImpact:
+        try:
+            return application.state.comic_drama_service.delete_impact(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.post(
+        "/api/comic-projects/{comic_project_id}/season-plan/preview",
+        response_model=ComicAiPreview,
+    )
+    def preview_comic_season_plan(
+        comic_project_id: UUID,
+        body: ComicSeasonPlanRequest,
+    ) -> ComicAiPreview:
+        try:
+            return application.state.comic_drama_service.preview_season_plan(
+                str(comic_project_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="漫剧来源已变化，请重新创建项目") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-projects/{comic_project_id}/season-plan",
+        response_model=ComicSeasonSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_comic_season_plan(
+        comic_project_id: UUID,
+        body: SubmitComicSeasonPlanRequest,
+    ) -> ComicSeasonSubmission:
+        try:
+            return application.state.comic_drama_service.submit_season_plan(
+                str(comic_project_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+        except ComicStateConflictError as error:
+            details = {
+                "external_processing_not_confirmed": "请先确认外发范围与费用",
+                "estimated_cost_exceeds_limit": "预计费用超过本次上限",
+                "comic_source_changed": "漫剧来源已变化，请重新预览",
+            }
+            raise HTTPException(status_code=409, detail=details.get(str(error), "漫剧状态冲突"))
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-projects/{comic_project_id}/season-plan/adopt",
+        response_model=ComicWorkspace,
+    )
+    def adopt_comic_season_plan(
+        comic_project_id: UUID,
+        body: AdoptComicSeasonRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.adopt_season(str(comic_project_id), body)
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目或候选不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="季方案状态或版本已变化") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/outline/review",
+        response_model=ComicWorkspace,
+    )
+    def review_comic_episode_outline(
+        episode_id: UUID,
+        body: ReviewComicEpisodeRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.review_episode_outline(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="分集大纲状态或版本已变化") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/script/preview",
+        response_model=ComicAiPreview,
+    )
+    def preview_comic_episode_script(
+        episode_id: UUID,
+        body: ComicEpisodeScriptRequest,
+    ) -> ComicAiPreview:
+        try:
+            return application.state.comic_drama_service.preview_episode_script(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="请先批准本集大纲或刷新来源") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/script",
+        response_model=ComicEpisodeSubmission,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def submit_comic_episode_script(
+        episode_id: UUID,
+        body: SubmitComicEpisodeScriptRequest,
+    ) -> ComicEpisodeSubmission:
+        try:
+            return application.state.comic_drama_service.submit_episode_script(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="剧本生成条件或确认信息已变化") from error
+        except AiNotConfiguredError as error:
+            raise HTTPException(status_code=409, detail="请先配置漫剧 AI 模型线路") from error
+
+    @application.post(
+        "/api/comic-episodes/{episode_id}/script/review",
+        response_model=ComicWorkspace,
+    )
+    def review_comic_episode_script(
+        episode_id: UUID,
+        body: ReviewComicEpisodeRequest,
+    ) -> ComicWorkspace:
+        try:
+            return application.state.comic_drama_service.review_episode_script(
+                str(episode_id), body
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧剧集不存在") from error
+        except ComicStateConflictError as error:
+            raise HTTPException(status_code=409, detail="剧本候选状态或版本已变化") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}/audit",
+        response_model=list[ComicAuditIssue],
+    )
+    def audit_comic_project(comic_project_id: UUID) -> list[ComicAuditIssue]:
+        try:
+            return application.state.comic_drama_service.audit(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get(
+        "/api/comic-projects/{comic_project_id}/assets",
+        response_model=list[ComicAsset],
+    )
+    def list_comic_assets(comic_project_id: UUID) -> list[ComicAsset]:
+        try:
+            return application.state.comic_drama_service.assets(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get("/api/comic-projects/{comic_project_id}/production-package")
+    def get_comic_production_package(comic_project_id: UUID) -> dict[str, object]:
+        try:
+            return application.state.comic_drama_service.production_package(str(comic_project_id))
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+
+    @application.get("/api/comic-projects/{comic_project_id}/export")
+    def export_comic_production_package(
+        comic_project_id: UUID,
+        format: Literal["json", "markdown", "docx"] = Query(default="json"),
+    ) -> Response:
+        try:
+            exported = application.state.comic_drama_service.export_production_package(
+                str(comic_project_id), format
+            )
+        except ComicDramaNotFoundError as error:
+            raise HTTPException(status_code=404, detail="漫剧项目不存在") from error
+        return Response(
+            content=exported.payload,
+            media_type=exported.media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(exported.filename)}",
+                "X-Content-SHA256": exported.content_sha256,
+                "Cache-Control": "no-store",
+            },
+        )
 
     @application.post(
         "/api/projects/{project_id}/chapters",
@@ -2405,7 +3639,9 @@ def create_app(
         except NotFoundError as error:
             raise HTTPException(status_code=404, detail="项目不存在") from error
         except ValueError as error:
-            raise HTTPException(status_code=400, detail="未来知识的年份不能早于重生年份") from error
+            raise HTTPException(
+                status_code=400, detail="未来或先验知识的年份不能早于作品起始纪年"
+            ) from error
 
     @application.post(
         "/api/projects/{project_id}/story-entities",
@@ -2527,9 +3763,7 @@ def create_app(
         reviews: Annotated[ReviewRepository, Depends(get_review_repository)],
     ) -> Chapter:
         try:
-            return reviews.rollback_chapter_version(
-                str(chapter_id), str(version_id), body
-            )
+            return reviews.rollback_chapter_version(str(chapter_id), str(version_id), body)
         except ReviewNotFoundError as error:
             raise HTTPException(status_code=404, detail="章节版本不存在") from error
         except StaleReviewRevisionError as error:
@@ -2610,9 +3844,7 @@ def create_app(
         chapter_revision: int | None = Query(default=None, ge=0),
     ) -> list[ReviewFinding]:
         try:
-            return reviews.list_findings(
-                str(chapter_id), chapter_revision=chapter_revision
-            )
+            return reviews.list_findings(str(chapter_id), chapter_revision=chapter_revision)
         except ReviewNotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
 
@@ -2715,19 +3947,35 @@ def create_app(
     def transition_chapter(
         chapter_id: UUID,
         body: TransitionChapterRequest,
+        request: Request,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> Chapter:
         try:
-            chapter = repository.transition_chapter(str(chapter_id), body)
-            if chapter.status.value == "approved":
-                repository.create_fact_change_set(chapter.id)
-            return chapter
+            if body.target_status.value == "approved":
+                current = repository.get_chapter(str(chapter_id))
+                assert body.expected_content_sha256 is not None
+                request.app.state.canon_reconciliation_repository.approve_chapter_and_enqueue(
+                    project_id=current.project_id,
+                    chapter_id=current.id,
+                    expected_revision=body.expected_revision,
+                    expected_content_sha256=body.expected_content_sha256,
+                    source_writing_outcome_id=body.source_writing_outcome_id,
+                )
+                request.app.state.job_runtime.wake()
+                return repository.get_chapter(current.id)
+            return repository.transition_chapter(str(chapter_id), body)
         except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except CanonReconciliationNotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
         except StaleRevisionError as error:
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新载入") from error
+        except CanonReconciliationStaleError as error:
+            raise HTTPException(status_code=409, detail="章节正文已变化，请重新载入") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="当前章节尚未满足该状态的条件") from error
+        except CanonReconciliationConflictError as error:
+            raise HTTPException(status_code=409, detail="当前章节尚未满足批准条件") from error
 
     @application.post(
         "/api/chapters/{chapter_id}/fact-change-sets",
@@ -2738,12 +3986,11 @@ def create_app(
         chapter_id: UUID,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> FactChangeSet:
-        try:
-            return repository.create_fact_change_set(str(chapter_id))
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="章节不存在") from error
-        except InvalidChapterStateError as error:
-            raise HTTPException(status_code=409, detail="章节定稿后才能提取候选事实") from error
+        del chapter_id, repository
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="旧版事实变更集已转为只读，请使用定稿回流审签",
+        )
 
     @application.post(
         "/api/fact-change-sets/{change_set_id}/apply",
@@ -2754,16 +4001,11 @@ def create_app(
         body: ApplyFactChangeSetRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> FactChangeSet:
-        try:
-            return repository.apply_fact_change_set(str(change_set_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="候选事实变更集不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="候选事实已在其他位置处理") from error
-        except InvalidFactChangeSetStateError as error:
-            raise HTTPException(status_code=409, detail="候选事实已经处理，不能重复回灌") from error
-        except InvalidFactSelectionError as error:
-            raise HTTPException(status_code=400, detail="选择中包含不属于本次候选的事实") from error
+        del change_set_id, body, repository
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="旧版事实变更集已转为只读，不能再写入正式账本",
+        )
 
     @application.post(
         "/api/fact-change-sets/{change_set_id}/reject",
@@ -2774,14 +4016,11 @@ def create_app(
         body: RejectFactChangeSetRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> FactChangeSet:
-        try:
-            return repository.reject_fact_change_set(str(change_set_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="候选事实变更集不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="候选事实已在其他位置处理") from error
-        except InvalidFactChangeSetStateError as error:
-            raise HTTPException(status_code=409, detail="候选事实已经处理，不能重复操作") from error
+        del change_set_id, body, repository
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="旧版事实变更集已转为只读，请使用定稿回流审签",
+        )
 
     @application.post(
         "/api/future-knowledge/{knowledge_id}/review",
@@ -2897,6 +4136,11 @@ def get_director_service(request: Request) -> DirectorService:
     return service
 
 
+def get_topic_decision_service(request: Request) -> TopicDecisionService:
+    service: TopicDecisionService = request.app.state.topic_decision_service
+    return service
+
+
 def get_review_repository(request: Request) -> ReviewRepository:
     repository: ReviewRepository = request.app.state.review_repository
     return repository
@@ -2930,6 +4174,7 @@ def get_ai_writing_service(request: Request) -> AiWritingService:
         get_repository(request),
         get_ai_manager(request),
         get_context_repository(request),
+        creative_context=request.app.state.creative_context_service,
     )
 
 

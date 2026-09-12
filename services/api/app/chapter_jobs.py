@@ -9,10 +9,9 @@ from app.ai import (
     AiGatewayManager,
     AiNotConfiguredError,
     AiProviderError,
-    CompiledContextGateway,
     StreamingCompiledContextGateway,
-    StreamingDraftGateway,
     consume_ai_call_metrics,
+    require_compiled_context_gateway,
 )
 from app.context import (
     ContextCompiler,
@@ -20,8 +19,16 @@ from app.context import (
     ContextPacketNotFoundError,
     ContextRepository,
     ContextTaskType,
+    CreativeContextBlockedError,
+    CreativeContextChangedError,
+    CreativeContextCompileRequest,
+    CreativeContextPurpose,
+    CreativeContextService,
+    CreativeContextSubject,
+    CreativeContextSubjectKind,
     InvalidContextPacketError,
 )
+from app.creative_safety import CreativeSafetyProvenance
 from app.jobs.models import AttemptState, ChunkState, Job, JobKind
 from app.jobs.repository import JobRepository
 from app.jobs.runtime import JobCancellationRequested, JobExecutionContext, JobExecutionError
@@ -34,6 +41,7 @@ from app.models import (
     ChapterStatus,
     GenerationRun,
     OriginalityStatus,
+    ReferenceApplicationLifecycleState,
     Workspace,
 )
 from app.providers import (
@@ -90,7 +98,8 @@ def _chapter_data_types(workspace: Workspace, chapter: Chapter) -> list[str]:
     if any(card.confirmed for card in workspace.source_cards):
         data_types.append("已确认现实资料")
     if any(
-        application.originality_status == OriginalityStatus.PASSED
+        application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+        and application.originality_status == OriginalityStatus.PASSED
         for application in workspace.reference_pattern_applications
     ):
         data_types.append("已应用拆书蓝图")
@@ -105,6 +114,7 @@ class ChapterJobInput(BaseModel):
     context_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     context_compiler_version: str = Field(min_length=1, max_length=80)
     prompt_version: str
+    creative_safety: CreativeSafetyProvenance | None = None
 
 
 def _canonical_json(value: object) -> str:
@@ -120,6 +130,7 @@ class ChapterJobService:
         profiles: ModelProfileRepository | None = None,
         contexts: ContextRepository | None = None,
         compiler: ContextCompiler | None = None,
+        creative_context: CreativeContextService | None = None,
     ) -> None:
         self.repository = repository
         self.jobs = jobs
@@ -127,6 +138,11 @@ class ChapterJobService:
         self.profiles = profiles
         self.contexts = contexts or ContextRepository(repository.database)
         self.compiler = compiler or ContextCompiler()
+        self.creative_context = creative_context or CreativeContextService(
+            repository,
+            self.contexts,
+            compiler=self.compiler,
+        )
 
     def submit_brief(self, chapter_id: str, request: AiChapterBriefRequest) -> Job:
         return self._submit(JobKind.CHAPTER_BRIEF, chapter_id, request)
@@ -189,7 +205,9 @@ class ChapterJobService:
             request.expected_revision,
             require_brief=kind == JobKind.CHAPTER_DRAFT,
         )
+        creative_safety = self.repository.require_creative_safety(chapter.project_id)
         packet = self._resolve_context_packet(kind, workspace, chapter, request)
+        self.creative_context.require_usable(packet)
         input_payload = ChapterJobInput(
             chapter_id=chapter_id,
             expected_revision=request.expected_revision,
@@ -198,6 +216,7 @@ class ChapterJobService:
             context_sha256=packet.packet_sha256,
             context_compiler_version=packet.compiler_version,
             prompt_version=CHAPTER_JOB_PROMPT_VERSION,
+            creative_safety=creative_safety,
         ).model_dump(mode="json")
         idempotency_key = sha256(_canonical_json({
             **input_payload,
@@ -218,7 +237,7 @@ class ChapterJobService:
             progress_total=1,
             estimated_calls=1,
         )
-        self._ensure_context_artifact(job.id, packet)
+        self._ensure_context_artifact(job.id, packet, creative_safety)
         artifact_key = "brief" if kind == JobKind.CHAPTER_BRIEF else "draft"
         self.jobs.ensure_chunk(
             job.id,
@@ -245,8 +264,8 @@ class ChapterJobService:
             request.expected_revision,
             require_brief=kind == JobKind.CHAPTER_DRAFT,
         )
+        self.repository.require_creative_safety(chapter.project_id)
         packet = self._compile_context_packet(kind, workspace, chapter, request)
-        packet = self.contexts.put_packet(packet)
         profile = self._task_profile(kind)
         profile_id: str | None
         if profile is not None:
@@ -317,13 +336,22 @@ class ChapterJobService:
         chapter: Chapter,
         request: AiChapterBriefRequest,
     ) -> ContextPacket:
-        return self.compiler.compile(
+        return self.creative_context.compile(
             workspace,
-            chapter,
-            author_intent=request.author_intent,
-            task_type=ContextTaskType(kind.value),
-            token_budget=request.context_token_budget,
-            directives=self.contexts.list_directives(chapter.id),
+            CreativeContextCompileRequest(
+                purpose=(
+                    CreativeContextPurpose.BRIEF
+                    if kind == JobKind.CHAPTER_BRIEF
+                    else CreativeContextPurpose.DRAFT
+                ),
+                subject=CreativeContextSubject(
+                    kind=CreativeContextSubjectKind.CHAPTER,
+                    id=chapter.id,
+                    revision=chapter.revision,
+                ),
+                author_intent=request.author_intent,
+                token_budget=request.context_token_budget,
+            ),
         )
 
     def _resolve_context_packet(
@@ -382,6 +410,24 @@ class ChapterJobService:
         if job.kind != expected_kind:
             raise JobExecutionError("invalid_job_kind", "章节任务类型无效")
         task_input = ChapterJobInput.model_validate(self.jobs.load_input(job.id))
+        try:
+            current_safety = self.repository.require_creative_safety(
+                job.project_id, task_input.creative_safety
+            )
+        except OriginalityGateBlockedError as error:
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "创作安全依赖已变化，请重新预览后提交；模型未调用",
+            ) from error
+        if (
+            current_safety is not None
+            and current_safety.mode == "pattern_adaptation"
+            and task_input.creative_safety is None
+        ):
+            raise JobExecutionError(
+                "creative_safety_changed",
+                "旧任务缺少创作安全快照，请重新预览后提交；模型未调用",
+            )
         gateway = self.manager.gateway_for(job.provider_profile_id)
         status = gateway.status()
         if (
@@ -423,9 +469,16 @@ class ChapterJobService:
                 "context_packet_mismatch",
                 "任务上下文来源校验失败，未调用模型",
             )
+        try:
+            self.creative_context.require_current(packet)
+        except (CreativeContextBlockedError, CreativeContextChangedError) as error:
+            raise JobExecutionError(
+                "creative_context_changed",
+                "创作上下文依赖已变化或超出预算，请重新预览后提交；模型未调用",
+            ) from error
 
         artifact_key = "brief" if expected_kind == JobKind.CHAPTER_BRIEF else "draft"
-        self._ensure_context_artifact(job.id, packet)
+        self._ensure_context_artifact(job.id, packet, task_input.creative_safety)
         planned_chunk, _created = self.jobs.ensure_chunk(
             job.id,
             kind=expected_kind,
@@ -588,7 +641,12 @@ class ChapterJobService:
                     "任务冻结的上下文产物无法解析，未调用模型",
                 ) from error
 
-    def _ensure_context_artifact(self, job_id: str, packet: ContextPacket) -> None:
+    def _ensure_context_artifact(
+        self,
+        job_id: str,
+        packet: ContextPacket,
+        creative_safety: CreativeSafetyProvenance | None,
+    ) -> None:
         self.jobs.put_artifact(
             job_id,
             kind="context_packet",
@@ -602,6 +660,11 @@ class ChapterJobService:
                 "packet_sha256": packet.packet_sha256,
                 "used_tokens": packet.used_tokens,
                 "token_budget": packet.token_budget,
+                "creative_safety": (
+                    creative_safety.model_dump(mode="json")
+                    if creative_safety is not None
+                    else None
+                ),
             },
         )
 
@@ -624,20 +687,13 @@ class ChapterJobService:
             "context_compiler_version": packet.compiler_version,
             "prompt_version": task_input.prompt_version,
         }
+        compiled_gateway = require_compiled_context_gateway(gateway)
         if kind == JobKind.CHAPTER_BRIEF:
-            proposal = (
-                gateway.propose_brief_from_context(packet.rendered_context)
-                if isinstance(gateway, CompiledContextGateway)
-                else gateway.propose_brief(
-                    workspace,
-                    chapter,
-                    task_input.author_intent,
-                )
-            )
+            proposal = compiled_gateway.propose_brief_from_context(packet.rendered_context)
             if not isinstance(proposal, AiChapterBriefProposal):
                 raise AiProviderError("AI 未返回可用章纲")
             return proposal.model_dump_json(), metadata
-        if isinstance(gateway, (StreamingCompiledContextGateway, StreamingDraftGateway)):
+        if isinstance(gateway, StreamingCompiledContextGateway):
             generated_characters = 0
             checkpoint_characters = 0
 
@@ -662,29 +718,12 @@ class ChapterJobService:
                     step=f"AI 已流式生成 {generated_characters:,} 字",
                 )
 
-            candidate = (
-                gateway.draft_chapter_streaming_from_context(
-                    packet.rendered_context,
-                    on_delta,
-                )
-                if isinstance(gateway, StreamingCompiledContextGateway)
-                else gateway.draft_chapter_streaming(
-                    workspace,
-                    chapter,
-                    task_input.author_intent,
-                    on_delta,
-                )
+            candidate = gateway.draft_chapter_streaming_from_context(
+                packet.rendered_context,
+                on_delta,
             )
         else:
-            candidate = (
-                gateway.draft_chapter_from_context(packet.rendered_context)
-                if isinstance(gateway, CompiledContextGateway)
-                else gateway.draft_chapter(
-                    workspace,
-                    chapter,
-                    task_input.author_intent,
-                )
-            )
+            candidate = compiled_gateway.draft_chapter_from_context(packet.rendered_context)
         if not 300 <= len(candidate) <= 100_000:
             raise AiProviderError("AI 返回的正文长度不符合要求")
         metadata["generation_run_id"] = str(uuid5(
@@ -705,6 +744,15 @@ class ChapterJobService:
         run_id = artifact.metadata.get("generation_run_id")
         if not isinstance(run_id, str):
             raise JobExecutionError("invalid_artifact", "正文候选采用标识无效")
+        if task_input.creative_safety is None:
+            return self.repository.materialize_generation_run(
+                run_id,
+                task_input.chapter_id,
+                task_input.expected_revision,
+                candidate,
+                job.provider,
+                job.model,
+            )
         return self.repository.materialize_generation_run(
             run_id,
             task_input.chapter_id,
@@ -712,6 +760,7 @@ class ChapterJobService:
             candidate,
             job.provider,
             job.model,
+            creative_safety=task_input.creative_safety,
         )
 
     def _load_chapter(
@@ -731,7 +780,8 @@ class ChapterJobService:
         if chapter.status not in {ChapterStatus.PLANNED, ChapterStatus.DRAFTED}:
             raise InvalidChapterStateError(chapter.status.value)
         if any(
-            application.originality_status != OriginalityStatus.PASSED
+            application.lifecycle_state == ReferenceApplicationLifecycleState.ACTIVE
+            and application.originality_status != OriginalityStatus.PASSED
             for application in workspace.reference_pattern_applications
         ):
             raise OriginalityGateBlockedError("reference_blueprint_not_passed")

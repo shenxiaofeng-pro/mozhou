@@ -1,4 +1,8 @@
-export type Genre = 'historical_rebirth' | 'urban_rebirth'
+export type Genre =
+  | 'historical_rebirth'
+  | 'urban_rebirth'
+  | 'eastern_fantasy'
+  | 'western_fantasy'
 
 export type ChapterStatus = 'planned' | 'drafted' | 'reviewing' | 'approved'
 
@@ -11,6 +15,12 @@ export type JobKind =
   | 'reference_book_reduce'
   | 'reference_fusion'
   | 'review'
+  | 'sandbox_ai_round'
+  | 'research_extraction'
+  | 'comic_season_plan'
+  | 'comic_episode_script'
+  | 'topic_decision'
+  | 'pattern_adaptation'
 
 export type JobState =
   | 'queued'
@@ -45,7 +55,7 @@ export type SourceKind = 'historical_record' | 'news' | 'industry' | 'personal_n
 
 export type SourceConfidence = 'high' | 'medium' | 'low'
 
-export type ReferenceFormat = 'txt' | 'markdown' | 'pdf'
+export type ReferenceFormat = 'txt' | 'markdown' | 'pdf' | 'docx' | 'epub'
 
 export type ReferenceRightsBasis = 'self_owned' | 'authorized' | 'public_domain'
 
@@ -64,6 +74,24 @@ export type BlueprintEntityKind = 'character' | 'location' | 'organization' | 'p
 export type OriginalityRiskLevel = 'low' | 'medium' | 'high'
 
 export type OriginalityStatus = 'needs_check' | 'blocked' | 'review_required' | 'passed'
+
+export type ReferenceApplicationLifecycleState = 'draft' | 'active' | 'archived'
+
+export type CraftPatternAssetType = 'stage' | 'book_evolution' | 'fusion_material'
+
+export type CraftPatternLifecycleState = 'active' | 'archived'
+
+export type CraftPatternDimension =
+  | ReferencePatternDimension
+  | 'hook_mechanics'
+  | 'promise_payoff_cadence'
+  | 'emotional_rhythm'
+  | 'information_reveal'
+  | 'foreshadowing_cycle'
+  | 'scene_design'
+  | 'pov_narrative_distance'
+  | 'expression_parameters'
+  | 'power_progression'
 
 export type OriginalitySignal =
   | 'phrase_overlap'
@@ -86,6 +114,69 @@ export type BookBlueprintField =
   | 'protagonist_arc'
   | 'resource_growth'
   | 'relationship_design'
+
+export type TopicDecisionField =
+  | 'target_platform'
+  | 'target_audience'
+  | 'subgenre'
+  | 'premise'
+  | 'core_desire'
+  | 'long_term_promise'
+  | 'first_three_chapter_promise'
+  | 'constraints'
+  | 'forbidden_elements'
+  | 'reference_purpose'
+  | 'reality_anchor'
+  | 'first_ten_chapter_goal'
+
+export type TopicDecisionStatus = 'draft' | 'confirmed' | 'pending_reconfirmation'
+
+export type ProjectNextAction =
+  | 'confirm_topic'
+  | 'review_topic_changes'
+  | 'plan_book'
+  | 'review_downstream_plans'
+  | 'continue_writing'
+
+export type AuthorNextActionKind =
+  | 'confirm_topic'
+  | 'review_topic_changes'
+  | 'plan_book'
+  | 'review_downstream_plans'
+  | 'plan_chapter'
+  | 'generate_chapter_candidate'
+  | 'continue_chapter_draft'
+  | 'review_chapter'
+  | 'review_canon_reconciliation'
+  | 'review_rolling_plan'
+  | 'create_next_chapter'
+  | 'project_complete'
+
+export type AuthorWorkspaceView = 'topic-decision' | 'writing'
+
+export type AuthorWorkflowStage =
+  | 'topic'
+  | 'book'
+  | 'plan'
+  | 'candidate'
+  | 'review'
+  | 'feedback'
+  | 'complete'
+
+export interface AuthorNextAction {
+  kind: AuthorNextActionKind
+  target_view: AuthorWorkspaceView
+  target_stage: AuthorWorkflowStage
+  chapter_id: string | null
+  chapter_number: number | null
+  last_approved_chapter_id: string | null
+  reconciliation_id: string | null
+  rolling_plan_id: string | null
+  rolling_plan_replenishment_id: string | null
+  blocked: boolean
+}
+
+export type TopicDecisionCandidateState = 'candidate' | 'selected' | 'rejected'
 
 export type DirectorWorkflow =
   | 'director_startup'
@@ -141,6 +232,8 @@ export interface CreateProjectInput {
   rebirth_location: string
   chapter_target_words: number
   safety_buffer_chapters: number
+  template_id: string | null
+  topic_seed: string
 }
 
 export interface Project {
@@ -153,6 +246,112 @@ export interface Project {
   safety_buffer_chapters: number
   created_at: string
   updated_at: string
+}
+
+export interface TopicDecisionContent {
+  target_platform: string
+  target_audience: string
+  subgenre: string
+  premise: string
+  core_desire: string
+  long_term_promise: string
+  first_three_chapter_promise: string
+  constraints: string[]
+  forbidden_elements: string[]
+  reference_purpose: string
+  reality_anchor: string
+  first_ten_chapter_goal: string
+}
+
+export interface TopicDecision {
+  id: string
+  project_id: string
+  content: TopicDecisionContent
+  status: TopicDecisionStatus
+  locks: Record<TopicDecisionField, boolean>
+  field_versions: Record<TopicDecisionField, number>
+  rejection_reasons: Partial<Record<TopicDecisionField, string>>
+  source_template_id: string | null
+  source_job_id: string | null
+  source_candidate_ids: string[]
+  revision: number
+  confirmed_revision: number | null
+  plan_stale: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UpdateTopicDecisionInput {
+  content: TopicDecisionContent
+  changed_fields: TopicDecisionField[]
+  lock_updates: Partial<Record<TopicDecisionField, boolean>>
+  rejection_reason_updates: Partial<Record<TopicDecisionField, string | null>>
+  expected_revision: number
+}
+
+export interface ConfirmTopicDecisionInput {
+  expected_revision: number
+}
+
+export interface TopicDecisionCandidateRequest {
+  expected_revision: number
+  author_intent: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface TopicDecisionRegenerationRequest extends TopicDecisionCandidateRequest {
+  target_field: TopicDecisionField
+}
+
+export interface TopicDecisionOutboundPreview {
+  mode: 'full' | 'field_regeneration'
+  target_field: TopicDecisionField | null
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  data_types: string[]
+  content_scope: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_calls: number
+  estimated_cost_microusd: number | null
+}
+
+export interface TopicDecisionCandidate {
+  id: string
+  ordinal: number
+  label: string
+  content: TopicDecisionContent
+  changed_fields: TopicDecisionField[]
+  rationale: string
+  risks: string[]
+  state: TopicDecisionCandidateState
+  rejection_reason: string | null
+}
+
+export interface TopicDecisionCandidateSet {
+  job_id: string
+  project_id: string
+  based_on_revision: number
+  target_field: TopicDecisionField | null
+  candidates: TopicDecisionCandidate[]
+}
+
+export interface SelectTopicDecisionCandidateInput {
+  job_id: string
+  candidate_id: string
+  selected_fields: TopicDecisionField[]
+  expected_revision: number
+}
+
+export interface RejectTopicDecisionCandidateInput {
+  job_id: string
+  candidate_id: string
+  reason: string
+  expected_revision: number
 }
 
 export interface DiagnosticCheck {
@@ -235,6 +434,13 @@ export interface BetaMetrics {
   ai_applied_count: number
   ai_adoption_rate: number | null
   mean_manual_modification_ratio: number | null
+  mean_ai_text_retention_rate: number | null
+  manual_adjustment_type_counts: Record<
+    'accepted_as_is' | 'light_edit' | 'substantial_edit' | 'rewrite' | 'partial_adoption',
+    number
+  >
+  longest_consecutive_written_chapters: number
+  ten_chapter_sequence_completed: boolean
   review_finding_count: number
   review_accepted_count: number
   review_acceptance_rate: number | null
@@ -247,14 +453,22 @@ export interface BetaMetrics {
   originality_blocked_count: number
 }
 
+export interface BetaSubjectiveRating {
+  category: BetaFeedbackCategory
+  context: BetaFeedbackContext
+  response_count: number
+  mean_rating: number
+}
+
 export interface BetaEvaluationReport {
   format: 'mozhou-closed-beta-report'
-  format_version: 1
+  format_version: 2
   generated_at: string
   project_id: string
   template_ids: string[]
   milestones: BetaMilestone[]
   metrics: BetaMetrics
+  subjective_ratings: BetaSubjectiveRating[]
   feedback: BetaFeedback[]
   privacy_notice: string
 }
@@ -284,6 +498,8 @@ export type SandboxCandidateState = 'candidate' | 'approved' | 'rejected'
 
 export type SandboxVariableValue = boolean | number | string
 
+export type SandboxRoundOrigin = 'rules' | 'ai'
+
 export interface SandboxActor {
   id: string
   name: string
@@ -301,6 +517,7 @@ export interface SandboxTemplate {
   id: string
   label: string
   description: string
+  genres: Genre[]
   suggested_variables: Record<string, SandboxVariableValue>
   actors: SandboxActor[]
 }
@@ -364,6 +581,16 @@ export interface SandboxAction {
   summary: string
 }
 
+export interface SandboxAiActionDraft {
+  actor_id: string
+  action_kind: SandboxActionKind
+  target_actor_id: string | null
+  location: string
+  required_knowledge: string[]
+  motive: string
+  intended_consequence: string
+}
+
 export interface SandboxOutcome {
   actor_id: string
   summary: string
@@ -382,6 +609,10 @@ export interface SandboxRound {
   outcomes: SandboxOutcome[]
   assumptions: string[]
   evidence: Array<Record<string, string>>
+  origin: SandboxRoundOrigin
+  model_proposals: SandboxAiActionDraft[]
+  rejected_proposals: Array<Record<string, string>>
+  job_id: string | null
   state_before_sha256: string
   state_after_sha256: string
   created_at: string
@@ -397,6 +628,7 @@ export interface SandboxRun {
   action_budget: number
   actions_used: number
   current_state_sha256: string
+  execution_mode: SandboxRoundOrigin
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -476,9 +708,54 @@ export interface SandboxWorkspace {
   candidates: SandboxCandidate[]
 }
 
+export interface SandboxAiPreview {
+  task_type: 'sandbox'
+  run_id: string
+  round_number: number
+  state_sha256: string
+  snapshot_sha256: string
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  data_types: string[]
+  content_scope: string
+  actor_count: number
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  prompt_version: string
+  context_sha256: string
+}
+
+export interface SubmitSandboxAiRoundInput {
+  expected_state_sha256: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1 | 2 | 3 | 4 | 5 | 6
+  format_version:
+    | 1
+    | 2
+    | 3
+    | 4
+    | 5
+    | 6
+    | 7
+    | 8
+    | 9
+    | 10
+    | 11
+    | 12
+    | 13
+    | 14
+    | 15
+    | 16
+    | 17
+    | 18
   exported_at: string
   source_project_id: string
   source_project_title: string
@@ -698,6 +975,7 @@ export interface DirectorOutboundPreview {
   estimated_output_tokens: number
   estimated_calls: number
   estimated_cost_microusd: number | null
+  context_packet?: ContextPacket | null
 }
 
 export interface DirectorPreReviewFinding {
@@ -794,7 +1072,7 @@ export interface ManuscriptImportVolume {
 
 export interface ManuscriptImportPreview {
   source_filename: string
-  source_format: 'txt' | 'markdown'
+  source_format: 'txt' | 'markdown' | 'docx' | 'epub'
   source_sha256: string
   source_encoding: string
   encoding_confidence: number
@@ -902,7 +1180,7 @@ export interface SerialDashboard {
 }
 
 export interface WorkspaceSearchResult {
-  kind: 'project' | 'chapter' | 'character' | 'resource' | 'thread'
+  kind: 'project' | 'chapter' | 'character' | 'resource' | 'thread' | 'idea' | 'annotation'
   id: string
   title: string
   snippet: string
@@ -1111,6 +1389,8 @@ export interface ReferenceWorkImpact {
   work: ReferenceWork
   projects: Project[]
   cache_entries: number
+  retained_craft_asset_count?: number
+  affected_craft_job_count?: number
 }
 
 export interface ContinuityIssue {
@@ -1187,6 +1467,7 @@ export interface ReviewOutboundPreview {
   estimated_calls: number
   estimated_cost_microusd: number | null
   context_sha256: string
+  context_packet?: ContextPacket | null
 }
 
 export interface ReviewChapterInput {
@@ -1257,6 +1538,7 @@ export interface ResumeCard {
   active_entities: ResumeCardItem[]
   pending_reviews: number
   warning_count: number
+  next_action?: AuthorNextAction | null
 }
 
 export interface AiStatus {
@@ -1275,7 +1557,123 @@ export interface ConfigureAiInput {
 
 export type ProviderKind = 'openai' | 'openai_compatible'
 
-export type AiTaskType = 'chapter_brief' | 'chapter_draft' | 'reference_analysis' | 'review'
+export type AiTaskType =
+  | 'chapter_brief'
+  | 'chapter_draft'
+  | 'reference_analysis'
+  | 'review'
+  | 'sandbox'
+  | 'research'
+  | 'comic_season_plan'
+  | 'comic_episode_script'
+  | 'pattern_adaptation'
+
+export type ResearchCategory = 'historical_event' | 'local_system' | 'industry_rule' | 'price_technology' | 'controversy'
+export type ResearchMode = 'local' | 'ai'
+
+export interface ResearchInput {
+  title: string
+  question: string
+  era_start: number
+  era_end: number
+  region: string
+  material_type: string
+  mode: ResearchMode
+  source_document_ids: string[]
+  pasted_text: string
+  pasted_label: string
+}
+
+export interface ResearchPreview {
+  source_set_sha256: string
+  sources: Array<{ source_document_id: string | null; label: string; source_format: string; character_count: number; content_sha256: string }>
+  character_count: number
+  estimated_calls: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  requires_external_confirmation: boolean
+  data_types: string[]
+  content_scope: string
+}
+
+export interface ResearchSession {
+  id: string
+  project_id: string
+  title: string
+  question: string
+  era_start: number
+  era_end: number
+  region: string
+  material_type: string
+  mode: ResearchMode
+  state: 'queued' | 'running' | 'ready' | 'failed' | 'cancelled'
+  source_set_sha256: string
+  job_id: string | null
+  invalid_ai_findings: number
+  finding_count: number
+  candidate_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ResearchFinding {
+  id: string
+  session_id: string
+  research_source_id: string
+  source_document_id: string | null
+  source_label: string
+  category: ResearchCategory
+  title: string
+  summary: string
+  evidence_excerpt: string
+  evidence_sha256: string
+  start_char: number
+  end_char: number
+  page_number_start: number | null
+  page_number_end: number | null
+  applicable_year_start: number
+  applicable_year_end: number
+  region: string
+  confidence: SourceConfidence
+  conflict_key: string
+  conflict_count: number
+  origin: 'local' | 'ai'
+  state: 'candidate' | 'approved' | 'rejected'
+  source_card_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ResearchWorkspace {
+  session: ResearchSession
+  sources: ResearchPreview['sources']
+  findings: ResearchFinding[]
+}
+
+export interface ResearchSubmission { session: ResearchSession; job: Job }
+
+export interface WritingCalendarDay { date: string; net_characters: number; target_characters: number; met_goal: boolean }
+export interface WritingCalendar { project_id: string; timezone: string; days: WritingCalendarDay[]; total_net_characters: number; streak_days: number }
+export interface ChapterAnnotation {
+  id: string; project_id: string; chapter_id: string; chapter_revision: number; content_sha256: string
+  start_char: number; end_char: number; selected_text: string; context_before: string; context_after: string
+  comment: string; status: 'open' | 'resolved' | 'stale'; revision: number; created_at: string; updated_at: string
+}
+export interface AuthorIdea {
+  id: string; project_id: string | null; title: string; content: string; tags: string[]
+  status: 'inbox' | 'planned' | 'applied' | 'archived'; target_kind: 'chapter_brief' | 'source_card' | 'character' | null
+  target_id: string | null; revision: number; created_at: string; updated_at: string
+}
+export interface StoryGraphNode { id: string; label: string; kind: 'character' | 'resource' | 'thread' | 'chapter'; status: string }
+export interface StoryGraphEdge { id: string; source: string; target: string; label: string; status: string; chapter_id: string | null }
+export interface StoryGraphs { relationship_nodes: StoryGraphNode[]; relationship_edges: StoryGraphEdge[]; thread_nodes: StoryGraphNode[]; thread_edges: StoryGraphEdge[] }
+export interface StoryRelationship { id: string; project_id: string; source_entity_id: string; target_entity_id: string; relation_type: string; summary: string; status: 'active' | 'historical'; source_chapter_id: string | null; revision: number; created_at: string; updated_at: string }
 
 export interface ModelCapabilities {
   structured_output: boolean
@@ -1328,6 +1726,54 @@ export interface UpdateAiTaskDefaultInput {
 
 export type ContextTaskType = 'chapter_brief' | 'chapter_draft'
 
+export type CreativeContextPurpose =
+  | 'startup'
+  | 'expansion'
+  | 'field'
+  | 'brief'
+  | 'draft'
+  | 'candidate_review'
+  | 'canon_reconciliation'
+  | 'preference'
+
+export type CreativeContextSubjectKind = 'project' | 'book_blueprint' | 'chapter' | 'review_window'
+
+export interface CreativeContextSubject {
+  kind: CreativeContextSubjectKind
+  id: string
+  revision: number | null
+  content_sha256: string | null
+}
+
+export interface ContextDependencyRef {
+  id: string
+  revision: number
+  content_sha256: string
+}
+
+export interface ContextDependencySnapshot {
+  schema_version: 1 | 2
+  topic: ContextDependencyRef | null
+  writing_pattern_profile: ContextDependencyRef | null
+  writing_pattern_source_availability: 'source_verified' | 'abstract_only' | null
+  base_blueprint: ContextDependencyRef | null
+  canon_state?: ContextDependencyRef | null
+  author_preference_state?: ContextDependencyRef | null
+  subject_sha256: string
+}
+
+export interface CreativeContextCompileInput {
+  purpose: CreativeContextPurpose
+  subject: CreativeContextSubject
+  token_budget?: number
+  author_intent?: string
+  candidate_count?: number
+  chapter_count?: number
+  target_field?: BookBlueprintField | null
+  window_size?: number
+  review_dimensions?: ReviewDimension[]
+}
+
 export type ContextTier =
   | 'hard_constraint'
   | 'canon'
@@ -1355,6 +1801,7 @@ export interface ContextItem {
   id: string
   kind:
     | 'security_boundary'
+    | 'writing_pattern_profile'
     | 'author_intent'
     | 'project_anchor'
     | 'current_chapter'
@@ -1369,6 +1816,8 @@ export interface ContextItem {
     | 'approved_blueprint'
     | 'book_blueprint'
     | 'rolling_chapter_plan'
+    | 'canon_record'
+    | 'author_preference'
   tier: ContextTier
   label: string
   content: string
@@ -1395,9 +1844,15 @@ export interface ContextTierUsage {
 export interface ContextPacket {
   id: string
   project_id: string
-  chapter_id: string
-  chapter_revision: number
-  task_type: ContextTaskType
+  chapter_id: string | null
+  chapter_revision: number | null
+  task_type: ContextTaskType | null
+  purpose: CreativeContextPurpose
+  subject: CreativeContextSubject
+  profile_fingerprint_sha256: string | null
+  dependency_snapshot: ContextDependencySnapshot
+  dependency_fingerprint_sha256: string
+  blocking_reasons: string[]
   compiler_version: string
   token_budget: number
   used_tokens: number
@@ -1409,6 +1864,96 @@ export interface ContextPacket {
   tier_usage: ContextTierUsage[]
   conflict_notes: string[]
   created_at: string
+}
+
+export function creativeContextCanSubmit(packet: ContextPacket): boolean {
+  return packet.blocking_reasons.length === 0 && packet.overflow_tokens === 0
+}
+
+export type CreativePlanSubjectKind = 'book_blueprint' | 'volume_plan' | 'rolling_plan'
+
+export type CreativePlanDependencyState = 'current' | 'stale' | 'legacy'
+
+export type PlanRebaseCandidateState = 'candidate' | 'adopted' | 'stale' | 'rejected'
+
+export interface CreativePlanImpactTarget {
+  kind: CreativePlanSubjectKind
+  id: string
+  revision: number
+  locked: boolean
+  state: CreativePlanDependencyState
+  stale_reasons: string[]
+}
+
+export interface CreativePlanImpactPreview {
+  project_id: string
+  current_dependency: ContextDependencySnapshot
+  current_dependency_fingerprint_sha256: string
+  reasons: string[]
+  affected_blueprint_fields: BookBlueprintField[]
+  locked_blueprint_fields: BookBlueprintField[]
+  targets: CreativePlanImpactTarget[]
+  approved_chapter_count: number
+  can_rebase: boolean
+}
+
+export interface PlanRebaseBlueprintDraft {
+  id: string
+  expected_revision: number
+  content: BookBlueprintContent
+  locks: Record<BookBlueprintField, boolean>
+}
+
+export interface PlanRebaseVolumeDraft {
+  id: string
+  expected_revision: number
+  locked: boolean
+  content: VolumePlanContent
+}
+
+export interface PlanRebaseRollingDraft {
+  id: string
+  expected_revision: number
+  locked: boolean
+  content: RollingChapterPlanContent
+}
+
+export interface PlanRebaseCandidate {
+  id: string
+  project_id: string
+  state: PlanRebaseCandidateState
+  revision: number
+  based_on_dependency_fingerprint_sha256: string
+  target_dependency_fingerprint_sha256: string
+  impact: CreativePlanImpactPreview
+  book_blueprint: PlanRebaseBlueprintDraft | null
+  volume_plans: PlanRebaseVolumeDraft[]
+  rolling_chapter_plans: PlanRebaseRollingDraft[]
+  created_at: string
+  updated_at: string
+  adopted_at: string | null
+}
+
+export interface CreatePlanRebaseCandidateInput {
+  expected_dependency_fingerprint_sha256: string
+}
+
+export interface UpdatePlanRebaseCandidateInput {
+  expected_revision: number
+  book_blueprint_content?: BookBlueprintContent
+  volume_plans: Array<{ id: string; content: VolumePlanContent }>
+  rolling_chapter_plans: Array<{ id: string; content: RollingChapterPlanContent }>
+}
+
+export interface AdoptPlanRebaseCandidateInput {
+  expected_revision: number
+  expected_dependency_fingerprint_sha256: string
+  idempotency_key: string
+}
+
+export interface AdoptPlanRebaseCandidateResult {
+  candidate: PlanRebaseCandidate
+  planning: DirectorPlanningSnapshot
 }
 
 export interface ContextDirective {
@@ -1466,6 +2011,9 @@ export interface AiChapterBriefProposal {
 export interface Workspace {
   project: Project
   chapters: Chapter[]
+  topic_decision: TopicDecision | null
+  next_action: ProjectNextAction
+  author_next_action?: AuthorNextAction | null
   manuscript_volumes?: ManuscriptVolume[]
   manuscript_scenes?: ManuscriptScene[]
   book_blueprint: BookBlueprint | null
@@ -1583,6 +2131,613 @@ export interface ReferenceSynthesisInput {
   confirm_external_processing: boolean
 }
 
+export interface CraftPatternAnalysisPreviewInput {
+  selected_segment_ids: string[]
+  author_focus: string
+}
+
+export interface CraftPatternAnalysisJobInput extends CraftPatternAnalysisPreviewInput {
+  confirm_external_processing: boolean
+  confirm_unknown_cost: boolean
+  max_estimated_cost_microusd: number | null
+  expected_preflight_sha256: string
+}
+
+export interface CraftPatternFusionPreviewInput {
+  selected_asset_version_ids: string[]
+  author_focus: string
+}
+
+export interface CraftPatternFusionJobInput extends CraftPatternFusionPreviewInput {
+  confirm_external_processing: boolean
+  confirm_unknown_cost: boolean
+  max_estimated_cost_microusd: number | null
+  expected_preflight_sha256: string
+}
+
+export interface CraftPatternPreviewWork {
+  work_id: string
+  title: string
+  segment_count: number
+  character_count: number
+}
+
+export interface CraftPatternPreviewSegment {
+  segment_id: string
+  work_id: string
+  work_title: string
+  ordinal: number
+  start_char: number
+  end_char: number
+  chapter_start: string | null
+  chapter_end: string | null
+  character_count: number
+}
+
+export interface CraftPatternPreviewAsset {
+  asset_version_id: string
+  content_sha256: string
+  title: string
+  asset_type: CraftPatternAssetType
+  version: number
+  source_work_ids: string[]
+}
+
+export interface CraftPatternPreflight {
+  operation: 'analysis' | 'fusion'
+  selected_works: CraftPatternPreviewWork[]
+  selected_segments: CraftPatternPreviewSegment[]
+  selected_assets: CraftPatternPreviewAsset[]
+  selected_character_count: number
+  stage_card_count: number
+  book_evolution_count: number
+  fusion_material_count: number
+  map_calls: number
+  stage_calls: number
+  book_calls: number
+  fusion_calls: number
+  planned_calls: number
+  cache_hit_calls: number
+  uncached_calls: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  profile_id: string | null
+  profile_name: string | null
+  provider: AiProvider
+  model: string
+  data_types: string[]
+  content_scope: string
+  prompt_version: string
+  preflight_sha256: string
+}
+
+export interface CraftPatternEvidence {
+  id: string
+  work_id: string
+  work_title: string
+  segment_id: string
+  stage_label: string
+  chapter_label: string | null
+  absolute_start_char: number
+  absolute_end_char: number
+  evidence_summary: string
+  evidence_sha256: string
+  confidence: number
+}
+
+export interface CraftPatternItem {
+  dimension: CraftPatternDimension
+  name: string
+  observation: string
+  transferable_rule: string
+  adaptation_risk: string
+  evidence: CraftPatternEvidence[]
+}
+
+export interface CraftPatternAssetSummary {
+  id: string
+  series_id: string
+  asset_type: CraftPatternAssetType
+  version: number
+  content_sha256: string
+  lifecycle_state: CraftPatternLifecycleState | null
+  lifecycle_revision: number | null
+  source_work_ids: string[]
+  source_segment_ids: string[]
+  source_asset_version_ids: string[]
+  title: string
+  summary: string
+  provider: AiProvider
+  model: string
+  prompt_version: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CraftPatternAsset extends CraftPatternAssetSummary {
+  schema_version: 2
+  source_job_id: string | null
+  author_focus: string
+  craft_items: CraftPatternItem[]
+}
+
+export interface CraftPatternAssetPage {
+  items: CraftPatternAssetSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface UpdateCraftPatternLifecycleInput {
+  state: CraftPatternLifecycleState
+  expected_lifecycle_revision: number
+}
+
+export type WritingPatternPurpose = 'learn' | 'counterexample'
+
+export type WritingPatternStrategy = 'preserve_function' | 'transform' | 'avoid'
+
+export type WritingPatternStage =
+  | 'startup'
+  | 'volume'
+  | 'rolling'
+  | 'chapter_brief'
+  | 'chapter_draft'
+  | 'rewrite'
+  | 'review'
+
+export type WritingPatternSafetyBasis = 'source_verified' | 'abstract_only'
+
+export type WritingPatternLifecycleState = 'active' | 'archived'
+
+export type WritingPatternConflictResolution =
+  | 'choose_source'
+  | 'combine_as_transform'
+  | 'exclude_all'
+
+export interface WritingPatternRecipeEntryInput {
+  asset_version_id: string
+  asset_content_sha256: string
+  dimension: CraftPatternDimension
+  pattern_name: string
+  purpose: WritingPatternPurpose
+  strategy: WritingPatternStrategy
+  weight: number
+  applicable_stages: WritingPatternStage[]
+  chapter_start: number | null
+  chapter_end: number | null
+  note: string
+}
+
+export interface WritingPatternConflictDecisionInput {
+  conflict_key: string
+  resolution: WritingPatternConflictResolution
+  chosen_entry_key: string | null
+}
+
+export interface WritingPatternWorkFingerprint {
+  basis: 'content_sha256' | 'abstract_lineage'
+  identity_sha256: string
+}
+
+export interface WritingPatternRecipeSource {
+  entry_key: string
+  asset_version_id: string
+  asset_series_id: string
+  asset_version: number
+  asset_content_sha256: string
+  asset_type: CraftPatternAssetType
+  dimension: CraftPatternDimension
+  pattern_name: string
+  transferable_rule: string
+  adaptation_risk: string
+  purpose: WritingPatternPurpose
+  strategy: WritingPatternStrategy
+  weight: number
+  applicable_stages: WritingPatternStage[]
+  chapter_start: number | null
+  chapter_end: number | null
+  note: string
+  source_work_fingerprints: WritingPatternWorkFingerprint[]
+  source_snapshot_sha256: string
+}
+
+export interface WritingPatternConflict {
+  conflict_key: string
+  dimension: CraftPatternDimension
+  applicable_stage: WritingPatternStage
+  entry_keys: string[]
+  reason: 'preserve_vs_avoid' | 'competing_preserve_rules'
+}
+
+export interface AppliedWritingPatternConflictDecision extends WritingPatternConflictDecisionInput {
+  affected_entry_keys: string[]
+}
+
+export interface ModelSafeWritingPatternRule {
+  source_content_sha256: string
+  dimension: CraftPatternDimension
+  name: string
+  transferable_rule: string
+  adaptation_risk: string
+  purpose: WritingPatternPurpose
+  strategy: WritingPatternStrategy
+  weight_basis_points: number
+  applicable_stages: WritingPatternStage[]
+  chapter_start: number | null
+  chapter_end: number | null
+}
+
+export interface ModelSafeWritingPatternProfile {
+  schema_version: 1
+  compiler_version: string
+  topic_revision: number
+  topic_content_sha256: string
+  recipe_content_sha256: string
+  safety_basis: WritingPatternSafetyBasis
+  rules: ModelSafeWritingPatternRule[]
+}
+
+export interface PreviewWritingPatternRecipeInput {
+  name: string
+  description: string
+  expected_topic_revision: number
+  entries: WritingPatternRecipeEntryInput[]
+  conflict_decisions: WritingPatternConflictDecisionInput[]
+}
+
+export interface CreateWritingPatternRecipeInput extends PreviewWritingPatternRecipeInput {
+  expected_preview_sha256: string
+}
+
+export interface PreviewWritingPatternRecipeVersionInput extends PreviewWritingPatternRecipeInput {
+  expected_latest_version: number
+}
+
+export interface CreateWritingPatternRecipeVersionInput extends PreviewWritingPatternRecipeVersionInput {
+  expected_preview_sha256: string
+}
+
+export interface WritingPatternRecipePreview {
+  name: string
+  description: string
+  expected_topic_revision: number
+  expected_latest_version: number | null
+  sources: WritingPatternRecipeSource[]
+  conflicts: WritingPatternConflict[]
+  decisions: WritingPatternConflictDecisionInput[]
+  unresolved_conflict_count: number
+  source_asset_count: number
+  source_work_count: number
+  safety_basis: WritingPatternSafetyBasis
+  source_snapshot_sha256: string
+  recipe_content_sha256: string
+  preview_sha256: string
+}
+
+export interface WritingPatternRecipeVersionSummary {
+  id: string
+  recipe_id: string
+  version: number
+  name: string
+  description: string
+  source_asset_count: number
+  source_work_count: number
+  safety_basis: WritingPatternSafetyBasis
+  source_snapshot_sha256: string
+  content_sha256: string
+  created_at: string
+}
+
+export interface WritingPatternRecipeVersion extends WritingPatternRecipeVersionSummary {
+  sources: WritingPatternRecipeSource[]
+  conflicts: WritingPatternConflict[]
+  conflict_decisions: WritingPatternConflictDecisionInput[]
+}
+
+export interface WritingPatternRecipeSummary {
+  id: string
+  lifecycle_state: WritingPatternLifecycleState
+  lifecycle_revision: number
+  latest_version: WritingPatternRecipeVersionSummary
+  created_at: string
+  updated_at: string
+}
+
+export interface WritingPatternRecipePage {
+  items: WritingPatternRecipeSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface WritingPatternRecipeSeries {
+  id: string
+  lifecycle_state: WritingPatternLifecycleState
+  lifecycle_revision: number
+  versions: WritingPatternRecipeVersionSummary[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PreviewWritingPatternReuseInput {
+  expected_recipe_content_sha256: string
+  expected_topic_revision: number
+}
+
+export interface ReuseWritingPatternRecipeInput extends PreviewWritingPatternReuseInput {
+  expected_preview_sha256: string
+}
+
+export interface WritingPatternProfilePreview {
+  recipe_version_id: string
+  recipe_content_sha256: string
+  topic_decision_version_id: string
+  topic_revision: number
+  topic_content_sha256: string
+  safety_basis: WritingPatternSafetyBasis
+  model_safe_profile: ModelSafeWritingPatternProfile
+  conflicts: WritingPatternConflict[]
+  decisions: AppliedWritingPatternConflictDecision[]
+  excluded_entry_keys: string[]
+  source_snapshot_sha256: string
+  profile_fingerprint_sha256: string
+  preview_sha256: string
+}
+
+export interface WritingPatternProfileSummary {
+  id: string
+  project_id: string
+  recipe_version_id: string
+  recipe_content_sha256: string
+  topic_revision: number
+  topic_content_sha256: string
+  safety_basis: WritingPatternSafetyBasis
+  profile_fingerprint_sha256: string
+  lifecycle_state: WritingPatternLifecycleState
+  lifecycle_revision: number
+  is_current: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WritingPatternProfileVersion extends WritingPatternProfileSummary {
+  topic_decision_version_id: string
+  compiler_version: string
+  source_snapshot_sha256: string
+  model_safe_profile: ModelSafeWritingPatternProfile
+  conflicts: WritingPatternConflict[]
+  decisions: AppliedWritingPatternConflictDecision[]
+  excluded_entry_keys: string[]
+}
+
+export interface UpdateWritingPatternLifecycleInput {
+  state: WritingPatternLifecycleState
+  expected_lifecycle_revision: number
+}
+
+export type PatternDistinctAxis =
+  | 'core_conflict'
+  | 'character_relationships'
+  | 'resource_progression'
+  | 'scene_organization'
+  | 'ending'
+
+export type PatternAdaptationResultState = 'pending' | 'available' | 'stale' | 'invalid'
+
+export type PatternAdaptationCostStatus = 'free' | 'known' | 'unavailable'
+
+export type PatternAdaptationCandidateSource = 'model' | 'author_edit'
+
+export interface PatternAdaptationPreflightInput {
+  profile_version_id: string
+  expected_profile_fingerprint_sha256: string
+  expected_topic_revision: number
+  expected_topic_content_sha256: string
+  expected_base_blueprint_revision: number | null
+  expected_base_blueprint_content_sha256: string | null
+  author_intent: string
+  provider_profile_id: string | null
+}
+
+export interface SubmitPatternAdaptationInput extends PatternAdaptationPreflightInput {
+  expected_preview_sha256: string
+  confirm_external_processing: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface PatternAdaptationPreflight {
+  profile_version_id: string
+  profile_fingerprint_sha256: string
+  recipe_version_id: string
+  recipe_content_sha256: string
+  source_availability: WritingPatternSafetyBasis
+  topic_decision_version_id: string
+  topic_revision: number
+  topic_content_sha256: string
+  base_blueprint_id: string | null
+  base_blueprint_revision: number | null
+  base_blueprint_content_sha256: string | null
+  dependency_fingerprint_sha256: string
+  safe_context_sha256: string
+  lock_snapshot_sha256: string
+  provider: string
+  provider_profile_id: string | null
+  provider_profile_name: string
+  provider_profile_revision: number | null
+  model: string
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_calls: 1
+  estimated_cost_microusd: number | null
+  cost_status: PatternAdaptationCostStatus
+  data_types: string[]
+  content_scope: string
+  locked_fields: BookBlueprintField[]
+  relationship_mode: 'rebuild_by_default'
+  preview_sha256: string
+}
+
+export interface PatternAdaptationCandidateVersion {
+  id: string
+  candidate_id: string
+  revision: number
+  blueprint: BookBlueprintContent
+  key_scene_sequence: string[]
+  transformation_notes: string[]
+  content_sha256: string
+  changed_fields: BookBlueprintField[]
+  source: PatternAdaptationCandidateSource
+  created_at: string
+}
+
+export interface PatternAdaptationCandidate {
+  id: string
+  proposal_id: string
+  ordinal: number
+  label: string
+  why_distinct: string
+  distinct_axes: PatternDistinctAxis[]
+  risk_hypotheses: string[]
+  current_version: PatternAdaptationCandidateVersion
+  created_at: string
+  updated_at: string
+}
+
+export interface PatternAdaptationProposal {
+  id: string
+  job_id: string
+  project_id: string
+  profile_version_id: string
+  profile_fingerprint_sha256: string
+  recipe_version_id: string
+  recipe_content_sha256: string
+  topic_decision_version_id: string
+  topic_revision: number
+  topic_content_sha256: string
+  base_blueprint_id: string | null
+  base_blueprint_revision: number | null
+  base_blueprint_content_sha256: string | null
+  dependency_fingerprint_sha256: string
+  safe_context_sha256: string
+  lock_snapshot_sha256: string
+  provider: string
+  provider_profile_id: string | null
+  provider_profile_revision: number | null
+  model: string
+  input_cost_microusd_per_million: number | null
+  output_cost_microusd_per_million: number | null
+  result_state: PatternAdaptationResultState
+  stale_reason: string | null
+  candidates: PatternAdaptationCandidate[]
+  created_at: string
+  updated_at: string
+}
+
+export interface EditPatternAdaptationCandidateInput {
+  blueprint: BookBlueprintContent
+  key_scene_sequence: string[]
+  transformation_notes: string[]
+  changed_fields: BookBlueprintField[]
+  expected_revision: number
+  expected_content_sha256: string
+}
+
+export interface AdoptPatternAdaptationCandidateInput {
+  expected_candidate_revision: number
+  expected_candidate_content_sha256: string
+  expected_profile_fingerprint_sha256: string
+  expected_recipe_content_sha256: string
+  expected_topic_revision: number
+  expected_topic_content_sha256: string
+  expected_base_blueprint_revision: number | null
+  expected_base_blueprint_content_sha256: string | null
+  idempotency_key: string
+}
+
+export interface PatternAdaptationAdoption {
+  id: string
+  project_id: string
+  proposal_id: string
+  candidate_id: string
+  candidate_version_id: string
+  blueprint_id: string
+  blueprint_revision: number
+  blueprint_content_sha256: string
+  profile_fingerprint_sha256: string
+  recipe_content_sha256: string
+  created_at: string
+}
+
+export interface AdoptPatternAdaptationResult {
+  adoption: PatternAdaptationAdoption
+  blueprint: BookBlueprint
+  originality_status: 'needs_check'
+}
+
+export interface RunPatternOriginalityCheckInput {
+  expected_blueprint_revision: number
+  expected_blueprint_content_sha256: string
+  expected_profile_fingerprint_sha256: string
+  expected_recipe_content_sha256: string
+}
+
+export interface PatternOriginalityFinding {
+  id: string
+  ordinal: number
+  signal: string
+  score: number
+  summary: string
+  source_fingerprint_sha256: string
+  evidence_sha256: string
+}
+
+export interface PatternOriginalityReport {
+  id: string
+  project_id: string
+  adoption_id: string
+  profile_fingerprint_sha256: string
+  recipe_content_sha256: string
+  blueprint_id: string
+  blueprint_revision: number
+  blueprint_content_sha256: string
+  candidate_version_id: string
+  candidate_content_sha256: string
+  risk_level: OriginalityRiskLevel
+  status: OriginalityStatus
+  score: number
+  threshold_version: string
+  input_sha256: string
+  source_availability: WritingPatternSafetyBasis
+  findings: PatternOriginalityFinding[]
+  viewed_at: string | null
+  acknowledged_at: string | null
+  created_at: string
+}
+
+export type PatternOriginalityGateStatus =
+  | 'legacy'
+  | 'needs_adaptation'
+  | 'needs_check'
+  | 'review_required'
+  | 'blocked'
+  | 'passed'
+  | 'stale'
+
+export interface PatternOriginalityGateState {
+  project_id: string
+  state: PatternOriginalityGateStatus
+  reason: string | null
+  requires_check: boolean
+  adoption: PatternAdaptationAdoption | null
+  blueprint_id: string | null
+  blueprint_revision: number | null
+  blueprint_content_sha256: string | null
+  latest_report: PatternOriginalityReport | null
+  report_is_current: boolean
+}
+
 export interface ReferenceDimensionSynthesis {
   summary: string
   source_segment_ids: string[]
@@ -1683,6 +2838,56 @@ export interface OriginalityReport {
   input_sha256: string
   legal_notice: string
   viewed_at: string | null
+  acknowledged_at?: string | null
+  created_at: string
+}
+
+export type SceneOriginalitySignal =
+  | 'semantic_scene'
+  | 'ordered_sequence'
+  | 'causal_graph'
+  | 'character_function_graph'
+  | 'multi_source_convergence'
+
+export interface SceneGraphNode {
+  id: string
+  label: string
+  semantic_terms: string[]
+}
+
+export interface SceneGraphEdge {
+  source: string
+  target: string
+  relation: string
+}
+
+export interface SceneOriginalityFinding {
+  signal: SceneOriginalitySignal
+  score: number
+  summary: string
+  source_segment_ids: string[]
+  evidence_sha256: string
+}
+
+export interface SceneOriginalityCheck {
+  id: string
+  application_id: string
+  blueprint_revision: number
+  risk_level: OriginalityRiskLevel
+  score: number
+  threshold_version: string
+  candidate_graph: {
+    nodes: SceneGraphNode[]
+    edges: SceneGraphEdge[]
+  }
+  findings: SceneOriginalityFinding[]
+  source_segment_ids: string[]
+  source_work_count: number
+  input_sha256: string
+  legal_notice: string
+  status: OriginalityStatus
+  viewed_at: string | null
+  acknowledged_at: string | null
   created_at: string
 }
 
@@ -1690,6 +2895,8 @@ export interface ReferencePatternApplication {
   id: string
   project_id: string
   pattern_card_id: string
+  lifecycle_state: ReferenceApplicationLifecycleState
+  lifecycle_revision: number
   selected_dimensions: ReferencePatternDimension[]
   dimensions: Partial<Record<ReferencePatternDimension, AppliedReferenceDimension>>
   relationship_recomposition: string
@@ -1709,6 +2916,11 @@ export interface ApplyReferencePatternInput {
   application_note: string
   confirm_original_adaptation: boolean
   blueprint?: ReferenceBlueprintState
+}
+
+export interface UpdateReferenceApplicationLifecycleInput {
+  lifecycle_state: ReferenceApplicationLifecycleState
+  expected_lifecycle_revision: number
 }
 
 export interface UpdateReferenceBlueprintInput {
@@ -1750,6 +2962,358 @@ export interface CreateChapterInput {
 export interface TransitionChapterInput {
   target_status: ChapterStatus
   expected_revision: number
+  /** Required when approving so the final text and revision are compared atomically. */
+  expected_content_sha256?: string
+  /** Optional explicit whole-candidate outcome used for author-preference learning. */
+  source_writing_outcome_id?: string | null
+}
+
+export type ChapterProductionState =
+  | 'created'
+  | 'outline_ready'
+  | 'preflight_blocked'
+  | 'draft_ready'
+  | 'candidate_ready'
+  | 'reviewed'
+  | 'adopted'
+  | 'rejected'
+
+export type ChapterProductionCandidateState = 'available' | 'adopted' | 'rejected'
+
+export type ChapterOutlineVersionOperation = 'model_draft' | 'author_edit'
+
+export type ChapterCandidateVersionOperation =
+  | 'model_draft'
+  | 'author_edit'
+  | 'local_rewrite'
+  | 'undo'
+  | 'merge'
+
+export type ChapterRewriteIntent =
+  | 'expand'
+  | 'compress'
+  | 'rewrite'
+  | 'strengthen_conflict'
+  | 'strengthen_emotion'
+  | 'custom'
+
+export type ChapterWritingDecision = 'adopted' | 'rejected'
+
+export type ChapterAdoptionMode = 'whole' | 'partial'
+
+export interface ChapterProductionOutline {
+  title: string
+  reader_promise: string
+  opening_hook: string
+  state_change: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  scene_beats: string[]
+}
+
+export interface ChapterProductionModelTrace {
+  purpose: CreativeContextPurpose
+  context_packet_id: string
+  context_packet_sha256: string
+  context_dependency_fingerprint_sha256: string
+  context_compiler_version: string
+  profile_fingerprint_sha256: string | null
+  provider: string
+  model: string
+  prompt_version: string
+}
+
+export interface ChapterProduction {
+  id: string
+  project_id: string
+  chapter_id: string
+  base_chapter_revision: number
+  base_chapter_content_sha256: string
+  state: ChapterProductionState
+  revision: number
+  current_outline_candidate_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ChapterOutlineCandidateVersion {
+  id: string
+  candidate_id: string
+  revision: number
+  content: ChapterProductionOutline
+  content_sha256: string
+  operation: ChapterOutlineVersionOperation
+  parent_version_id: string | null
+  trace: ChapterProductionModelTrace | null
+  source_job_id: string | null
+  created_at: string
+}
+
+export interface ChapterOutlineCandidate {
+  id: string
+  production_id: string
+  ordinal: number
+  label: string
+  state: ChapterProductionCandidateState
+  current_version: ChapterOutlineCandidateVersion
+  created_at: string
+  updated_at: string
+}
+
+export interface ChapterProductionPreflightCheck {
+  id: string
+  production_id: string
+  outline_candidate_id: string
+  outline_version_id: string
+  outline_revision: number
+  outline_content_sha256: string
+  reader_promise: boolean
+  opening_hook: boolean
+  state_change: boolean
+  emotional_payoff: boolean
+  ending_cliffhanger: boolean
+  missing_fields: string[]
+  passed: boolean
+  created_at: string
+}
+
+export interface ChapterCandidateLock {
+  id: string
+  candidate_id: string
+  start_char: number
+  end_char: number
+  locked_text: string
+  locked_text_sha256: string
+  created_from_version_id: string
+  created_at: string
+}
+
+export interface ChapterDraftCandidateVersion {
+  id: string
+  candidate_id: string
+  revision: number
+  content: string
+  content_sha256: string
+  operation: ChapterCandidateVersionOperation
+  parent_version_id: string | null
+  restored_from_version_id: string | null
+  trace: ChapterProductionModelTrace | null
+  source_job_id: string | null
+  instruction: string
+  created_at: string
+}
+
+export interface ChapterDraftCandidate {
+  id: string
+  production_id: string
+  label: string
+  state: ChapterProductionCandidateState
+  source_outline_candidate_id: string | null
+  source_outline_version_id: string | null
+  source_outline_revision: number | null
+  source_outline_content_sha256: string | null
+  current_version: ChapterDraftCandidateVersion
+  locks: ChapterCandidateLock[]
+  created_at: string
+  updated_at: string
+}
+
+export interface ChapterCandidateReviewFinding {
+  dimension: ReviewDimension
+  severity: ReviewSeverity
+  summary: string
+  suggestion: string
+}
+
+export interface ChapterCandidateReview {
+  id: string
+  candidate_id: string
+  candidate_version_id: string
+  candidate_revision: number
+  candidate_content_sha256: string
+  trace: ChapterProductionModelTrace
+  source_job_id: string | null
+  findings: ChapterCandidateReviewFinding[]
+  created_at: string
+}
+
+export interface ChapterWritingOutcome {
+  id: string
+  production_id: string
+  candidate_id: string
+  candidate_version_id: string
+  candidate_revision: number
+  candidate_content_sha256: string
+  decision: ChapterWritingDecision
+  adoption_mode: ChapterAdoptionMode | null
+  base_chapter_revision: number
+  base_chapter_content_sha256: string
+  final_chapter_revision: number
+  final_chapter_content_sha256: string
+  final_chapter_status: ChapterStatus
+  chapter_version_id: string | null
+  source_outline_candidate_id: string | null
+  source_outline_version_id: string | null
+  source_outline_revision: number | null
+  source_outline_content_sha256: string | null
+  adoption_detail: Record<string, unknown>
+  idempotency_key: string
+  reason: string
+  created_at: string
+}
+
+export interface ChapterProductionEvent {
+  id: string
+  production_id: string
+  sequence: number
+  event_type: string
+  from_state: ChapterProductionState | null
+  to_state: ChapterProductionState
+  detail: Record<string, unknown>
+  created_at: string
+}
+
+export interface ChapterProductionSnapshot {
+  production: ChapterProduction
+  outlines: ChapterOutlineCandidate[]
+  candidates: ChapterDraftCandidate[]
+  preflight_checks: ChapterProductionPreflightCheck[]
+  reviews: ChapterCandidateReview[]
+  outcomes: ChapterWritingOutcome[]
+}
+
+export interface ChapterTextSelection {
+  start_char: number
+  end_char: number
+  selected_text_sha256: string
+}
+
+export interface CreateChapterProductionInput {
+  expected_chapter_revision: number
+  expected_chapter_content_sha256: string
+}
+
+export interface GenerateChapterOutlineInput {
+  author_intent: string
+  token_budget: number
+  label: string
+}
+
+export interface ChapterProductionOutboundPreview {
+  purpose: 'brief' | 'draft' | 'candidate_review'
+  profile_id: string | null
+  profile_name: string
+  provider: string
+  model: string
+  data_types: string[]
+  content_scope: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  context_packet_id: string
+  context_packet_sha256: string
+  context_dependency_fingerprint_sha256: string
+  context_compiler_version: string
+}
+
+export interface ConfirmChapterProductionOutboundInput {
+  context_packet_id: string
+  context_packet_sha256: string
+  confirm_external_processing: boolean
+  confirm_unknown_cost: boolean
+  max_estimated_cost_microusd: number | null
+}
+
+export interface SubmitChapterOutlineJobInput
+  extends GenerateChapterOutlineInput, ConfirmChapterProductionOutboundInput {}
+
+export interface ChapterOutlineGuard {
+  outline_candidate_id: string
+  expected_outline_revision: number
+  expected_outline_content_sha256: string
+}
+
+export interface UpdateChapterOutlineInput {
+  expected_outline_revision: number
+  expected_outline_content_sha256: string
+  content: ChapterProductionOutline
+}
+
+export type CheckChapterPreflightInput = ChapterOutlineGuard
+
+export interface GenerateChapterDraftInput extends ChapterOutlineGuard {
+  author_intent: string
+  token_budget: number
+  label: string
+}
+
+export interface SubmitChapterDraftJobInput
+  extends GenerateChapterDraftInput, ConfirmChapterProductionOutboundInput {}
+
+export interface ChapterCandidateGuard {
+  expected_candidate_revision: number
+  expected_candidate_content_sha256: string
+}
+
+export interface EditChapterCandidateInput extends ChapterCandidateGuard {
+  selection: ChapterTextSelection
+  replacement: string
+}
+
+export interface RegenerateChapterSelectionInput extends ChapterCandidateGuard {
+  selection: ChapterTextSelection
+  intent: ChapterRewriteIntent
+  custom_instruction: string
+  token_budget: number
+}
+
+export interface SubmitChapterRewriteJobInput
+  extends RegenerateChapterSelectionInput, ConfirmChapterProductionOutboundInput {}
+
+export interface LockChapterSelectionInput extends ChapterCandidateGuard {
+  selection: ChapterTextSelection
+}
+
+export interface UndoChapterCandidateInput extends ChapterCandidateGuard {
+  target_version_id: string | null
+}
+
+export interface ChapterMergeSource {
+  candidate_id: string
+  candidate_version_id: string
+  candidate_revision: number
+  candidate_content_sha256: string
+  start_char: number
+  end_char: number
+  selected_text_sha256: string
+}
+
+export interface MergeChapterCandidatesInput {
+  sources: ChapterMergeSource[]
+  label: string
+  separator: string
+}
+
+export interface ReviewChapterCandidateInput extends ChapterCandidateGuard {
+  token_budget: number
+}
+
+export interface SubmitChapterCandidateReviewJobInput
+  extends ReviewChapterCandidateInput, ConfirmChapterProductionOutboundInput {}
+
+export interface AdoptChapterProductionCandidateInput extends ChapterCandidateGuard {
+  expected_chapter_revision: number
+  expected_chapter_content_sha256: string
+  mode: ChapterAdoptionMode
+  candidate_selection: ChapterTextSelection | null
+  chapter_selection: ChapterTextSelection | null
+  idempotency_key: string
+}
+
+export interface RejectChapterProductionCandidateInput extends ChapterCandidateGuard {
+  reason: string
+  idempotency_key: string
 }
 
 export interface GenerationRun {
@@ -1872,4 +3436,482 @@ export interface JobDetail extends Job {
   attempts: JobAttempt[]
   artifacts: JobArtifact[]
   events: JobEvent[]
+}
+
+export type ComicAdaptationMode = 'faithful' | 'balanced' | 'dramatic'
+export type ComicProjectState = 'draft' | 'planning' | 'outlined' | 'producing' | 'completed'
+export type ComicApprovalState = 'candidate' | 'approved' | 'rejected'
+export type ComicScriptState = 'empty' | ComicApprovalState
+export type ComicTargetKind = 'season' | 'episode_outline' | 'episode_script'
+
+export interface ComicDialogueDraft {
+  character: string
+  line: string
+  emotion: string
+}
+
+export interface ComicAssetRequirement {
+  kind: 'character' | 'location' | 'costume' | 'prop' | 'effect' | 'other'
+  name: string
+  description: string
+}
+
+export interface ComicSceneDraft {
+  scene_number: number
+  interior_exterior: 'INT' | 'EXT' | 'INT/EXT'
+  location: string
+  time_of_day: string
+  cast: string[]
+  action: string
+  dialogue: ComicDialogueDraft[]
+  narration: string
+  visual_focus: string
+  ending_beat: string
+  source_chapter_ids: string[]
+  asset_requirements: ComicAssetRequirement[]
+}
+
+export interface ComicEpisodeOutlineDraft {
+  episode_number: number
+  title: string
+  source_chapter_ids: string[]
+  opening_hook: string
+  episode_goal: string
+  core_conflict: string
+  reversal: string
+  emotional_payoff: string
+  ending_cliffhanger: string
+  cast: string[]
+  locations: string[]
+  key_props: string[]
+  next_episode_promise: string
+}
+
+export interface ComicSeasonDraft {
+  logline: string
+  theme: string
+  core_desire: string
+  main_conflict: string
+  adaptation_strategy: string
+  character_recomposition: string[]
+  episode_outlines: ComicEpisodeOutlineDraft[]
+}
+
+export interface ComicEpisodeScriptDraft {
+  episode_number: number
+  title: string
+  estimated_seconds: number
+  scenes: ComicSceneDraft[]
+}
+
+export interface CreateComicProjectInput {
+  title: string
+  source_chapter_ids: string[]
+  episode_target_count: number
+  episode_duration_seconds: number
+  aspect_ratio: '9:16' | '16:9' | '1:1'
+  art_style: string
+  adaptation_mode: ComicAdaptationMode
+  narration_preference: string
+  author_requirements: string
+}
+
+export interface ComicProject {
+  id: string
+  project_id: string
+  title: string
+  source_chapter_ids: string[]
+  source_snapshot_sha256: string
+  episode_target_count: number
+  episode_duration_seconds: number
+  aspect_ratio: '9:16' | '16:9' | '1:1'
+  art_style: string
+  adaptation_mode: ComicAdaptationMode
+  narration_preference: string
+  author_requirements: string
+  state: ComicProjectState
+  season_revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ComicEpisode {
+  id: string
+  comic_project_id: string
+  episode_number: number
+  title: string
+  source_chapter_ids: string[]
+  outline_state: ComicApprovalState
+  script_state: ComicScriptState
+  outline_revision: number
+  script_revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ComicVersion {
+  id: string
+  comic_project_id: string
+  episode_id: string | null
+  target_kind: ComicTargetKind
+  target_id: string
+  version_number: number
+  state: ComicApprovalState
+  content: ComicSeasonDraft | ComicEpisodeOutlineDraft | ComicEpisodeScriptDraft
+  content_sha256: string
+  source_snapshot_sha256: string
+  job_id: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
+export interface ComicScene {
+  id: string
+  comic_project_id: string
+  episode_id: string
+  script_version_id: string
+  scene_number: number
+  content: ComicSceneDraft
+  source_chapter_ids: string[]
+  created_at: string
+}
+
+export interface ComicWorkspace {
+  project: ComicProject
+  episodes: ComicEpisode[]
+  versions: ComicVersion[]
+  scenes: ComicScene[]
+}
+
+export interface ComicAiPreview {
+  source_snapshot_sha256: string
+  character_count: number
+  estimated_input_tokens: number
+  estimated_output_tokens: number
+  estimated_cost_microusd: number | null
+  profile_id: string
+  profile_name: string
+  provider: string
+  model: string
+  requires_external_confirmation: boolean
+  data_types: string[]
+  content_scope: string
+}
+
+export interface ComicSeasonSubmission { comic_project_id: string; job: Job }
+export interface ComicEpisodeSubmission { comic_project_id: string; episode_id: string; job: Job }
+
+export interface ComicAuditIssue {
+  severity: 'error' | 'warning' | 'info'
+  code: string
+  message: string
+  episode_id: string
+  episode_number: number
+  scene_number: number | null
+}
+
+export interface ComicAsset {
+  kind: string
+  name: string
+  description: string
+  first_episode: number
+  episode_numbers: number[]
+}
+
+export interface ComicDeleteImpact {
+  comic_project_id: string
+  episode_count: number
+  version_count: number
+  scene_count: number
+  can_delete: boolean
+}
+
+export interface ComicProductionPackage {
+  format: 'mozhou-ai-comic-production-package'
+  format_version: 1
+  ai_generated: true
+  project: ComicProject
+  season: ComicSeasonDraft | null
+  season_version: number | null
+  episodes: Array<Record<string, unknown>>
+  assets: ComicAsset[]
+  audit: ComicAuditIssue[]
+  compliance_checklist: string[]
+  source_snapshot_sha256: string
+  package_sha256: string
+}
+
+export type CanonKind =
+  | 'character_state'
+  | 'relationship'
+  | 'resource_state'
+  | 'location_state'
+  | 'character_knowledge'
+  | 'future_knowledge'
+  | 'story_thread'
+  | 'progression'
+  | 'timeline_event'
+
+export type CanonReconciliationState = 'pending' | 'ready' | 'decided' | 'stale' | 'failed'
+export type CanonCandidateState = 'candidate' | 'accepted' | 'rejected' | 'stale'
+export type PreferenceCandidateState = 'candidate' | 'confirmed' | 'rejected' | 'stale'
+export type CanonDecisionAction = 'accept' | 'edit' | 'reject'
+export type PreferenceScopeKind = 'project' | 'genre' | 'chapter'
+export type AuthorPreferenceDimension =
+  | 'pacing'
+  | 'paragraphing'
+  | 'dialogue_density'
+  | 'narrative_distance'
+  | 'tension'
+  | 'sentence_style'
+
+export interface CharacterStateCanonPayload {
+  character_name: string
+  state: string
+  change: string
+}
+
+export interface RelationshipCanonPayload {
+  source_name: string
+  target_name: string
+  relation_type: string
+  summary: string
+}
+
+export interface ResourceStateCanonPayload {
+  owner_name: string
+  resource_name: string
+  delta: string
+  state: string
+}
+
+export interface LocationStateCanonPayload {
+  subject_name: string
+  location: string
+  movement: string
+}
+
+export interface CharacterKnowledgeCanonPayload {
+  character_name: string
+  knowledge: string
+}
+
+export interface FutureKnowledgeCanonPayload {
+  holder_name: string
+  knowledge: string
+  confidence: 'certain' | 'likely' | 'uncertain'
+  event_year: number | null
+}
+
+export interface StoryThreadCanonPayload {
+  title: string
+  status: 'open' | 'resolved' | 'abandoned'
+  summary: string
+}
+
+export interface ProgressionCanonPayload {
+  character_name: string
+  system: string
+  rank: string
+  change: string
+}
+
+export interface TimelineEventCanonPayload {
+  layer: 'original' | 'novel'
+  event_year: number | null
+  title: string
+  summary: string
+}
+
+export type CanonPayload =
+  | CharacterStateCanonPayload
+  | RelationshipCanonPayload
+  | ResourceStateCanonPayload
+  | LocationStateCanonPayload
+  | CharacterKnowledgeCanonPayload
+  | FutureKnowledgeCanonPayload
+  | StoryThreadCanonPayload
+  | ProgressionCanonPayload
+  | TimelineEventCanonPayload
+
+export interface CanonEvidence {
+  approval_version_id: string
+  chapter_id: string
+  chapter_revision: number
+  chapter_content_sha256: string
+  start_char: number
+  end_char: number
+  excerpt: string
+  excerpt_sha256: string
+}
+
+export interface CanonConflict {
+  kind: 'duplicate' | 'supersedes' | 'inconsistent'
+  summary: string
+  existing_record_id: string | null
+}
+
+export interface ChapterApproval {
+  id: string
+  project_id: string
+  chapter_id: string
+  chapter_revision: number
+  chapter_content_sha256: string
+  chapter_version_id: string
+  source_writing_outcome_id: string | null
+  created_at: string
+}
+
+export interface CanonReconciliation {
+  id: string
+  approval_id: string
+  project_id: string
+  chapter_id: string
+  job_id: string
+  state: CanonReconciliationState
+  revision: number
+  context_packet_id: string | null
+  context_packet_sha256: string | null
+  context_dependency_fingerprint_sha256: string | null
+  preference_skip_reason: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+export interface CanonDeltaCandidate {
+  id: string
+  reconciliation_id: string
+  project_id: string
+  ordinal: number
+  kind: CanonKind
+  subject_key: string
+  summary: string
+  payload: CanonPayload
+  payload_sha256: string
+  evidence: CanonEvidence
+  evidence_sha256: string
+  conflicts: CanonConflict[]
+  state: CanonCandidateState
+  revision: number
+  rejection_reason: string | null
+  accepted_record_id: string | null
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface AuthorPreferenceCandidate {
+  id: string
+  reconciliation_id: string
+  project_id: string
+  ordinal: number
+  scope_kind: PreferenceScopeKind
+  scope_value: string
+  dimension: AuthorPreferenceDimension
+  compact_rule: string
+  rule_sha256: string
+  confidence: number
+  comparison_metrics: Record<string, number | string | boolean>
+  source_writing_outcome_id: string
+  source_candidate_version_id: string
+  candidate_content_sha256: string
+  final_content_sha256: string
+  state: PreferenceCandidateState
+  revision: number
+  rejection_reason: string | null
+  confirmed_preference_id: string | null
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface AuthorPreference {
+  id: string
+  project_id: string
+  scope_kind: PreferenceScopeKind
+  scope_value: string
+  dimension: AuthorPreferenceDimension
+  compact_rule: string
+  rule_sha256: string
+  fingerprint_sha256: string
+  confidence: number
+  occurrence_count: number
+  state: 'active' | 'deleted'
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RollingPlanReplenishment {
+  id: string
+  project_id: string
+  reconciliation_id: string
+  source_decision_batch_id: string | null
+  source_chapter_id: string
+  source_canon_record_ids: string[]
+  state: 'candidate' | 'adopted' | 'rejected' | 'stale' | 'not_needed'
+  revision: number
+  volume_plan_id: string | null
+  base_blueprint_id: string | null
+  base_blueprint_revision: number | null
+  base_blueprint_content_sha256: string | null
+  protected_chapter_numbers: number[]
+  plans: RollingChapterPlanContent[]
+  plans_sha256: string
+  blocked_reason: string | null
+  adoption_idempotency_key: string | null
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface CanonReconciliationSnapshot {
+  approval: ChapterApproval
+  reconciliation: CanonReconciliation
+  canon_candidates: CanonDeltaCandidate[]
+  preference_candidates: AuthorPreferenceCandidate[]
+  rolling_plan_replenishment: RollingPlanReplenishment | null
+}
+
+export interface CanonCandidateDecisionInput {
+  candidate_id: string
+  expected_revision: number
+  action: CanonDecisionAction
+  edited_subject_key?: string
+  edited_summary?: string
+  edited_payload?: CanonPayload
+  rejection_reason?: string
+}
+
+export interface PreferenceCandidateDecisionInput {
+  candidate_id: string
+  expected_revision: number
+  action: CanonDecisionAction
+  edited_scope_kind?: PreferenceScopeKind
+  edited_scope_value?: string
+  edited_dimension?: AuthorPreferenceDimension
+  edited_compact_rule?: string
+  edited_confidence?: number
+  rejection_reason?: string
+}
+
+export interface CanonDecisionBatchInput {
+  reconciliation_id: string
+  expected_reconciliation_revision: number
+  idempotency_key: string
+  canon_decisions: CanonCandidateDecisionInput[]
+  preference_decisions: PreferenceCandidateDecisionInput[]
+}
+
+export interface CanonDecisionBatchResult {
+  batch_id: string
+  reconciliation_id: string
+  reconciliation_revision: number
+  replayed: boolean
+  accepted_canon_record_ids: string[]
+  confirmed_preference_ids: string[]
+  rejected_candidate_ids: string[]
+  rolling_plan_replenishment_id: string | null
 }

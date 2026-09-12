@@ -10,6 +10,12 @@ class JobKind(StrEnum):
     REFERENCE_BOOK_REDUCE = "reference_book_reduce"
     REFERENCE_FUSION = "reference_fusion"
     REVIEW = "review"
+    SANDBOX_AI_ROUND = "sandbox_ai_round"
+    RESEARCH_EXTRACTION = "research_extraction"
+    COMIC_SEASON_PLAN = "comic_season_plan"
+    COMIC_EPISODE_SCRIPT = "comic_episode_script"
+    TOPIC_DECISION = "topic_decision"
+    PATTERN_ADAPTATION = "pattern_adaptation"
 
 
 class JobState(StrEnum):

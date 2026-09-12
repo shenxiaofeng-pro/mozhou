@@ -4,10 +4,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from sqlite3 import Connection, IntegrityError, Row
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
+from app.author_navigation import (
+    ReconciliationCheckpoint,
+    RollingPlanCheckpoint,
+    build_author_next_action,
+)
 from app.continuity import enrich_serial_control
+from app.creative_safety import CreativeSafetyGate, CreativeSafetyProvenance
 from app.database import Database
 from app.director.repository import DirectorRepository
 from app.fake_model import ChapterContext
@@ -58,6 +64,9 @@ from app.models import (
     ReferenceWork,
     RejectFactChangeSetRequest,
     ReviewFutureKnowledgeRequest,
+    SceneOriginalityAssessment,
+    SceneOriginalityCheck,
+    SceneOriginalityFinding,
     SetSourceCardConfirmationRequest,
     SourceCard,
     SourceDocument,
@@ -71,6 +80,7 @@ from app.models import (
     TransitionStoryThreadRequest,
     UpdateChapterBriefRequest,
     UpdateChapterRequest,
+    UpdateReferenceApplicationLifecycleRequest,
     UpdateReferenceBlueprintRequest,
     UpdateStoryEntityRequest,
     Workspace,
@@ -80,6 +90,7 @@ from app.originality_guard import assess_blueprint
 from app.reference_lab import ReferenceAnalysisInput, segment_reference_text
 from app.review.repository import ReviewRepository
 from app.safe_import import ParsedReferenceFile
+from app.scene_originality import assess_scene_plot_graph
 
 
 class NotFoundError(Exception):
@@ -149,6 +160,8 @@ class ReferenceWorkImpact:
     work: ReferenceWork
     projects: list[Project]
     cache_entries: int
+    retained_craft_asset_count: int = 0
+    affected_craft_job_count: int = 0
 
 
 ALLOWED_CHAPTER_TRANSITIONS: dict[ChapterStatus, set[ChapterStatus]] = {
@@ -166,8 +179,55 @@ def now_iso() -> str:
 class ProjectRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self._creative_safety_gate: CreativeSafetyGate | None = None
+
+    def set_creative_safety_gate(self, gate: CreativeSafetyGate) -> None:
+        self._creative_safety_gate = gate
+
+    def require_creative_safety(
+        self,
+        project_id: str,
+        expected: CreativeSafetyProvenance | None = None,
+    ) -> CreativeSafetyProvenance | None:
+        if self._creative_safety_gate is None:
+            return None
+        try:
+            return self._creative_safety_gate.require_creative_safety(project_id, expected)
+        except ValueError as error:
+            raise OriginalityGateBlockedError(str(error)) from error
+
+    def _require_frozen_creative_safety(
+        self,
+        project_id: str,
+        frozen_json: str | None,
+    ) -> CreativeSafetyProvenance | None:
+        if self._creative_safety_gate is None:
+            return None
+        try:
+            frozen = (
+                CreativeSafetyProvenance.model_validate_json(frozen_json)
+                if frozen_json is not None
+                else None
+            )
+        except ValueError as error:
+            raise OriginalityGateBlockedError("creative_safety_snapshot_invalid") from error
+        current = self.require_creative_safety(project_id, frozen)
+        if current is not None and current.mode == "pattern_adaptation" and frozen is None:
+            raise OriginalityGateBlockedError("creative_safety_snapshot_missing")
+        return current
 
     def create_project(self, request: CreateProjectRequest) -> Workspace:
+        from app.beta import BETA_TEMPLATES
+        from app.topic_decisions import InvalidTopicTemplateError
+
+        template = next(
+            (item for item in BETA_TEMPLATES if item.id == request.template_id),
+            None,
+        )
+        if request.template_id is not None and (
+            template is None or template.genre != request.genre
+        ):
+            raise InvalidTopicTemplateError(request.template_id)
         project_id = str(uuid4())
         volume_id = str(uuid4())
         chapter_id = str(uuid4())
@@ -224,6 +284,15 @@ class ProjectRepository:
                 content="",
                 source=ChapterVersionSource.INITIAL,
                 created_at=timestamp,
+            )
+            from app.topic_decisions import insert_initial_topic_decision
+
+            insert_initial_topic_decision(
+                connection,
+                project_id=project_id,
+                request=request,
+                template=template,
+                timestamp=timestamp,
             )
         return self.get_workspace(project_id)
 
@@ -395,6 +464,10 @@ class ProjectRepository:
                 "SELECT * FROM book_blueprints WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
+            topic_decision_row = connection.execute(
+                "SELECT * FROM topic_decisions WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
             volume_plan_rows = connection.execute(
                 "SELECT * FROM volume_plans WHERE project_id = ? ORDER BY volume_number",
                 (project_id,),
@@ -422,6 +495,48 @@ class ProjectRepository:
                 """,
                 (project_id, project_id),
             ).fetchall()
+            has_reconciliation_schema = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'canon_reconciliations'
+                """
+            ).fetchone()
+            if has_reconciliation_schema is not None:
+                reconciliation_row = connection.execute(
+                    """
+                    SELECT reconciliation.id, reconciliation.chapter_id,
+                           reconciliation.state
+                    FROM canon_reconciliations reconciliation
+                    JOIN chapters chapter ON chapter.id = reconciliation.chapter_id
+                    WHERE reconciliation.project_id = ?
+                      AND reconciliation.state IN ('pending', 'ready', 'failed')
+                      AND chapter.deleted_at IS NULL
+                    ORDER BY
+                      CASE reconciliation.state WHEN 'ready' THEN 0 ELSE 1 END,
+                      chapter.chapter_number,
+                      reconciliation.created_at,
+                      reconciliation.id
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+                rolling_replenishment_row = connection.execute(
+                    """
+                    SELECT replenishment.id, replenishment.source_chapter_id
+                    FROM rolling_plan_replenishments replenishment
+                    JOIN chapters chapter ON chapter.id = replenishment.source_chapter_id
+                    WHERE replenishment.project_id = ?
+                      AND replenishment.state = 'candidate'
+                      AND chapter.deleted_at IS NULL
+                    ORDER BY chapter.chapter_number, replenishment.created_at,
+                             replenishment.id
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+            else:
+                reconciliation_row = None
+                rolling_replenishment_row = None
         changes_by_set: dict[str, list[FactChange]] = {}
         for row in change_rows:
             changes_by_set.setdefault(row["change_set_id"], []).append(self._fact_change(row))
@@ -430,13 +545,49 @@ class ProjectRepository:
             segments_by_work.setdefault(row["reference_work_id"], []).append(
                 self._reference_segment(row)
             )
+        from app.topic_decisions import parse_topic_decision, project_next_action
+
+        chapters = (
+            [self._chapter(row) for row in chapter_rows]
+            if include_chapter_content
+            else [self._chapter_summary(row) for row in chapter_rows]
+        )
+        rolling_plans = [
+            DirectorRepository.parse_rolling_plan(row) for row in rolling_plan_rows
+        ]
+        legacy_next_action = project_next_action(
+            topic_decision_row,
+            has_blueprint=book_blueprint_row is not None,
+            has_manuscript=any(
+                bool(str(row["content"]).strip())
+                if include_chapter_content
+                else bool(row["has_content"])
+                for row in chapter_rows
+            ),
+        )
+        reconciliation = (
+            ReconciliationCheckpoint(
+                id=str(reconciliation_row["id"]),
+                chapter_id=str(reconciliation_row["chapter_id"]),
+                state=cast(
+                    Literal["pending", "ready", "failed"],
+                    str(reconciliation_row["state"]),
+                ),
+            )
+            if reconciliation_row is not None
+            else None
+        )
+        rolling_replenishment = (
+            RollingPlanCheckpoint(
+                id=str(rolling_replenishment_row["id"]),
+                source_chapter_id=str(rolling_replenishment_row["source_chapter_id"]),
+            )
+            if rolling_replenishment_row is not None
+            else None
+        )
         workspace_payload: dict[str, object] = {
             "project": self._project(project_row),
-            "chapters": (
-                [self._chapter(row) for row in chapter_rows]
-                if include_chapter_content
-                else [self._chapter_summary(row) for row in chapter_rows]
-            ),
+            "chapters": chapters,
             "manuscript_volumes": [
                 ManuscriptVolume.model_validate(dict(row))
                 for row in manuscript_volume_rows
@@ -474,10 +625,21 @@ class ProjectRepository:
                 if book_blueprint_row is not None
                 else None
             ),
+            "topic_decision": (
+                parse_topic_decision(topic_decision_row)
+                if topic_decision_row is not None
+                else None
+            ),
+            "next_action": legacy_next_action,
+            "author_next_action": build_author_next_action(
+                legacy_action=legacy_next_action,
+                chapters=chapters,
+                rolling_plans=rolling_plans,
+                reconciliation=reconciliation,
+                rolling_replenishment=rolling_replenishment,
+            ),
             "volume_plans": [DirectorRepository.parse_volume_plan(row) for row in volume_plan_rows],
-            "rolling_chapter_plans": [
-                DirectorRepository.parse_rolling_plan(row) for row in rolling_plan_rows
-            ],
+            "rolling_chapter_plans": rolling_plans,
         }
         if include_chapter_content:
             return enrich_serial_control(Workspace.model_validate(workspace_payload))
@@ -814,11 +976,50 @@ class ProjectRepository:
                 """,
                 (work_id,),
             ).fetchone()[0]
+            retained_craft_asset_count = connection.execute(
+                """
+                SELECT COUNT(*) FROM craft_pattern_assets a
+                WHERE EXISTS (
+                    SELECT 1 FROM json_each(a.source_work_ids_json)
+                    WHERE value = ?
+                )
+                """,
+                (work_id,),
+            ).fetchone()[0]
+            affected_craft_job_count = len(
+                self._active_craft_job_ids_for_reference_work(connection, work_id)
+            )
         return ReferenceWorkImpact(
             work=work,
             projects=[self._project(row) for row in project_rows],
             cache_entries=int(cache_entries),
+            retained_craft_asset_count=int(retained_craft_asset_count),
+            affected_craft_job_count=affected_craft_job_count,
         )
+
+    def active_craft_job_ids_for_reference_work(self, work_id: str) -> list[str]:
+        with self.database.connect() as connection:
+            return self._active_craft_job_ids_for_reference_work(connection, work_id)
+
+    @staticmethod
+    def _active_craft_job_ids_for_reference_work(
+        connection: Connection,
+        work_id: str,
+    ) -> list[str]:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT j.id
+            FROM jobs j
+            JOIN json_each(j.input_json, '$.selected_segment_ids') chosen
+            JOIN reference_segments s ON s.id = chosen.value
+            WHERE j.workflow = 'craft_pattern_analysis_v2'
+              AND j.state IN ('queued', 'running', 'pause_requested')
+              AND s.reference_work_id = ?
+            ORDER BY j.id
+            """,
+            (work_id,),
+        ).fetchall()
+        return [str(row["id"]) for row in rows]
 
     def purge_reference_work(self, work_id: str) -> ReferenceWorkImpact:
         impact = self.get_reference_work_impact(work_id)
@@ -873,7 +1074,12 @@ class ProjectRepository:
         self,
         project_id: str,
         segment_ids: list[str],
+        *,
+        require_multiple_works: bool = True,
+        max_characters: int = 2_000_000,
     ) -> list[ReferenceAnalysisInput]:
+        if not segment_ids:
+            raise InvalidReferenceSelectionError("empty_selection")
         placeholders = ", ".join("?" for _ in segment_ids)
         with self.database.connect() as connection:
             if (
@@ -900,9 +1106,9 @@ class ProjectRepository:
         if len(by_id) != len(segment_ids):
             raise InvalidReferenceSelectionError("missing_or_cross_project_segment")
         selected = [by_id[segment_id] for segment_id in segment_ids]
-        if len({segment.work_id for segment in selected}) < 2:
+        if require_multiple_works and len({segment.work_id for segment in selected}) < 2:
             raise InvalidReferenceSelectionError("multiple_works_required")
-        if sum(len(segment.content) for segment in selected) > 2_000_000:
+        if sum(len(segment.content) for segment in selected) > max_characters:
             raise InvalidReferenceSelectionError("selection_too_large")
         return selected
 
@@ -994,7 +1200,11 @@ class ProjectRepository:
             raise InvalidReferenceApplicationError("invalid_pattern_sources")
         sources = self.get_reference_segments_for_analysis(project_id, selected_segment_ids)
         assessment = assess_blueprint(blueprint, sources)
-        status = self._status_for_assessment(assessment)
+        scene_assessment = assess_scene_plot_graph(blueprint, sources)
+        status, combined_risk, combined_threshold = self._combined_originality_state(
+            assessment,
+            scene_assessment,
+        )
         report_id = str(uuid4())
         dimensions = {
             dimension.value: state.generated_variant.model_dump(mode="json")
@@ -1025,9 +1235,9 @@ class ProjectRepository:
                         request.application_note,
                         blueprint.model_dump_json(),
                         status.value,
-                        assessment.risk_level.value,
+                        combined_risk.value,
                         report_id,
-                        assessment.threshold_version,
+                        combined_threshold,
                         timestamp,
                         timestamp,
                     ),
@@ -1051,6 +1261,13 @@ class ProjectRepository:
                 assessment=assessment,
                 timestamp=timestamp,
             )
+            self._insert_scene_originality_check(
+                connection,
+                application_id=application_id,
+                revision=0,
+                assessment=scene_assessment,
+                timestamp=timestamp,
+            )
             row = connection.execute(
                 "SELECT * FROM reference_pattern_applications WHERE id = ?",
                 (application_id,),
@@ -1061,6 +1278,74 @@ class ProjectRepository:
 
     def get_originality_report(self, report_id: str) -> OriginalityReport:
         return self._get_originality_report(report_id, mark_viewed=True)
+
+    def update_reference_application_lifecycle(
+        self,
+        project_id: str,
+        application_id: str,
+        request: UpdateReferenceApplicationLifecycleRequest,
+    ) -> ReferencePatternApplication:
+        current = self._get_reference_application(project_id, application_id)
+        if current.lifecycle_revision != request.expected_lifecycle_revision:
+            raise StaleRevisionError(str(current.lifecycle_revision))
+        if current.lifecycle_state == request.lifecycle_state:
+            return current
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE reference_pattern_applications
+                SET lifecycle_state = ?, lifecycle_revision = lifecycle_revision + 1,
+                    updated_at = ?
+                WHERE id = ? AND project_id = ? AND lifecycle_revision = ?
+                  AND (
+                    ? != 'active'
+                    OR (
+                      originality_status = 'passed'
+                      AND EXISTS (
+                        SELECT 1 FROM originality_reports r
+                        WHERE r.id = reference_pattern_applications.latest_report_id
+                          AND r.application_id = reference_pattern_applications.id
+                          AND r.blueprint_revision = reference_pattern_applications.revision
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM scene_originality_checks s
+                        WHERE s.application_id = reference_pattern_applications.id
+                          AND s.blueprint_revision = reference_pattern_applications.revision
+                      )
+                    )
+                  )
+                """,
+                (
+                    request.lifecycle_state.value,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_lifecycle_revision,
+                    request.lifecycle_state.value,
+                ),
+            )
+            if result.rowcount == 0:
+                row = connection.execute(
+                    """
+                    SELECT lifecycle_revision, originality_status
+                    FROM reference_pattern_applications
+                    WHERE id = ? AND project_id = ?
+                    """,
+                    (application_id, project_id),
+                ).fetchone()
+                if row is None:
+                    raise NotFoundError(application_id)
+                if int(row["lifecycle_revision"]) != request.expected_lifecycle_revision:
+                    raise StaleRevisionError(str(row["lifecycle_revision"]))
+                raise InvalidReferenceApplicationError("originality_not_passed")
+            row = connection.execute(
+                "SELECT * FROM reference_pattern_applications WHERE id = ?",
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
 
     def _get_originality_report(
         self,
@@ -1166,7 +1451,11 @@ class ProjectRepository:
             relationship_changed=request.relationship_changed,
             previous=previous_report,
         )
-        status = self._status_for_assessment(assessment)
+        scene_assessment = assess_scene_plot_graph(blueprint, sources)
+        status, combined_risk, combined_threshold = self._combined_originality_state(
+            assessment,
+            scene_assessment,
+        )
         report_id = str(uuid4())
         revision = current.revision + 1
         timestamp = now_iso()
@@ -1188,9 +1477,9 @@ class ProjectRepository:
                     blueprint.relationship.generated_variant,
                     blueprint.model_dump_json(),
                     status.value,
-                    assessment.risk_level.value,
+                    combined_risk.value,
                     report_id,
-                    assessment.threshold_version,
+                    combined_threshold,
                     revision,
                     timestamp,
                     application_id,
@@ -1217,6 +1506,13 @@ class ProjectRepository:
                 assessment=assessment,
                 timestamp=timestamp,
             )
+            self._insert_scene_originality_check(
+                connection,
+                application_id=application_id,
+                revision=revision,
+                assessment=scene_assessment,
+                timestamp=timestamp,
+            )
             row = connection.execute(
                 "SELECT * FROM reference_pattern_applications WHERE id = ?",
                 (application_id,),
@@ -1241,19 +1537,163 @@ class ProjectRepository:
         timestamp = now_iso()
         with self.database.connect() as connection:
             report = connection.execute(
-                "SELECT viewed_at FROM originality_reports WHERE id = ?",
+                "SELECT risk_level, viewed_at FROM originality_reports WHERE id = ?",
                 (current.latest_report_id,),
             ).fetchone()
-            if report is None or report["viewed_at"] is None:
+            if (
+                report is None
+                or report["viewed_at"] is None
+                or report["risk_level"] != OriginalityRiskLevel.MEDIUM.value
+            ):
                 raise InvalidReferenceApplicationError("report_not_viewed")
+            connection.execute(
+                "UPDATE originality_reports SET acknowledged_at = ? WHERE id = ?",
+                (timestamp, current.latest_report_id),
+            )
+            scene_row = connection.execute(
+                """
+                SELECT risk_level, acknowledged_at FROM scene_originality_checks
+                WHERE application_id = ? AND blueprint_revision = ?
+                """,
+                (application_id, current.revision),
+            ).fetchone()
+            next_status = (
+                self._status_for_risk(
+                    OriginalityRiskLevel(scene_row["risk_level"]),
+                    acknowledged=scene_row["acknowledged_at"] is not None,
+                )
+                if scene_row is not None
+                else OriginalityStatus.PASSED
+            )
             result = connection.execute(
                 """
                 UPDATE reference_pattern_applications
-                SET originality_status = 'passed', updated_at = ?
+                SET originality_status = ?, updated_at = ?
                 WHERE id = ? AND project_id = ? AND revision = ?
                   AND originality_status = 'review_required'
                 """,
-                (timestamp, application_id, project_id, request.expected_revision),
+                (
+                    next_status.value,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_revision,
+                ),
+            )
+            if result.rowcount == 0:
+                raise StaleRevisionError(str(current.revision))
+            row = connection.execute(
+                "SELECT * FROM reference_pattern_applications WHERE id = ?",
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(application_id)
+        return self._reference_pattern_application(row)
+
+    def get_scene_originality_check(self, check_id: str) -> SceneOriginalityCheck:
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE scene_originality_checks SET viewed_at = ? "
+                "WHERE id = ? AND viewed_at IS NULL",
+                (now_iso(), check_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM scene_originality_checks WHERE id = ?",
+                (check_id,),
+            ).fetchone()
+            finding_rows = (
+                connection.execute(
+                    "SELECT * FROM scene_originality_findings "
+                    "WHERE check_id = ? ORDER BY ordinal",
+                    (check_id,),
+                ).fetchall()
+                if row is not None
+                else []
+            )
+        if row is None:
+            raise NotFoundError(check_id)
+        return self._scene_originality_check(row, finding_rows)
+
+    def get_latest_scene_originality_check(
+        self,
+        project_id: str,
+        application_id: str,
+    ) -> SceneOriginalityCheck:
+        current = self._get_reference_application(project_id, application_id)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM scene_originality_checks
+                WHERE application_id = ? AND blueprint_revision = ?
+                """,
+                (application_id, current.revision),
+            ).fetchone()
+            finding_rows = (
+                connection.execute(
+                    "SELECT * FROM scene_originality_findings "
+                    "WHERE check_id = ? ORDER BY ordinal",
+                    (row["id"],),
+                ).fetchall()
+                if row is not None
+                else []
+            )
+        if row is None:
+            # V1 reference blueprints are read-only. Missing historical checks
+            # must not be recomputed from raw source text through a legacy POST.
+            raise NotFoundError(application_id)
+        return self._scene_originality_check(row, finding_rows)
+
+    def acknowledge_scene_originality_check(
+        self,
+        project_id: str,
+        application_id: str,
+        request: AcknowledgeOriginalityReportRequest,
+    ) -> ReferencePatternApplication:
+        current = self._get_reference_application(project_id, application_id)
+        if current.revision != request.expected_revision:
+            raise StaleRevisionError(str(current.revision))
+        timestamp = now_iso()
+        with self.database.connect() as connection:
+            scene_row = connection.execute(
+                """
+                SELECT * FROM scene_originality_checks
+                WHERE application_id = ? AND blueprint_revision = ?
+                """,
+                (application_id, current.revision),
+            ).fetchone()
+            if (
+                scene_row is None
+                or scene_row["risk_level"] != OriginalityRiskLevel.MEDIUM.value
+                or scene_row["viewed_at"] is None
+            ):
+                raise InvalidReferenceApplicationError("scene_report_not_acknowledgeable")
+            connection.execute(
+                "UPDATE scene_originality_checks SET acknowledged_at = ? WHERE id = ?",
+                (timestamp, scene_row["id"]),
+            )
+            legacy_row = connection.execute(
+                "SELECT risk_level, acknowledged_at FROM originality_reports WHERE id = ?",
+                (current.latest_report_id,),
+            ).fetchone()
+            if legacy_row is None:
+                raise InvalidReferenceApplicationError("missing_report")
+            next_status = self._status_for_risk(
+                OriginalityRiskLevel(legacy_row["risk_level"]),
+                acknowledged=legacy_row["acknowledged_at"] is not None,
+            )
+            result = connection.execute(
+                """
+                UPDATE reference_pattern_applications
+                SET originality_status = ?, updated_at = ?
+                WHERE id = ? AND project_id = ? AND revision = ?
+                """,
+                (
+                    next_status.value,
+                    timestamp,
+                    application_id,
+                    project_id,
+                    request.expected_revision,
+                ),
             )
             if result.rowcount == 0:
                 raise StaleRevisionError(str(current.revision))
@@ -1344,6 +1784,46 @@ class ProjectRepository:
         return OriginalityStatus.PASSED
 
     @staticmethod
+    def _status_for_risk(
+        risk: OriginalityRiskLevel,
+        *,
+        acknowledged: bool = False,
+    ) -> OriginalityStatus:
+        if risk == OriginalityRiskLevel.HIGH:
+            return OriginalityStatus.BLOCKED
+        if risk == OriginalityRiskLevel.MEDIUM and not acknowledged:
+            return OriginalityStatus.REVIEW_REQUIRED
+        return OriginalityStatus.PASSED
+
+    @classmethod
+    def _combined_originality_state(
+        cls,
+        legacy: OriginalityAssessment,
+        scene: SceneOriginalityAssessment,
+    ) -> tuple[OriginalityStatus, OriginalityRiskLevel, str]:
+        rank = {
+            OriginalityRiskLevel.LOW: 0,
+            OriginalityRiskLevel.MEDIUM: 1,
+            OriginalityRiskLevel.HIGH: 2,
+        }
+        if rank[scene.risk_level] > rank[legacy.risk_level]:
+            return cls._status_for_risk(scene.risk_level), scene.risk_level, scene.threshold_version
+        return cls._status_for_risk(legacy.risk_level), legacy.risk_level, legacy.threshold_version
+
+    @staticmethod
+    def _merge_originality_statuses(
+        left: OriginalityStatus,
+        right: OriginalityStatus,
+    ) -> OriginalityStatus:
+        if OriginalityStatus.BLOCKED in {left, right}:
+            return OriginalityStatus.BLOCKED
+        if OriginalityStatus.REVIEW_REQUIRED in {left, right}:
+            return OriginalityStatus.REVIEW_REQUIRED
+        if OriginalityStatus.NEEDS_CHECK in {left, right}:
+            return OriginalityStatus.NEEDS_CHECK
+        return OriginalityStatus.PASSED
+
+    @staticmethod
     def _insert_blueprint_version(
         connection: Connection,
         *,
@@ -1390,8 +1870,8 @@ class ProjectRepository:
             INSERT INTO originality_reports (
                 id, application_id, blueprint_revision, risk_level, score,
                 threshold_version, checked_dimensions_json, evidence_json,
-                source_segment_ids_json, input_sha256, viewed_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                source_segment_ids_json, input_sha256, viewed_at, acknowledged_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
             """,
             (
                 report_id,
@@ -1414,6 +1894,59 @@ class ProjectRepository:
                 timestamp,
             ),
         )
+
+    @staticmethod
+    def _insert_scene_originality_check(
+        connection: Connection,
+        *,
+        application_id: str,
+        revision: int,
+        assessment: SceneOriginalityAssessment,
+        timestamp: str,
+    ) -> str:
+        check_id = str(uuid4())
+        connection.execute(
+            """
+            INSERT INTO scene_originality_checks (
+                id, application_id, blueprint_revision, risk_level, score,
+                threshold_version, candidate_graph_json, source_segment_ids_json,
+                source_work_count, input_sha256, viewed_at, acknowledged_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                check_id,
+                application_id,
+                revision,
+                assessment.risk_level.value,
+                assessment.score,
+                assessment.threshold_version,
+                assessment.candidate_graph.model_dump_json(),
+                json.dumps(assessment.source_segment_ids, separators=(",", ":")),
+                assessment.source_work_count,
+                assessment.input_sha256,
+                timestamp,
+            ),
+        )
+        for ordinal, finding in enumerate(assessment.findings, start=1):
+            connection.execute(
+                """
+                INSERT INTO scene_originality_findings (
+                    id, check_id, ordinal, signal, score, summary,
+                    source_segment_ids_json, evidence_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    check_id,
+                    ordinal,
+                    finding.signal.value,
+                    finding.score,
+                    finding.summary,
+                    json.dumps(finding.source_segment_ids, separators=(",", ":")),
+                    finding.evidence_sha256,
+                ),
+            )
+        return check_id
 
     def create_story_entity(
         self,
@@ -1996,6 +2529,7 @@ class ProjectRepository:
         change_set_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
                 """
                 SELECT c.*, p.rebirth_year
@@ -2007,6 +2541,7 @@ class ProjectRepository:
             ).fetchone()
             if chapter is None:
                 raise NotFoundError(chapter_id)
+            creative_safety = self.require_creative_safety(str(chapter["project_id"]))
             if chapter["status"] != ChapterStatus.APPROVED.value:
                 raise InvalidChapterStateError(chapter["status"])
             existing = connection.execute(
@@ -2026,14 +2561,20 @@ class ProjectRepository:
                 connection.execute(
                     """
                     INSERT INTO fact_change_sets (
-                        id, chapter_id, chapter_revision, state, revision, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 0, ?, ?)
+                        id, chapter_id, chapter_revision, state, revision,
+                        creative_safety_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     (
                         change_set_id,
                         chapter_id,
                         chapter["revision"],
                         FactChangeSetState.CANDIDATE.value,
+                        (
+                            creative_safety.model_dump_json()
+                            if creative_safety is not None
+                            else None
+                        ),
                         timestamp,
                         timestamp,
                     ),
@@ -2085,6 +2626,7 @@ class ProjectRepository:
         timestamp = now_iso()
         selected_ids = set(request.selected_change_ids)
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             change_set = connection.execute(
                 """
                 SELECT s.*, c.project_id, c.title AS chapter_title,
@@ -2098,6 +2640,9 @@ class ProjectRepository:
             ).fetchone()
             if change_set is None:
                 raise NotFoundError(change_set_id)
+            self._require_frozen_creative_safety(
+                str(change_set["project_id"]), change_set["creative_safety_json"]
+            )
             if change_set["revision"] != request.expected_revision:
                 raise StaleRevisionError(str(change_set["revision"]))
             if change_set["state"] != FactChangeSetState.CANDIDATE.value:
@@ -2435,6 +2980,34 @@ class ProjectRepository:
         chapter_id: str,
         request: TransitionChapterRequest,
     ) -> Chapter:
+        if request.target_status == ChapterStatus.APPROVED:
+            from app.canon_reconciliation.repository import (
+                CanonReconciliationConflictError,
+                CanonReconciliationNotFoundError,
+                CanonReconciliationRepository,
+                CanonReconciliationStaleError,
+                text_sha256,
+            )
+
+            current = self.get_chapter(chapter_id)
+            try:
+                CanonReconciliationRepository(self.database).approve_chapter_and_enqueue(
+                    project_id=current.project_id,
+                    chapter_id=current.id,
+                    expected_revision=request.expected_revision,
+                    expected_content_sha256=(
+                        request.expected_content_sha256 or text_sha256(current.content)
+                    ),
+                    source_writing_outcome_id=request.source_writing_outcome_id,
+                )
+            except CanonReconciliationNotFoundError as error:
+                raise NotFoundError(chapter_id) from error
+            except CanonReconciliationStaleError as error:
+                raise StaleRevisionError(str(error)) from error
+            except CanonReconciliationConflictError as error:
+                raise InvalidChapterStateError(str(error)) from error
+            return self.get_chapter(chapter_id)
+
         timestamp = now_iso()
         with self.database.connect() as connection:
             row = connection.execute(
@@ -2514,16 +3087,21 @@ class ProjectRepository:
         expected_revision: int,
         provider: str = "demo",
         model: str = "replay-v1",
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> GenerationRun:
         run_id = str(uuid4())
         timestamp = now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
-                "SELECT revision, status FROM chapters WHERE id = ?",
+                "SELECT project_id, revision, status FROM chapters WHERE id = ?",
                 (chapter_id,),
             ).fetchone()
             if chapter is None:
                 raise NotFoundError(chapter_id)
+            current_safety = self.require_creative_safety(
+                str(chapter["project_id"]), creative_safety
+            )
             if chapter["revision"] != expected_revision:
                 raise StaleRevisionError(str(chapter["revision"]))
             if chapter["status"] not in {
@@ -2535,8 +3113,9 @@ class ProjectRepository:
                 """
                 INSERT INTO generation_runs (
                     id, chapter_id, state, expected_chapter_revision,
-                    candidate_content, error_message, provider, model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                    candidate_content, error_message, provider, model,
+                    creative_safety_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -2545,6 +3124,11 @@ class ProjectRepository:
                     expected_revision,
                     provider,
                     model,
+                    (
+                        current_safety.model_dump_json()
+                        if current_safety is not None
+                        else None
+                    ),
                     timestamp,
                     timestamp,
                 ),
@@ -2562,6 +3146,24 @@ class ProjectRepository:
             raise NotFoundError(run_id)
         return self._generation_run(row)
 
+    def require_generation_run_creative_safety(
+        self, run_id: str
+    ) -> CreativeSafetyProvenance | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT c.project_id, r.creative_safety_json FROM generation_runs r
+                JOIN chapters c ON c.id = r.chapter_id
+                WHERE r.id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(run_id)
+        return self._require_frozen_creative_safety(
+            str(row["project_id"]), row["creative_safety_json"]
+        )
+
     def materialize_generation_run(
         self,
         run_id: str,
@@ -2570,24 +3172,28 @@ class ProjectRepository:
         candidate_content: str,
         provider: str,
         model: str,
+        creative_safety: CreativeSafetyProvenance | None = None,
     ) -> GenerationRun:
         """Materialize an immutable job artifact as an author-reviewable candidate."""
         timestamp = now_iso()
         with self.database.connect() as connection:
-            if (
-                connection.execute(
-                    "SELECT id FROM chapters WHERE id = ?",
-                    (chapter_id,),
-                ).fetchone()
-                is None
-            ):
+            connection.execute("BEGIN IMMEDIATE")
+            chapter = connection.execute(
+                "SELECT project_id FROM chapters WHERE id = ?",
+                (chapter_id,),
+            ).fetchone()
+            if chapter is None:
                 raise NotFoundError(chapter_id)
+            current_safety = self.require_creative_safety(
+                str(chapter["project_id"]), creative_safety
+            )
             result = connection.execute(
                 """
                 INSERT INTO generation_runs (
                     id, chapter_id, state, expected_chapter_revision,
-                    candidate_content, error_message, provider, model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                    candidate_content, error_message, provider, model,
+                    creative_safety_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING
                 """,
                 (
@@ -2598,6 +3204,11 @@ class ProjectRepository:
                     candidate_content,
                     provider,
                     model,
+                    (
+                        current_safety.model_dump_json()
+                        if current_safety is not None
+                        else None
+                    ),
                     timestamp,
                     timestamp,
                 ),
@@ -2675,6 +3286,21 @@ class ProjectRepository:
     ) -> GenerationRun:
         timestamp = now_iso()
         with self.database.connect() as connection:
+            if next_state == GenerationState.DRAFTED:
+                connection.execute("BEGIN IMMEDIATE")
+                owner = connection.execute(
+                    """
+                    SELECT c.project_id, r.creative_safety_json FROM generation_runs r
+                    JOIN chapters c ON c.id = r.chapter_id
+                    WHERE r.id = ?
+                    """,
+                    (run_id,),
+                ).fetchone()
+                if owner is None:
+                    raise NotFoundError(run_id)
+                self._require_frozen_creative_safety(
+                    str(owner["project_id"]), owner["creative_safety_json"]
+                )
             result = connection.execute(
                 """
                 UPDATE generation_runs
@@ -2722,19 +3348,30 @@ class ProjectRepository:
     def apply_generation(self, run_id: str, expected_revision: int) -> Chapter:
         timestamp = now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             run = connection.execute(
-                "SELECT * FROM generation_runs WHERE id = ?",
+                """
+                SELECT r.*, c.project_id FROM generation_runs r
+                JOIN chapters c ON c.id = r.chapter_id
+                WHERE r.id = ?
+                """,
                 (run_id,),
             ).fetchone()
             if run is None:
                 raise NotFoundError(run_id)
+            self._require_frozen_creative_safety(
+                str(run["project_id"]), run["creative_safety_json"]
+            )
             if run["state"] != GenerationState.DRAFTED.value or run["candidate_content"] is None:
                 raise ValueError("生成任务尚无可采用草稿")
             result = connection.execute(
                 """
                 UPDATE chapters
                 SET content = ?, status = ?, revision = revision + 1, updated_at = ?
-                WHERE id = ? AND revision = ?
+                WHERE id = ?
+                  AND revision = ?
+                  AND revision = ?
+                  AND status != ?
                 """,
                 (
                     run["candidate_content"],
@@ -2742,6 +3379,8 @@ class ProjectRepository:
                     timestamp,
                     run["chapter_id"],
                     expected_revision,
+                    run["expected_chapter_revision"],
+                    ChapterStatus.APPROVED.value,
                 ),
             )
             if result.rowcount == 0:
@@ -2904,5 +3543,32 @@ class ProjectRepository:
                 "evidence": json.loads(row["evidence_json"]),
                 "source_segment_ids": json.loads(row["source_segment_ids_json"]),
                 "legal_notice": "原创性风险提示用于创作风控，不是法律结论。",
+            }
+        )
+
+    @staticmethod
+    def _scene_originality_check(row: Row, finding_rows: list[Row]) -> SceneOriginalityCheck:
+        risk = OriginalityRiskLevel(row["risk_level"])
+        return SceneOriginalityCheck.model_validate(
+            {
+                **dict(row),
+                "candidate_graph": json.loads(row["candidate_graph_json"]),
+                "source_segment_ids": json.loads(row["source_segment_ids_json"]),
+                "findings": [
+                    SceneOriginalityFinding.model_validate(
+                        {
+                            **dict(finding),
+                            "source_segment_ids": json.loads(
+                                finding["source_segment_ids_json"]
+                            ),
+                        }
+                    )
+                    for finding in finding_rows
+                ],
+                "status": ProjectRepository._status_for_risk(
+                    risk,
+                    acknowledged=row["acknowledged_at"] is not None,
+                ),
+                "legal_notice": "场景语义与情节图检测用于创作风控，不是抄袭认定或法律结论。",
             }
         )
