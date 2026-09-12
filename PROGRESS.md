@@ -912,13 +912,16 @@ AI 漫剧批次采用同一标准：M18–M23 全部完成、全量 `pnpm run ve
 
 ### 最终全量验证（2026-09-12）
 
-- `pnpm run verify` 成功：仓库守卫、ESLint、ruff、TypeScript、126 个 Python 源文件 mypy、16/16 工程脚本、35 个文件 181/181 Web、465/465 FastAPI、规模基准、Vite 生产构建、PyInstaller sidecar 和 Tauri `cargo check` 全部通过。
-- 安全依赖升级后的最终 FastAPI 全量耗时 125.74 秒；规模基准全部达标：100 章保存 2.141 ms、切章 1.631 ms、打开 2.871 ms，30 万字搜索 2.103 ms，300 万字参考切分 9.111 ms，均远低于门槛。生产首包 448.55 kB（gzip 124.88 kB）。
+- `pnpm run verify` 成功：仓库守卫、ESLint、ruff、TypeScript、126 个 Python 源文件 mypy、20/20 工程脚本、真实 pytest 分片权重门、35 个文件 181/181 Web、465/465 FastAPI、规模基准、Vite 生产构建、PyInstaller sidecar 和 Tauri `cargo check` 全部通过。移除 xdist 后的最终串行 FastAPI 全量耗时 551.12 秒，pytest 仅加载 `anyio` 插件。
+- 最终规模基准全部达标：100 章保存 2.049 ms、切章 1.695 ms、打开 3.241 ms，30 万字搜索 2.244 ms，300 万字参考切分 9.168 ms，均远低于门槛。生产首包 448.55 kB（gzip 124.88 kB）。
 - PR #35 的首次 security 任务检出 2026-09-12 新纳入数据库的 `pypdf 6.15.0` 三项安全公告；已将最低安全版本提高至 6.16.1，锁定实际解析版本为 6.18.1。本地 `pip-audit` 复跑为零已知漏洞，文档/安全导入/归档 40/40 回归通过。
 - Windows 并行依赖复核又发现原安全任务以 `--no-dev` 漏审了 `httpx2 2.9.1` / `httpcore2 2.9.1` 的六项公告；测试客户端最低版本已提高到 2.12.0，锁文件同步升级并纳入额外浏览器传输依赖。CI 现审计全部锁定 Python 运行时与开发组，本地同口径 `pip-audit` 为零已知漏洞。
-- 同一 PR 暴露了旧有 release-candidate workflow 的 0-job 语义错误：job 级 `env` 不允许读取 `runner.temp`。已改为在初始 step 中写入 `GITHUB_ENV`，仍使用 runner 临时目录隔离构建；官方 `actionlint 1.7.12` 校验全部 workflow 为零问题，16/16 工程脚本与仓库守卫复跑通过。
-- PR #35 的第一轮 Windows 完整门禁在 45 分钟时仍只运行到 FastAPI 55%，随后由作业上限取消；日志同时暴露 `test_context_v29.py` 的 Windows 文件句柄失败。根因分别是 465 项测试反复创建并迁移 31 版 SQLite 数据库的累计 I/O，以及迁移测试 helper 只提交却未关闭原始 SQLite 连接。两处同型 helper 现以事务上下文加 `closing` 明确提交并关闭；Windows 通过官方 `pytest-xdist` 按测试文件四路分发，仍逐项执行全部测试并保留同文件顺序，required check 名称未改变，作业上限提高到 60 分钟作为 runner 抖动余量。
-- 上述修复后本机定向迁移/参考库回归 20/20、Windows 同参数并行后端基线 465/465（依赖升级后 43.63 秒）通过；依赖安全升级后再次执行完整串行 `pnpm run verify` 也全部成功，其中 Web 181/181、FastAPI 465/465（119.47 秒），最新规模基准为 100 章保存 1.763 ms、切章 1.348 ms、打开 2.468 ms，30 万字搜索 1.715 ms、300 万字参考切分 8.625 ms。`actionlint`、仓库守卫和 `git diff --check` 均通过。
+- 最终依赖复核检出 Vitest 4.1.10 的开发服务器路径读取公告；已升级并锁定 4.1.11，CI 的 npm 阻断阈值由 high 收紧为 low，`pnpm audit --audit-level low` 现为零已知漏洞，升级后的 35 个文件 181/181 Web 回归通过。`pip-audit` 固定为 2.10.1，并在 Ubuntu security、macOS quality 与 Windows quality 分别审计带平台标记的全依赖组；`checks: write` 已从全局权限收窄到确实需要提交 Rust 审计结果的 security job。
+- 同一 PR 暴露了旧有 release-candidate workflow 的 0-job 语义错误：job 级 `env` 不允许读取 `runner.temp`。已改为在初始 step 中写入 `GITHUB_ENV`，仍使用 runner 临时目录隔离构建；官方 `actionlint 1.7.12` 校验全部 workflow 为零问题，最终 20/20 工程脚本与仓库守卫复跑通过。
+- PR #35 的第一轮 Windows 完整门禁在 45 分钟时仍只运行到 FastAPI 55%，随后由作业上限取消；日志同时暴露 `test_context_v29.py` 的 Windows 文件句柄失败。根因分别是 465 项测试反复创建并迁移 31 版 SQLite 数据库的累计 I/O，以及迁移测试 helper 只提交却未关闭原始 SQLite 连接。两处同型 helper 现以事务上下文加 `closing` 明确提交并关闭；本机定向迁移/参考库回归 20/20 通过。
+- 第二轮 Windows 尝试在同一 runner 内使用四个 xdist worker，60 分钟时从 55% 提升到 77% 且已完成部分不再出现失败，但多个 worker 仍竞争同一虚拟磁盘，不能形成可靠门禁。最终设计改为 8 个相互独立的 Windows runner 串行分片，非后端门另由独立 Windows runner 执行，再以固定名称 `quality (windows-2022)` fail-closed 聚合，保持分支保护契约不变。
+- 分片按当前 51 个测试文件的 465 个 nodeid 以 LPT 固化为 59/58/58/59/59/58/57/57；测试发现递归覆盖 pytest 默认的 `test_*.py` 与 `*_test.py`，以测试目录相对路径做唯一键。20 项工程脚本会断言文件全集无遗漏、无重复、总权重 465，完整门还会执行真实 `pytest --collect-only` 逐文件核对静态权重；新增文件或用例会直接令门禁失败并要求重新配组。四组旧取模基线 92/113/134/126 已在本机并发全部通过，证明 465 项可独立运行；最终 8 组由远端 Windows 原生 runner 验收。`pytest-xdist` 与 `execnet` 已从项目和锁文件移除。
+- 依赖安全升级及 CI 重构后再次执行完整串行 `pnpm run verify` 全部成功；`actionlint 1.7.12`、仓库守卫和 `git diff --check` 均通过。
 - 真实浏览器使用独立临时数据库和东方玄幻项目完成三视口、URL/焦点/抽屉/导航验收；未配置模型、未访问作者真实作品、未产生费用。favicon 404 与 760px 空列均在验收中发现并修复，复测后 console/network 问题为 0。
 - 最终前端修复后再次用隔离东方玄幻项目实测：章纲阶段聚焦可见的 `chapter-outline-title`，候选台“生成本章候选”精确计数为 1，关闭后焦点归还阶段按钮；1040/760 像素的 document/body 宽度都等于视口，760 像素正文宽 728px。正文修改后立即浏览器返回并重载仍完整持久化，console warning/error 为 0。开发模式 StrictMode 发出的两次生产台创建请求由服务端唯一索引幂等收敛为 1 条 aggregate。
 - 最后路由修复后使用全新隔离数据创建西方奇幻《暮潮法典》，从人工填写/确认选题进入创作台；将 URL 章节改为不存在的 `missing-chapter` 后，页面自动恢复到真实第一章并保留 `review` 阶段。1280px 下 document/body 宽度等于视口、可用主 CTA 为 1，console 无 warning/error。数据目录已可恢复地移入废纸篓。
@@ -937,10 +940,11 @@ AI 漫剧批次采用同一标准：M18–M23 全部完成、全量 `pnpm run ve
 
 - Rust 审计有 17 条来自 Tauri Linux/GTK 等传递依赖的维护或不安全告警，当前 0 个已知漏洞；后续随 Tauri 依赖更新复核，不能静默忽略。
 - CI 使用的 rustsec/audit-check@v2 仍声明 Node 20 action runtime，GitHub 会强制以 Node 24 运行；等待上游 action 更新。
+- GitHub Actions 仍主要使用官方可变 major/stable 标签，而非完整提交 SHA；当前由 Dependabot、最小权限和必需检查约束，后续应作为跨全部 workflow 的一致性供应链改造统一固定并验证，避免只改一个工作流形成两套策略。
 - macOS 安装包仍是 ad-hoc 签名，未公证。
 - M14 AI 沙盘已接入模型提议，但尚未经过真实作者对“剧情启发质量”、建议采用率和单轮成本的主观评估；规则模式继续作为默认零费用回退。
 - M15/M16 仍待标准阅读器与复杂真实旧稿矩阵；M17 仍待 100 章人物/伏笔图谱密度的人工作者评估。在这些外部验收完成前，不把五项扩展称为公开发布就绪。
 - AI 漫剧的工程批准门和导出闭环已经完成，但季纲质量、旁白比例、集长节奏、资产粒度和 DOCX 在真实制片流程中的可用性仍需要作者/编剧/分镜师共同试用；这些主观验收不影响当前代码完成结论，也不等同于可直接发布成片。
 - 东方玄幻和西方奇幻已具备完整题材分流，但修炼境界树、功法克制、魔法学派和种族规则仍复用通用正式事实/资源模型；在真实作者确认信息密度与编辑频率前，不提前增加专用 schema。
-- Windows 新建测试库从 v1 顺序迁移至 v31 的文件系统成本显著高于 macOS；当前 CI 以完整按文件并行保证时限和覆盖率，后续若继续扩充后端套件，应单独设计“新空库直接创建最终 schema、既有库仍逐版迁移”的性能优化并保留完整升级矩阵，不在发布收尾阶段冒险改动生产迁移路径。
+- Windows 新建测试库从 v1 顺序迁移至 v31 的文件系统成本显著高于 macOS；当前 CI 以 8 个独立 runner 的完整按文件分片保证时限和覆盖率，后续新增测试文件必须同步重平衡静态分片。若继续扩充后端套件，应单独设计“新空库直接创建最终 schema、既有库仍逐版迁移”的性能优化并保留完整升级矩阵，不在发布收尾阶段冒险改动生产迁移路径。
 - 其余风险按 PLAN.md 第 4、13 节持续跟踪。
