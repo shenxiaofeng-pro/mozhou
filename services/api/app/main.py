@@ -50,6 +50,14 @@ from app.beta import (
     BetaTemplate,
     CreateBetaFeedbackRequest,
 )
+from app.canon_reconciliation.repository import (
+    CanonReconciliationConflictError,
+    CanonReconciliationNotFoundError,
+    CanonReconciliationRepository,
+    CanonReconciliationStaleError,
+)
+from app.canon_reconciliation.routes import canon_reconciliation_router
+from app.canon_reconciliation.service import CanonReconciliationService
 from app.chapter_jobs import ChapterJobService
 from app.chapter_production.repository import ChapterProductionRepository
 from app.chapter_production.routes import chapter_production_router
@@ -272,8 +280,6 @@ from app.providers import (
 from app.reference_jobs import ReferenceJobService
 from app.repository import (
     InvalidChapterStateError,
-    InvalidFactChangeSetStateError,
-    InvalidFactSelectionError,
     InvalidFutureKnowledgeStateError,
     InvalidReferenceApplicationError,
     InvalidReferenceImportError,
@@ -381,6 +387,15 @@ def create_app(
         )
         application.state.ai_manager = ai_manager or AiGatewayManager()
         application.state.job_repository = JobRepository(database)
+        application.state.canon_reconciliation_repository = (
+            CanonReconciliationRepository(database)
+        )
+        application.state.canon_reconciliation_service = CanonReconciliationService(
+            application.state.repository,
+            application.state.canon_reconciliation_repository,
+            application.state.job_repository,
+            application.state.creative_context_service,
+        )
         application.state.sandbox_ai_service = SandboxAiService(
             application.state.narrative_sandbox,
             application.state.job_repository,
@@ -491,7 +506,9 @@ def create_app(
         )
 
         def handle_review_job(context: JobExecutionContext, job: Job) -> None:
-            if application.state.chapter_production_service.handles(job):
+            if application.state.canon_reconciliation_service.handles(job):
+                application.state.canon_reconciliation_service.handle(context, job)
+            elif application.state.chapter_production_service.handles(job):
                 application.state.chapter_production_service.handle(context, job)
             elif job.workflow == REVIEW_WORKFLOW:
                 application.state.review_service.handle(context, job)
@@ -567,6 +584,7 @@ def create_app(
     application.include_router(creative_context_router)
     application.include_router(plan_rebase_router)
     application.include_router(chapter_production_router)
+    application.include_router(canon_reconciliation_router)
 
     @application.exception_handler(OriginalityGateBlockedError)
     async def creative_safety_gate_error(
@@ -3929,19 +3947,35 @@ def create_app(
     def transition_chapter(
         chapter_id: UUID,
         body: TransitionChapterRequest,
+        request: Request,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> Chapter:
         try:
-            chapter = repository.transition_chapter(str(chapter_id), body)
-            if chapter.status.value == "approved":
-                repository.create_fact_change_set(chapter.id)
-            return chapter
+            if body.target_status.value == "approved":
+                current = repository.get_chapter(str(chapter_id))
+                assert body.expected_content_sha256 is not None
+                request.app.state.canon_reconciliation_repository.approve_chapter_and_enqueue(
+                    project_id=current.project_id,
+                    chapter_id=current.id,
+                    expected_revision=body.expected_revision,
+                    expected_content_sha256=body.expected_content_sha256,
+                    source_writing_outcome_id=body.source_writing_outcome_id,
+                )
+                request.app.state.job_runtime.wake()
+                return repository.get_chapter(current.id)
+            return repository.transition_chapter(str(chapter_id), body)
         except NotFoundError as error:
+            raise HTTPException(status_code=404, detail="章节不存在") from error
+        except CanonReconciliationNotFoundError as error:
             raise HTTPException(status_code=404, detail="章节不存在") from error
         except StaleRevisionError as error:
             raise HTTPException(status_code=409, detail="章节已有新版本，请重新载入") from error
+        except CanonReconciliationStaleError as error:
+            raise HTTPException(status_code=409, detail="章节正文已变化，请重新载入") from error
         except InvalidChapterStateError as error:
             raise HTTPException(status_code=409, detail="当前章节尚未满足该状态的条件") from error
+        except CanonReconciliationConflictError as error:
+            raise HTTPException(status_code=409, detail="当前章节尚未满足批准条件") from error
 
     @application.post(
         "/api/chapters/{chapter_id}/fact-change-sets",
@@ -3952,12 +3986,11 @@ def create_app(
         chapter_id: UUID,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> FactChangeSet:
-        try:
-            return repository.create_fact_change_set(str(chapter_id))
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="章节不存在") from error
-        except InvalidChapterStateError as error:
-            raise HTTPException(status_code=409, detail="章节定稿后才能提取候选事实") from error
+        del chapter_id, repository
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="旧版事实变更集已转为只读，请使用定稿回流审签",
+        )
 
     @application.post(
         "/api/fact-change-sets/{change_set_id}/apply",
@@ -3968,16 +4001,11 @@ def create_app(
         body: ApplyFactChangeSetRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> FactChangeSet:
-        try:
-            return repository.apply_fact_change_set(str(change_set_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="候选事实变更集不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="候选事实已在其他位置处理") from error
-        except InvalidFactChangeSetStateError as error:
-            raise HTTPException(status_code=409, detail="候选事实已经处理，不能重复回灌") from error
-        except InvalidFactSelectionError as error:
-            raise HTTPException(status_code=400, detail="选择中包含不属于本次候选的事实") from error
+        del change_set_id, body, repository
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="旧版事实变更集已转为只读，不能再写入正式账本",
+        )
 
     @application.post(
         "/api/fact-change-sets/{change_set_id}/reject",
@@ -3988,14 +4016,11 @@ def create_app(
         body: RejectFactChangeSetRequest,
         repository: Annotated[ProjectRepository, Depends(get_repository)],
     ) -> FactChangeSet:
-        try:
-            return repository.reject_fact_change_set(str(change_set_id), body)
-        except NotFoundError as error:
-            raise HTTPException(status_code=404, detail="候选事实变更集不存在") from error
-        except StaleRevisionError as error:
-            raise HTTPException(status_code=409, detail="候选事实已在其他位置处理") from error
-        except InvalidFactChangeSetStateError as error:
-            raise HTTPException(status_code=409, detail="候选事实已经处理，不能重复操作") from error
+        del change_set_id, body, repository
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="旧版事实变更集已转为只读，请使用定稿回流审签",
+        )
 
     @application.post(
         "/api/future-knowledge/{knowledge_id}/review",

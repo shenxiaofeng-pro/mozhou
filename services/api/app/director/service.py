@@ -467,7 +467,7 @@ class DirectorService:
             or draft_artifact is None
         ):
             raise ValueError("pipeline_result_unavailable")
-        pipeline_request = DirectorChapterPipelineRequest.model_validate(task_input.request)
+        pipeline_request, _chapter_id = self._parse_chapter_pipeline_input(task_input)
         expected_revision = pipeline_request.expected_revision
         run_id = str(uuid5(NAMESPACE_URL, f"mozhou:{job.id}:pipeline-generation-run"))
         run = self.repository.materialize_generation_run(
@@ -489,6 +489,22 @@ class DirectorService:
             pre_review=DirectorPreReview.model_validate_json(review_artifact.payload),
             draft=run,
         )
+
+    @staticmethod
+    def _parse_chapter_pipeline_input(
+        task_input: DirectorJobInput,
+    ) -> tuple[DirectorChapterPipelineRequest, object]:
+        """Separate the trusted job envelope from the public request payload.
+
+        ``chapter_id`` is injected by the submit path so the worker can bind the
+        frozen request to its job.  All remaining fields still go through the
+        public, fail-closed request model, so an unexpected client field cannot
+        be hidden in a persisted job.
+        """
+        request_payload = dict(task_input.request)
+        chapter_id = request_payload.pop("chapter_id", None)
+        request = DirectorChapterPipelineRequest.model_validate(request_payload)
+        return request, chapter_id
 
     def handle(self, context: JobExecutionContext, job: Job) -> None:
         if job.kind != JobKind.REVIEW:
@@ -593,8 +609,7 @@ class DirectorService:
         task_input: DirectorJobInput,
         frozen_brief_packet: ContextPacket,
     ) -> None:
-        request = DirectorChapterPipelineRequest.model_validate(task_input.request)
-        chapter_id = task_input.request.get("chapter_id")
+        request, chapter_id = self._parse_chapter_pipeline_input(task_input)
         if not isinstance(chapter_id, str) or job.chapter_id != chapter_id:
             raise JobExecutionError("invalid_input", "单章流水线任务输入无效")
         workspace, chapter = self._load_pipeline_chapter(

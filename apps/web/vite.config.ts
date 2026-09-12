@@ -12,6 +12,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // The interaction-heavy workbench suites allocate a full JSDOM each.
+    // Capping workers keeps their existing 5s assertions deterministic on CI
+    // and on author machines that are running the desktop shell in parallel.
+    maxWorkers: 1,
     environmentOptions: {
       jsdom: { url: 'http://127.0.0.1:5173' },
     },

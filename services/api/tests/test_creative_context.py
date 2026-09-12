@@ -254,6 +254,7 @@ def test_current_pattern_profile_is_required_compact_and_safe_at_every_budget(
         (CreativeContextPurpose.DRAFT, CreativeContextSubjectKind.CHAPTER),
         (CreativeContextPurpose.CANDIDATE_REVIEW, CreativeContextSubjectKind.CHAPTER),
         (CreativeContextPurpose.CANON_RECONCILIATION, CreativeContextSubjectKind.CHAPTER),
+        (CreativeContextPurpose.PREFERENCE, CreativeContextSubjectKind.CHAPTER),
     ],
 )
 def test_every_purpose_uses_same_safe_profile_and_persisted_interface(
@@ -374,6 +375,7 @@ def test_required_profile_over_budget_blocks_explicitly(tmp_path: Path) -> None:
     [
         CreativeContextPurpose.CANDIDATE_REVIEW,
         CreativeContextPurpose.CANON_RECONCILIATION,
+        CreativeContextPurpose.PREFERENCE,
     ],
 )
 def test_review_window_dependency_invalidates_packet_when_prior_chapter_changes(

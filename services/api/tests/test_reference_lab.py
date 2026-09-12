@@ -662,7 +662,7 @@ def test_reference_application_lifecycle_archives_and_reactivates_passed_bluepri
     assert director_unblocked.status_code == 200
     assert legacy_context["applied_reference_patterns"] == []
     assert all(item.kind != ContextItemKind.APPROVED_BLUEPRINT for item in packet.items)
-    assert archive["format_version"] == 17
+    assert archive["format_version"] == 18
     assert archive["tables"]["reference_pattern_applications"][0][
         "lifecycle_state"
     ] == "archived"
@@ -1004,7 +1004,7 @@ def test_scene_plot_graph_blocks_reworded_same_sequence(tmp_path: Path) -> None:
 
     assert application["originality_status"] == "blocked"
     assert application["risk_level"] == "high"
-    assert application["threshold_version"] == "scene-plot-graph-v1"
+    assert application["threshold_version"] == "scene-plot-graph-v2"
     assert scene_check.status_code == 200
     assert scene_check.json()["risk_level"] == "high"
     assert scene_check.json()["source_work_count"] == 2

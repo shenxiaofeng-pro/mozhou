@@ -1,26 +1,53 @@
 import type {
+  AuthorWorkflowStage,
   Chapter,
   ChapterStatus,
   ChapterSummary,
   Workspace,
   WorkspaceSummary,
 } from '@mozhou/contracts'
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
 
 import { api } from '../api'
+import { presentAuthorAction, type AuthorActionOperation } from '../authorWorkflow'
 import { genreLabels, getStoryAnchorLabels, isRebirthGenre } from '../genre'
 import { useChapterAutosave, type SaveStatus } from '../hooks/useChapterAutosave'
-import { AuthorToolsDialog } from './AuthorToolsDialog'
-import { ChapterProductionDialog } from './ChapterProductionDialog'
+import { AuthorUtilityDrawer } from './AuthorUtilityDrawer'
+import { AuthorWorkflowRail } from './AuthorWorkflowRail'
 import { DirectorPanel } from './DirectorPanel'
-import { ManuscriptDirectoryDialog } from './ManuscriptDirectoryDialog'
-import { SerialWorkspaceDialog } from './SerialWorkspaceDialog'
+
+const AuthorToolsDialog = lazy(async () => {
+  const module = await import('./AuthorToolsDialog')
+  return { default: module.AuthorToolsDialog }
+})
+
+const ChapterProductionDialog = lazy(async () => {
+  const module = await import('./ChapterProductionDialog')
+  return { default: module.ChapterProductionDialog }
+})
+
+const ManuscriptDirectoryDialog = lazy(async () => {
+  const module = await import('./ManuscriptDirectoryDialog')
+  return { default: module.ManuscriptDirectoryDialog }
+})
+
+const SerialWorkspaceDialog = lazy(async () => {
+  const module = await import('./SerialWorkspaceDialog')
+  return { default: module.SerialWorkspaceDialog }
+})
 
 interface WorkspaceShellProps {
   workspace: WorkspaceSummary
   initialChapter: Chapter
+  activeStage: AuthorWorkflowStage
+  requestedChapterId?: string | null
   onChapterChanged: (chapter: Chapter) => void
   onWorkspaceChanged: (workspace: Workspace | WorkspaceSummary) => void
+  onRefreshAuthorRoute: () => Promise<void>
+  onNavigationGuardChanged: (guard: (() => Promise<boolean>) | null) => void
+  onStageChanged: (stage: AuthorWorkflowStage) => void
+  onActiveChapterChanged: (chapterId: string) => void
+  onRequestedChapterLoadFailed: (previousChapterId: string) => void
   onOpenReferenceLibrary: () => void
   onOpenWritingPatterns?: () => void
   onOpenTopicDecision?: () => void
@@ -32,14 +59,20 @@ interface WorkspaceShellProps {
   onClose: () => void
 }
 
-interface ActiveChapterWorkspaceProps extends WorkspaceShellProps {
+interface ActiveChapterWorkspaceProps extends Omit<WorkspaceShellProps, 'onRequestedChapterLoadFailed'> {
   chapter: Chapter
   futureChapters: ChapterSummary[]
   isCreatingChapter: boolean
+  nextActionRefreshRequired: boolean
   createChapterError: string | null
   chapterLoadError: string | null
-  onSelectChapter: (chapterId: string) => Promise<void>
+  onSelectChapter: (chapterId: string) => Promise<boolean>
   onCreateChapter: () => void
+  onCreateAndOpenChapter: () => void
+  onRefreshNextAction: () => void
+  queuedAuthorOperation: AuthorActionOperation | null
+  onQueueAuthorOperation: (operation: AuthorActionOperation) => void
+  onQueuedAuthorOperationHandled: () => void
 }
 
 const saveLabels: Record<SaveStatus, string> = {
@@ -57,12 +90,34 @@ const chapterStatusLabels: Record<ChapterStatus, string> = {
 }
 
 const CHAPTER_PREFIX = /^第[零〇一二三四五六七八九十百千万两\d]+章\s*/
+type ProductionFocusTarget = 'outline' | 'candidate'
+const DIRECTOR_FOCUSABLE = [
+  'button:not([disabled])',
+  '[href]',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+function directorAnchorId(stage: AuthorWorkflowStage): string {
+  if (stage === 'feedback') return 'director-stage-feedback'
+  if (stage === 'review' || stage === 'complete') return 'director-stage-review'
+  return 'director-stage-book'
+}
 
 export function WorkspaceShell({
   workspace,
   initialChapter,
+  activeStage,
+  requestedChapterId = null,
   onChapterChanged,
   onWorkspaceChanged,
+  onRefreshAuthorRoute,
+  onNavigationGuardChanged,
+  onStageChanged,
+  onActiveChapterChanged,
+  onRequestedChapterLoadFailed,
   onOpenReferenceLibrary,
   onOpenWritingPatterns = () => undefined,
   onOpenTopicDecision = () => undefined,
@@ -75,24 +130,63 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const [activeChapter, setActiveChapter] = useState(initialChapter)
   const [isCreatingChapter, setIsCreatingChapter] = useState(false)
+  const [nextActionRefreshRequired, setNextActionRefreshRequired] = useState(false)
   const [createChapterError, setCreateChapterError] = useState<string | null>(null)
   const [chapterLoadError, setChapterLoadError] = useState<string | null>(null)
+  const [queuedAuthorOperation, setQueuedAuthorOperation] = useState<AuthorActionOperation | null>(null)
+  const creatingChapterRef = useRef(false)
+  const chapterLoadRequestRef = useRef(0)
   const activeChapterSummary = workspace.chapters.find((item) => item.id === activeChapter.id)
   const futureChapters = workspace.chapters
     .filter((item) => item.chapter_number > activeChapter.chapter_number)
     .slice(0, 3)
 
-  const selectChapter = useCallback(async (chapterId: string): Promise<boolean> => {
+  const selectChapter = useCallback(async (
+    chapterId: string,
+    updateRoute = true,
+    onCurrentFailure?: () => void,
+  ): Promise<boolean> => {
+    const requestVersion = ++chapterLoadRequestRef.current
     if (chapterId === activeChapter.id) return true
     setChapterLoadError(null)
     try {
-      setActiveChapter(await api.getChapter(chapterId))
+      const loaded = await api.getChapter(chapterId)
+      if (requestVersion !== chapterLoadRequestRef.current) return false
+      setActiveChapter(loaded)
+      if (updateRoute) onActiveChapterChanged(chapterId)
       return true
     } catch (caught) {
+      if (requestVersion !== chapterLoadRequestRef.current) return false
       setChapterLoadError(caught instanceof Error ? caught.message : '章节正文读取失败')
+      onCurrentFailure?.()
       return false
     }
-  }, [activeChapter.id])
+  }, [activeChapter.id, onActiveChapterChanged])
+
+  useEffect(() => {
+    chapterLoadRequestRef.current += 1
+  }, [requestedChapterId])
+
+  useEffect(() => {
+    if (!requestedChapterId || requestedChapterId === activeChapter.id) return
+    if (!workspace.chapters.some((chapter) => chapter.id === requestedChapterId)) {
+      onRequestedChapterLoadFailed(activeChapter.id)
+      return
+    }
+    const previousChapterId = activeChapter.id
+    const timer = window.setTimeout(() => {
+      void selectChapter(requestedChapterId, false, () => {
+        onRequestedChapterLoadFailed(previousChapterId)
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [
+    activeChapter.id,
+    onRequestedChapterLoadFailed,
+    requestedChapterId,
+    selectChapter,
+    workspace.chapters,
+  ])
 
   useEffect(() => {
     if (!activeChapterSummary || activeChapterSummary.revision <= activeChapter.revision) return
@@ -125,17 +219,53 @@ export function WorkspaceShell({
     onChapterChanged(chapter)
   }
 
-  async function createNextChapter() {
+  async function refreshNextAction() {
+    if (creatingChapterRef.current) return
+    creatingChapterRef.current = true
+    setIsCreatingChapter(true)
+    try {
+      await onRefreshAuthorRoute()
+      setNextActionRefreshRequired(false)
+      setCreateChapterError(null)
+    } catch (caught) {
+      setNextActionRefreshRequired(true)
+      setCreateChapterError(caught instanceof Error
+        ? `章节已创建，但下一步同步失败：${caught.message}`
+        : '章节已创建，但下一步同步失败。')
+    } finally {
+      creatingChapterRef.current = false
+      setIsCreatingChapter(false)
+    }
+  }
+
+  async function createNextChapter(openCreated: boolean) {
+    if (creatingChapterRef.current || nextActionRefreshRequired) return
+    creatingChapterRef.current = true
     setIsCreatingChapter(true)
     setCreateChapterError(null)
     try {
       const lastChapterNumber = Math.max(...workspace.chapters.map((item) => item.chapter_number))
-      onChapterChanged(await api.createChapter(workspace.project.id, {
+      const created = await api.createChapter(workspace.project.id, {
         expected_last_chapter_number: lastChapterNumber,
-      }))
+      })
+      onChapterChanged(created)
+      if (openCreated) {
+        setActiveChapter(created)
+        onActiveChapterChanged(created.id)
+      }
+      try {
+        await onRefreshAuthorRoute()
+        setNextActionRefreshRequired(false)
+      } catch (caught) {
+        setNextActionRefreshRequired(true)
+        setCreateChapterError(caught instanceof Error
+          ? `章节已创建，但下一步同步失败：${caught.message}`
+          : '章节已创建，但下一步同步失败。')
+      }
     } catch (caught) {
       setCreateChapterError(caught instanceof Error ? caught.message : '无法添加下一章')
     } finally {
+      creatingChapterRef.current = false
       setIsCreatingChapter(false)
     }
   }
@@ -145,13 +275,20 @@ export function WorkspaceShell({
       key={activeChapter.id}
       workspace={workspace}
       initialChapter={initialChapter}
+      activeStage={activeStage}
+      requestedChapterId={requestedChapterId}
       chapter={activeChapter}
       futureChapters={futureChapters}
       isCreatingChapter={isCreatingChapter}
+      nextActionRefreshRequired={nextActionRefreshRequired}
       createChapterError={createChapterError}
       chapterLoadError={chapterLoadError}
       onChapterChanged={handleChapterChanged}
       onWorkspaceChanged={onWorkspaceChanged}
+      onRefreshAuthorRoute={onRefreshAuthorRoute}
+      onNavigationGuardChanged={onNavigationGuardChanged}
+      onStageChanged={onStageChanged}
+      onActiveChapterChanged={onActiveChapterChanged}
       onOpenReferenceLibrary={onOpenReferenceLibrary}
       onOpenWritingPatterns={onOpenWritingPatterns}
       onOpenTopicDecision={onOpenTopicDecision}
@@ -160,8 +297,13 @@ export function WorkspaceShell({
       onOpenTaskCenter={onOpenTaskCenter}
       chapterProductionRequest={chapterProductionRequest}
       onChapterProductionRequestHandled={onChapterProductionRequestHandled}
-      onSelectChapter={async (chapterId) => { await selectChapter(chapterId) }}
-      onCreateChapter={createNextChapter}
+      onSelectChapter={selectChapter}
+      onCreateChapter={() => { void createNextChapter(false) }}
+      onCreateAndOpenChapter={() => { void createNextChapter(true) }}
+      onRefreshNextAction={() => { void refreshNextAction() }}
+      queuedAuthorOperation={queuedAuthorOperation}
+      onQueueAuthorOperation={setQueuedAuthorOperation}
+      onQueuedAuthorOperationHandled={() => setQueuedAuthorOperation(null)}
       onClose={onClose}
     />
   )
@@ -170,12 +312,16 @@ export function WorkspaceShell({
 function ActiveChapterWorkspace({
   workspace,
   chapter,
+  activeStage,
   futureChapters,
   isCreatingChapter,
+  nextActionRefreshRequired,
   createChapterError,
   chapterLoadError,
   onChapterChanged,
   onWorkspaceChanged,
+  onNavigationGuardChanged,
+  onStageChanged,
   onOpenReferenceLibrary,
   onOpenWritingPatterns = () => undefined,
   onOpenTopicDecision = () => undefined,
@@ -186,6 +332,11 @@ function ActiveChapterWorkspace({
   onChapterProductionRequestHandled = () => undefined,
   onSelectChapter,
   onCreateChapter,
+  onCreateAndOpenChapter,
+  onRefreshNextAction,
+  queuedAuthorOperation,
+  onQueueAuthorOperation,
+  onQueuedAuthorOperationHandled,
   onClose,
 }: ActiveChapterWorkspaceProps) {
   const { draft, saveStatus, saveError, setDraft, flushNow, retry, adoptServerVersion } = useChapterAutosave(
@@ -194,18 +345,23 @@ function ActiveChapterWorkspace({
   )
   const [isNavigating, setIsNavigating] = useState(false)
   const [isDirectorOpen, setIsDirectorOpen] = useState(false)
+  const [directorStageTarget, setDirectorStageTarget] = useState<AuthorWorkflowStage | null>(null)
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false)
   const [isProductionOpen, setIsProductionOpen] = useState(false)
+  const [productionFocusTarget, setProductionFocusTarget] = useState<ProductionFocusTarget>('outline')
+  const [isUtilityOpen, setIsUtilityOpen] = useState(false)
   const [serialDialogMode, setSerialDialogMode] = useState<'dashboard' | 'search' | null>(null)
   const [isFocusMode, setIsFocusMode] = useState(false)
   const [authorTools, setAuthorTools] = useState<{ tab: 'calendar' | 'annotations' | 'ideas' | 'graphs'; selection: { start: number; end: number } | null } | null>(null)
   const manuscriptRef = useRef<HTMLTextAreaElement>(null)
-  const productionTriggerRef = useRef<HTMLButtonElement>(null)
+  const authorWorkflowRef = useRef<HTMLDivElement>(null)
+  const productionReturnFocusRef = useRef<HTMLElement | null>(null)
   const directorTriggerRef = useRef<HTMLButtonElement>(null)
   const planReviewTriggerRef = useRef<HTMLButtonElement>(null)
   const directorReturnFocusRef = useRef<HTMLButtonElement | null>(null)
   const directorCloseRef = useRef<HTMLButtonElement>(null)
-  const authorToolsTriggerRef = useRef<HTMLButtonElement>(null)
+  const utilityTriggerRef = useRef<HTMLButtonElement>(null)
+  const flushNowRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const deferredDraft = useDeferredValue(draft)
   const wordCount = deferredDraft.replace(/\s/g, '').length
   const progress = Math.min(100, Math.round((wordCount / workspace.project.chapter_target_words) * 100))
@@ -226,6 +382,14 @@ function ActiveChapterWorkspace({
       stable: false,
     }))
 
+  flushNowRef.current = flushNow
+
+  useEffect(() => {
+    const guard = () => flushNowRef.current()
+    onNavigationGuardChanged(guard)
+    return () => onNavigationGuardChanged(null)
+  }, [onNavigationGuardChanged])
+
   useEffect(() => {
     if (saveStatus === 'saved') return
     function warnBeforeUnload(event: BeforeUnloadEvent) {
@@ -238,25 +402,84 @@ function ActiveChapterWorkspace({
 
   useEffect(() => {
     if (!isDirectorOpen) return
-    directorCloseRef.current?.focus()
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return
-      setIsDirectorOpen(false)
-      const returnTarget = directorReturnFocusRef.current ?? directorTriggerRef.current
-      returnTarget?.focus()
+    if (!directorStageTarget) directorCloseRef.current?.focus()
+    let frame = 0
+    let settleTimer: number | undefined
+    let remainingAttempts = 20
+    function focusDirectorStage() {
+      if (!directorStageTarget) return
+      const target = document.getElementById(directorAnchorId(directorStageTarget))
+      if (target) {
+        target.focus()
+        if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' })
+        return
+      }
+      remainingAttempts -= 1
+      if (remainingAttempts > 0) frame = window.requestAnimationFrame(focusDirectorStage)
+    }
+    frame = window.requestAnimationFrame(focusDirectorStage)
+    if (directorStageTarget) {
+      // Opening the drawer also makes the invoking rail inert. Chromium may
+      // finish that blur after the first animation frame, so reinforce the
+      // intended stage focus once the drawer transition has settled.
+      settleTimer = window.setTimeout(focusDirectorStage, 250)
     }
 
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [isDirectorOpen])
+    function handleDirectorKeyboard(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeDirector()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const surface = document.getElementById('ai-director-surface')
+      if (!surface) return
+      const focusable = [...surface.querySelectorAll<HTMLElement>(DIRECTOR_FOCUSABLE)]
+      const first = focusable[0]
+      const last = focusable.at(-1)
+      if (!first || !last) return
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    window.addEventListener('keydown', handleDirectorKeyboard)
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame)
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer)
+      window.removeEventListener('keydown', handleDirectorKeyboard)
+    }
+  }, [directorStageTarget, isDirectorOpen])
+
+  useEffect(() => {
+    if (!isDirectorOpen && !isUtilityOpen) return
+    const selectors = isDirectorOpen
+      ? '.workspace-header, .story-tree, .editor-panel, .author-workflow-surface, .director-drawer-trigger'
+      : '.workspace-header, .story-tree, .editor-panel, .author-workflow-surface, .director-drawer-trigger, .director-surface'
+    const background = [...document.querySelectorAll<HTMLElement>(selectors)]
+      .map((element) => ({ element, inert: element.inert, ariaHidden: element.getAttribute('aria-hidden') }))
+    for (const { element } of background) {
+      element.inert = true
+      element.setAttribute('aria-hidden', 'true')
+    }
+    return () => {
+      for (const { element, inert, ariaHidden } of background) {
+        element.inert = inert
+        if (ariaHidden === null) element.removeAttribute('aria-hidden')
+        else element.setAttribute('aria-hidden', ariaHidden)
+      }
+    }
+  }, [isDirectorOpen, isUtilityOpen])
 
   useEffect(() => {
     if (!chapterProductionRequest) return
     if (chapterProductionRequest.chapterId && chapterProductionRequest.chapterId !== chapter.id) return
     const timer = window.setTimeout(() => {
-      setIsDirectorOpen(false)
-      setIsProductionOpen(true)
+      openProduction('candidate')
       onChapterProductionRequestHandled()
     }, 0)
     return () => window.clearTimeout(timer)
@@ -268,7 +491,7 @@ function ActiveChapterWorkspace({
     returnTarget?.focus()
   }
 
-  async function navigateAfterSave(action: () => void | Promise<void>): Promise<boolean> {
+  async function navigateAfterSave(action: () => void | Promise<unknown>): Promise<boolean> {
     if (isNavigating) return false
     setIsNavigating(true)
     try {
@@ -338,16 +561,108 @@ function ActiveChapterWorkspace({
 
   function closeAuthorTools() {
     setAuthorTools(null)
-    authorToolsTriggerRef.current?.focus()
+    utilityTriggerRef.current?.focus()
   }
 
   function closeProduction() {
     setIsProductionOpen(false)
-    window.requestAnimationFrame(() => productionTriggerRef.current?.focus())
+    window.requestAnimationFrame(() => {
+      const returnTarget = productionReturnFocusRef.current
+      if (returnTarget?.isConnected) returnTarget.focus()
+      else authorWorkflowRef.current?.focus()
+    })
   }
+
+  function openProduction(target: ProductionFocusTarget) {
+    const activeElement = document.activeElement
+    productionReturnFocusRef.current = activeElement instanceof HTMLElement ? activeElement : null
+    setIsDirectorOpen(false)
+    setProductionFocusTarget(target)
+    setIsProductionOpen(true)
+  }
+
+  function openDirector(stage?: AuthorWorkflowStage) {
+    directorReturnFocusRef.current = document.activeElement instanceof HTMLButtonElement
+      ? document.activeElement
+      : directorTriggerRef.current
+    setDirectorStageTarget(stage ?? null)
+    setIsDirectorOpen(true)
+  }
+
+  function closeUtility() {
+    setIsUtilityOpen(false)
+    window.requestAnimationFrame(() => utilityTriggerRef.current?.focus())
+  }
+
+  function runAuthorOperation(operation: AuthorActionOperation) {
+    if (operation === 'topic') {
+      onOpenTopicDecision()
+    } else if (operation === 'production') {
+      const stage = workspace.author_next_action?.target_stage ?? activeStage
+      openProduction(stage === 'candidate' ? 'candidate' : 'outline')
+    } else if (operation === 'manuscript') {
+      manuscriptRef.current?.focus()
+    } else if (operation === 'create') {
+      onCreateAndOpenChapter()
+    } else if (operation === 'final') {
+      const chapterId = workspace.author_next_action?.last_approved_chapter_id
+      if (chapterId && chapterId !== chapter.id) void onSelectChapter(chapterId)
+      else manuscriptRef.current?.focus()
+    } else {
+      openDirector(workspace.author_next_action?.target_stage ?? activeStage)
+    }
+  }
+
+  async function handlePrimaryAuthorAction() {
+    const action = workspace.author_next_action
+    const presentation = presentAuthorAction(action)
+    if (presentation.disabled) return
+    await navigateAfterSave(async () => {
+      if (action) onStageChanged(action.target_stage)
+      const targetChapterId = action?.chapter_id
+      if (targetChapterId && targetChapterId !== chapter.id) {
+        const selected = await onSelectChapter(targetChapterId)
+        if (selected && presentation.operation !== 'final') onQueueAuthorOperation(presentation.operation)
+        return
+      }
+      runAuthorOperation(presentation.operation)
+    })
+  }
+
+  function handleWorkflowStage(stage: AuthorWorkflowStage) {
+    void navigateAfterSave(() => {
+      onStageChanged(stage)
+      if (stage === 'plan' || stage === 'candidate') {
+        openProduction(stage === 'candidate' ? 'candidate' : 'outline')
+      } else if (stage === 'book' && workspace.topic_decision?.status !== 'confirmed') {
+        onOpenTopicDecision()
+      } else {
+        openDirector(stage)
+      }
+    })
+  }
+
+  useEffect(() => {
+    if (!queuedAuthorOperation) return
+    const timer = window.setTimeout(() => {
+      if (queuedAuthorOperation === 'production') {
+        const stage = workspace.author_next_action?.target_stage ?? activeStage
+        openProduction(stage === 'candidate' ? 'candidate' : 'outline')
+      } else if (queuedAuthorOperation === 'manuscript') {
+        manuscriptRef.current?.focus()
+      } else {
+        setDirectorStageTarget(workspace.author_next_action?.target_stage ?? activeStage)
+        setIsDirectorOpen(true)
+      }
+      onQueuedAuthorOperationHandled()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeStage, onQueuedAuthorOperationHandled, queuedAuthorOperation, workspace.author_next_action?.target_stage])
 
   return (
     <main className="workspace-shell" data-focus-mode={isFocusMode}>
+      <a className="workspace-skip-link" href="#manuscript-editor">跳到正文</a>
+      <a className="workspace-skip-link workspace-skip-ai" href="#author-workflow">跳到本章 AI</a>
       <header className="workspace-header">
         <div className="compact-brand">
           <span aria-hidden="true">墨</span>
@@ -361,50 +676,14 @@ function ActiveChapterWorkspace({
           <span><small>本章</small>{wordCount.toLocaleString()} / {workspace.project.chapter_target_words.toLocaleString()}</span>
           <span><small>当前状态</small>{chapterStatusLabels[chapter.status]}</span>
           <button
-            className="library-action serial-action"
+            ref={utilityTriggerRef}
+            className="library-action utility-action"
             type="button"
-            aria-label="打开连载工作台"
+            aria-label="打开辅助工具"
+            aria-haspopup="dialog"
             disabled={isNavigating}
-            onClick={() => { void navigateAfterSave(() => setSerialDialogMode('dashboard')) }}
-          >连载台</button>
-          <button ref={authorToolsTriggerRef} className="library-action" type="button" aria-label="打开作者工具台" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setAuthorTools({ tab: 'calendar', selection: null })) }}>作者工具</button>
-          <button
-            className="library-action"
-            type="button"
-            aria-label="打开写作配方"
-            disabled={isNavigating}
-            onClick={() => { void navigateAfterSave(onOpenWritingPatterns) }}
-          >写作配方</button>
-          <button
-            className="library-action"
-            type="button"
-            aria-label="打开资料研究台"
-            disabled={isNavigating}
-            onClick={() => { void navigateAfterSave(onOpenResearch) }}
-          >资料研究</button>
-          <button
-            className="library-action task-action"
-            type="button"
-            aria-label="打开任务中心"
-            disabled={isNavigating}
-            onClick={() => { void navigateAfterSave(onOpenTaskCenter) }}
-          >任务中心</button>
-          <button
-            className="library-action comic-action"
-            type="button"
-            aria-label="打开 AI 漫剧改编"
-            disabled={isNavigating}
-            onClick={() => { void navigateAfterSave(onOpenComicDrama) }}
-          >AI 漫剧</button>
-          <button
-            className="library-action"
-            type="button"
-            aria-label="打开拆书库"
-            disabled={isNavigating}
-            onClick={() => { void navigateAfterSave(onOpenReferenceLibrary) }}
-          >
-            {isNavigating ? '正在保存…' : '打开拆书库'}
-          </button>
+            onClick={() => { void navigateAfterSave(() => setIsUtilityOpen(true)) }}
+          >{isNavigating ? '正在保存…' : '辅助工具'}</button>
           <button
             className="quiet-action"
             type="button"
@@ -442,6 +721,7 @@ function ActiveChapterWorkspace({
               disabled={isNavigating}
               onClick={() => { void navigateAfterSave(() => {
                 directorReturnFocusRef.current = planReviewTriggerRef.current
+                setDirectorStageTarget('book')
                 setIsDirectorOpen(true)
               }) }}
             >
@@ -455,7 +735,12 @@ function ActiveChapterWorkspace({
             <span>作品目录</span>
             <div>
               <button type="button" aria-label="管理卷章场景" disabled={isNavigating} onClick={() => { void navigateAfterSave(() => setIsDirectoryOpen(true)) }}>管理</button>
-              <button type="button" aria-label="添加下一章" onClick={onCreateChapter} disabled={isCreatingChapter}>＋</button>
+              <button
+                type="button"
+                aria-label={nextActionRefreshRequired ? '等待刷新下一步' : '添加下一章'}
+                onClick={onCreateChapter}
+                disabled={isCreatingChapter || nextActionRefreshRequired}
+              >＋</button>
             </div>
           </div>
           {treeVolumes.map((volume) => (
@@ -502,10 +787,14 @@ function ActiveChapterWorkspace({
               ))}
             </ol>
           ) : <p>先为当前章节补一条后续路线。</p>}
-          <button type="button" className="rolling-add" onClick={onCreateChapter} disabled={isCreatingChapter}>
-            {isCreatingChapter ? '正在添加…' : futureChapters.length >= 3 ? '继续添加远期章' : '添加下一章'}
+          <button type="button" className="rolling-add" onClick={onCreateChapter} disabled={isCreatingChapter || nextActionRefreshRequired}>
+            {isCreatingChapter
+              ? '正在添加…'
+              : nextActionRefreshRequired
+                ? '等待刷新下一步'
+                : futureChapters.length >= 3 ? '继续添加远期章' : '添加下一章'}
           </button>
-          {createChapterError ? <p className="tree-error" role="alert">{createChapterError}</p> : null}
+          {createChapterError && !nextActionRefreshRequired ? <p className="tree-error" role="alert">{createChapterError}</p> : null}
         </section>
       </aside>
 
@@ -519,20 +808,10 @@ function ActiveChapterWorkspace({
             <span className="save-state" data-status={saveStatus} role="status">
               <i aria-hidden="true" />{isApproved ? '定稿锁定' : saveLabels[saveStatus]}
             </span>
-            <button
-              ref={productionTriggerRef}
-              className="chapter-production-entry"
-              type="button"
-              disabled={isNavigating || isApproved}
-              aria-haspopup="dialog"
-              onClick={() => { void navigateAfterSave(() => setIsProductionOpen(true)) }}
-            >
-              <span aria-hidden="true">AI</span>
-              <strong>{isApproved ? '定稿章节已锁定' : '生成本章候选'}</strong>
-            </button>
           </div>
         </header>
         <textarea
+          id="manuscript-editor"
           ref={manuscriptRef}
           className="manuscript"
           aria-label="章节正文"
@@ -561,6 +840,21 @@ function ActiveChapterWorkspace({
         </footer>
       </section>
 
+      <div id="author-workflow" ref={authorWorkflowRef} className="author-workflow-surface" tabIndex={-1}>
+        <AuthorWorkflowRail
+          action={workspace.author_next_action}
+          activeStage={activeStage}
+          busy={isNavigating || isCreatingChapter}
+          nextActionRecovery={nextActionRefreshRequired ? createChapterError : null}
+          onSelectStage={handleWorkflowStage}
+          onPrimaryAction={() => { void handlePrimaryAuthorAction() }}
+          onRefreshNextAction={onRefreshNextAction}
+          onOpenLastApproved={(chapterId) => {
+            void navigateAfterSave(() => onSelectChapter(chapterId))
+          }}
+        />
+      </div>
+
       <button
         ref={directorTriggerRef}
         className="director-drawer-trigger"
@@ -570,40 +864,64 @@ function ActiveChapterWorkspace({
         aria-expanded={isDirectorOpen}
         onClick={() => {
           directorReturnFocusRef.current = directorTriggerRef.current
+          setDirectorStageTarget(null)
           setIsDirectorOpen(true)
         }}
       >
         <span aria-hidden="true">AI</span>
         <strong aria-hidden="true">导演</strong>
       </button>
-      {isDirectoryOpen ? (
-        <ManuscriptDirectoryDialog
-          workspace={workspace}
-          activeChapterId={chapter.id}
-          onClose={() => setIsDirectoryOpen(false)}
-          onCommit={commitDirectory}
+      {isUtilityOpen ? (
+        <AuthorUtilityDrawer
+          onClose={closeUtility}
+          onOpenSerial={() => { setIsUtilityOpen(false); setSerialDialogMode('dashboard') }}
+          onOpenAuthorTools={() => { setIsUtilityOpen(false); setAuthorTools({ tab: 'calendar', selection: null }) }}
+          onOpenWritingPatterns={() => { setIsUtilityOpen(false); onOpenWritingPatterns() }}
+          onOpenResearch={() => { setIsUtilityOpen(false); onOpenResearch() }}
+          onOpenTasks={() => { setIsUtilityOpen(false); onOpenTaskCenter() }}
+          onOpenComicDrama={() => { setIsUtilityOpen(false); onOpenComicDrama() }}
+          onOpenReferences={() => { setIsUtilityOpen(false); onOpenReferenceLibrary() }}
         />
+      ) : null}
+      {isDirectoryOpen ? (
+        <Suspense fallback={null}>
+          <ManuscriptDirectoryDialog
+            workspace={workspace}
+            activeChapterId={chapter.id}
+            onClose={() => setIsDirectoryOpen(false)}
+            onCommit={commitDirectory}
+          />
+        </Suspense>
       ) : null}
       {serialDialogMode ? (
-        <SerialWorkspaceDialog
-          projectId={workspace.project.id}
-          initialMode={serialDialogMode}
-          onClose={() => setSerialDialogMode(null)}
-          onOpenChapter={openSerialChapter}
-        />
+        <Suspense fallback={null}>
+          <SerialWorkspaceDialog
+            projectId={workspace.project.id}
+            initialMode={serialDialogMode}
+            onClose={() => setSerialDialogMode(null)}
+            onOpenChapter={openSerialChapter}
+          />
+        </Suspense>
       ) : null}
-      {authorTools ? <AuthorToolsDialog project={workspace.project} chapter={chapter} initialTab={authorTools.tab} selection={authorTools.selection} onClose={closeAuthorTools} onAdjustGoal={() => { setAuthorTools(null); setSerialDialogMode('dashboard') }} /> : null}
+      {authorTools ? (
+        <Suspense fallback={null}>
+          <AuthorToolsDialog project={workspace.project} chapter={chapter} initialTab={authorTools.tab} selection={authorTools.selection} onClose={closeAuthorTools} onAdjustGoal={() => { setAuthorTools(null); setSerialDialogMode('dashboard') }} />
+        </Suspense>
+      ) : null}
       {isProductionOpen ? (
-        <ChapterProductionDialog
-          project={workspace.project}
-          chapter={chapter}
-          onClose={closeProduction}
-          onChapterChanged={handleChapterUpdated}
-          onOpenTaskCenter={() => {
-            setIsProductionOpen(false)
-            onOpenTaskCenter()
-          }}
-        />
+        <Suspense fallback={null}>
+          <ChapterProductionDialog
+            project={workspace.project}
+            chapter={chapter}
+            initialFocus={productionFocusTarget}
+            onClose={closeProduction}
+            onChapterChanged={handleChapterUpdated}
+            onOpenTaskCenter={() => {
+              setIsProductionOpen(false)
+              onOpenTaskCenter()
+            }}
+          />
+        </Suspense>
       ) : null}
       <button
         className="director-drawer-backdrop"
@@ -616,7 +934,8 @@ function ActiveChapterWorkspace({
       <section
         id="ai-director-surface"
         className="director-surface"
-        role="region"
+        role={isDirectorOpen ? 'dialog' : 'region'}
+        aria-modal={isDirectorOpen ? 'true' : undefined}
         aria-label="AI 导演"
         data-open={isDirectorOpen}
       >
@@ -643,7 +962,7 @@ function ActiveChapterWorkspace({
           onWorkspaceChanged={onWorkspaceChanged}
           onOpenChapterProduction={() => {
             closeDirector()
-            void navigateAfterSave(() => setIsProductionOpen(true))
+            void navigateAfterSave(() => openProduction('outline'))
           }}
         />
       </section>

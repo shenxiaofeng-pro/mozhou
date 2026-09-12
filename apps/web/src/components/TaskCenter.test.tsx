@@ -62,6 +62,37 @@ afterEach(() => {
 })
 
 describe('TaskCenter craft pattern jobs', () => {
+  it('labels the approval-driven Canon reconciliation workflow', async () => {
+    const job: Job = {
+      ...craftJob('craft_pattern_analysis_v2'),
+      id: 'canon-reconciliation-job',
+      chapter_id: 'chapter-1',
+      kind: 'review',
+      workflow: 'canon_reconciliation_v1',
+      state: 'running',
+      progress_current: 1,
+      progress_total: 2,
+      current_step: '正在整理定稿证据',
+      completed_at: null,
+    }
+    vi.spyOn(api, 'listJobs').mockResolvedValue([job])
+
+    render(
+      <TaskCenter
+        projectId="project-1"
+        chapters={[]}
+        open
+        onClose={vi.fn()}
+        onChapterChanged={vi.fn()}
+        onWorkspaceChanged={vi.fn()}
+        onOpenReferenceLibrary={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('定稿事实与偏好整理')).toBeVisible()
+    expect(screen.getByText('正在整理定稿证据')).toBeVisible()
+  })
+
   it('returns completed chapter work to the unified production desk without using legacy adoption', async () => {
     const productionJob: Job = {
       ...craftJob('craft_pattern_analysis_v2'),

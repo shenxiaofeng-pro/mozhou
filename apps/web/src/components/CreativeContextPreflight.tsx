@@ -9,6 +9,7 @@ const purposeLabels: Record<CreativeContextPurpose, string> = {
   draft: '完整章节候选',
   candidate_review: '候选审校',
   canon_reconciliation: '正式事实核对',
+  preference: '作者偏好提炼',
 }
 
 const blockerLabels: Record<string, string> = {

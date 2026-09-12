@@ -13,6 +13,7 @@ import { ApiError, api } from '../api'
 import { getStoryAnchorLabels } from '../genre'
 import { AiCoauthorPanel } from './AiCoauthorPanel'
 import { BookDirectorPanel } from './BookDirectorPanel'
+import { ChapterFeedbackPanel } from './ChapterFeedbackPanel'
 import { FactTimelinePanel } from './FactTimelinePanel'
 import { FutureKnowledgePanel } from './FutureKnowledgePanel'
 import { RhythmWindowPanel } from './RhythmWindowPanel'
@@ -46,6 +47,11 @@ const primaryTransitions: Record<ChapterStatus, { target: ChapterStatus, label: 
   drafted: { target: 'reviewing', label: '提交审校' },
   reviewing: { target: 'approved', label: '批准定稿' },
   approved: { target: 'drafted', label: '重新打开修改' },
+}
+
+async function sha256Text(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 export function DirectorPanel({
@@ -141,6 +147,9 @@ export function DirectorPanel({
       onChapterUpdated(await api.transitionChapter(chapter.id, {
         target_status: targetStatus,
         expected_revision: chapter.revision,
+        ...(targetStatus === 'approved'
+          ? { expected_content_sha256: await sha256Text(chapter.content) }
+          : {}),
       }))
       setContextReady(false)
       setRun(null)
@@ -225,22 +234,26 @@ export function DirectorPanel({
           <button type="button" onClick={onOpenChapterProduction}>前往单章生产工作台</button>
         </section>
       ) : null}
-      <BookDirectorPanel
-        project={project}
-        workspace={workspace}
-        chapter={chapter}
-        canUseChapter={canGenerate && canUpdateChapter}
-        onWorkspaceChanged={onWorkspaceChanged}
-        onAdoptBrief={adoptAiProposal}
-        onDraftGenerated={showDraftCandidate}
-        onOpenChapterProduction={onOpenChapterProduction}
-      />
-      <ReviewWorkbench
-        key={`${chapter.id}:${chapter.revision}`}
-        chapter={chapter}
-        canReview={canUpdateChapter && wordCount > 0}
-        onChapterUpdated={onChapterUpdated}
-      />
+      <section id="director-stage-book" className="director-stage-target" tabIndex={-1} aria-label="选题与整书阶段">
+        <BookDirectorPanel
+          project={project}
+          workspace={workspace}
+          chapter={chapter}
+          canUseChapter={canGenerate && canUpdateChapter}
+          onWorkspaceChanged={onWorkspaceChanged}
+          onAdoptBrief={adoptAiProposal}
+          onDraftGenerated={showDraftCandidate}
+          onOpenChapterProduction={onOpenChapterProduction}
+        />
+      </section>
+      <section id="director-stage-review" className="director-stage-target" tabIndex={-1} aria-label="审校定稿阶段">
+        <ReviewWorkbench
+          key={`${chapter.id}:${chapter.revision}`}
+          chapter={chapter}
+          canReview={canUpdateChapter && wordCount > 0}
+          onChapterUpdated={onChapterUpdated}
+        />
+      </section>
       <AiCoauthorPanel
         chapter={chapter}
         canUseAi={canGenerate && canUpdateChapter}
@@ -424,6 +437,12 @@ export function DirectorPanel({
           </button>
         </div>
       </section>
+
+      <ChapterFeedbackPanel
+        project={project}
+        chapter={chapter}
+        onWorkspaceChanged={onWorkspaceChanged}
+      />
 
       <RhythmWindowPanel chapters={workspace.chapters} activeChapterId={chapter.id} />
 

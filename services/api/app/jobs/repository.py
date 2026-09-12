@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from sqlite3 import Connection, Row
@@ -204,6 +205,7 @@ class JobRepository:
         error_code: str | None = None,
         error_message: str | None = None,
         now: datetime | None = None,
+        prepare: Callable[[Connection, Job], None] | None = None,
     ) -> Job:
         timestamp = _now(now).isoformat()
         with self.database.connect() as connection:
@@ -212,6 +214,8 @@ class JobRepository:
                 raise JobNotFoundError(job_id)
             current = JobState(row["state"])
             require_job_transition(current, target)
+            if prepare is not None:
+                prepare(connection, self._job(row))
             terminal = target in {
                 JobState.CANCELLED,
                 JobState.SUCCEEDED,
@@ -351,6 +355,7 @@ class JobRepository:
                     "chapter_production_draft",
                     "chapter_production_rewrite",
                     "chapter_production_review",
+                    "canon_reconciliation_v1",
                 }
                 and job.error_code == "restored_requires_resubmission"
             )
@@ -359,7 +364,47 @@ class JobRepository:
             raise JobRequiresNewPreflightError(job_id)
         if job.state not in {JobState.FAILED, JobState.INTERRUPTED, JobState.CANCELLED}:
             return job
-        return self.transition_job(job_id, JobState.QUEUED, event_type="retried", now=now)
+        return self.transition_job(
+            job_id,
+            JobState.QUEUED,
+            event_type="retried",
+            now=now,
+            prepare=self._prepare_canon_reconciliation_retry,
+        )
+
+    @staticmethod
+    def _prepare_canon_reconciliation_retry(connection: Connection, job: Job) -> None:
+        if job.workflow != "canon_reconciliation_v1":
+            return
+        reconciliation = connection.execute(
+            "SELECT id, state FROM canon_reconciliations WHERE job_id = ?",
+            (job.id,),
+        ).fetchone()
+        if reconciliation is None or reconciliation["state"] == "stale":
+            raise JobRequiresNewPreflightError(job.id)
+        if reconciliation["state"] != "failed":
+            return
+        reconciliation_id = str(reconciliation["id"])
+        connection.execute(
+            "DELETE FROM canon_delta_candidates WHERE reconciliation_id = ?",
+            (reconciliation_id,),
+        )
+        connection.execute(
+            "DELETE FROM author_preference_candidates WHERE reconciliation_id = ?",
+            (reconciliation_id,),
+        )
+        connection.execute(
+            """
+            UPDATE canon_reconciliations
+            SET state = 'pending', revision = revision + 1,
+                context_packet_id = NULL, context_packet_sha256 = NULL,
+                context_dependency_fingerprint_sha256 = NULL,
+                analysis_sha256 = NULL, preference_skip_reason = NULL,
+                error_message = NULL, updated_at = ?, completed_at = NULL
+            WHERE id = ? AND state = 'failed'
+            """,
+            (_now().isoformat(), reconciliation_id),
+        )
 
     def lease_next(
         self,

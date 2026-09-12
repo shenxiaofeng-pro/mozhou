@@ -282,11 +282,11 @@ def test_project_scoped_creative_context_packet_round_trips_typed_dependencies(
             "compiler_version": "creative-context-v1",
             "purpose": "startup",
             "subject": subject.model_dump(mode="json"),
-            "dependencies": dependencies.model_dump(mode="json"),
+                "dependencies": dependencies.canonical_payload(),
             "items": [item.model_dump(mode="json")],
         }
     )
-    dependency_fingerprint = _sha256_json(dependencies.model_dump(mode="json"))
+    dependency_fingerprint = _sha256_json(dependencies.canonical_payload())
     packet_fingerprint = _sha256_json(
         {
             "project_id": workspace.project.id,
@@ -352,6 +352,7 @@ def test_creative_context_contract_has_all_seven_purposes_and_safe_request_defau
         "draft",
         "candidate_review",
         "canon_reconciliation",
+        "preference",
     ]
 
     request = CreativeContextCompileRequest(
@@ -421,7 +422,7 @@ def test_v29_preserves_legacy_packet_and_upgrades_it_to_typed_dependencies(
         subject_sha256=str(legacy["source_fingerprint_sha256"])
     )
     assert migrated.dependency_fingerprint_sha256 == _sha256_json(
-        migrated.dependency_snapshot.model_dump(mode="json")
+        migrated.dependency_snapshot.canonical_payload()
     )
     assert migrated.blocking_reasons == ["legacy_dependency_snapshot"]
     with database.connect() as connection:
@@ -443,7 +444,7 @@ def test_v29_preserves_legacy_packet_and_upgrades_it_to_typed_dependencies(
             legacy["source_fingerprint_sha256"],
             legacy["rendered_context"],
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 30
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 31
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = 29"

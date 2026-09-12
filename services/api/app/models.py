@@ -281,6 +281,51 @@ class ProjectNextAction(StrEnum):
     CONTINUE_WRITING = "continue_writing"
 
 
+class AuthorNextActionKind(StrEnum):
+    CONFIRM_TOPIC = "confirm_topic"
+    REVIEW_TOPIC_CHANGES = "review_topic_changes"
+    PLAN_BOOK = "plan_book"
+    REVIEW_DOWNSTREAM_PLANS = "review_downstream_plans"
+    PLAN_CHAPTER = "plan_chapter"
+    GENERATE_CHAPTER_CANDIDATE = "generate_chapter_candidate"
+    CONTINUE_CHAPTER_DRAFT = "continue_chapter_draft"
+    REVIEW_CHAPTER = "review_chapter"
+    REVIEW_CANON_RECONCILIATION = "review_canon_reconciliation"
+    REVIEW_ROLLING_PLAN = "review_rolling_plan"
+    CREATE_NEXT_CHAPTER = "create_next_chapter"
+    PROJECT_COMPLETE = "project_complete"
+
+
+class AuthorWorkspaceView(StrEnum):
+    TOPIC_DECISION = "topic-decision"
+    WRITING = "writing"
+
+
+class AuthorWorkflowStage(StrEnum):
+    TOPIC = "topic"
+    BOOK = "book"
+    PLAN = "plan"
+    CANDIDATE = "candidate"
+    REVIEW = "review"
+    FEEDBACK = "feedback"
+    COMPLETE = "complete"
+
+
+class AuthorNextAction(BaseModel):
+    """One stable, server-selected entry point for resuming author work."""
+
+    kind: AuthorNextActionKind
+    target_view: AuthorWorkspaceView
+    target_stage: AuthorWorkflowStage
+    chapter_id: str | None = None
+    chapter_number: int | None = Field(default=None, ge=1, le=10_000)
+    last_approved_chapter_id: str | None = None
+    reconciliation_id: str | None = None
+    rolling_plan_id: str | None = None
+    rolling_plan_replenishment_id: str | None = None
+    blocked: bool = False
+
+
 class TopicDecisionCandidateState(StrEnum):
     CANDIDATE = "candidate"
     SELECTED = "selected"
@@ -360,6 +405,7 @@ class ChapterVersionSource(StrEnum):
     GENERATION_APPLY = "generation_apply"
     CHANGE_SET_APPLY = "change_set_apply"
     ROLLBACK = "rollback"
+    APPROVAL = "approval"
 
 
 class TextChangeSetState(StrEnum):
@@ -377,7 +423,7 @@ class AiProvider(StrEnum):
 class TopicDecisionContent(BaseModel):
     """Author-facing topic fields; drafts may be incomplete, confirmation may not."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     target_platform: str = Field(max_length=120)
     target_audience: str = Field(max_length=500)
@@ -419,7 +465,7 @@ class TopicDecisionContent(BaseModel):
 
 
 class CreateProjectRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=120)
     genre: Genre
@@ -505,6 +551,8 @@ class TopicDecisionVersion(BaseModel):
 
 
 class UpdateTopicDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: TopicDecisionContent
     changed_fields: list[TopicDecisionField] = Field(default_factory=list, max_length=12)
     lock_updates: dict[TopicDecisionField, bool] = Field(default_factory=dict)
@@ -537,11 +585,13 @@ class UpdateTopicDecisionRequest(BaseModel):
 
 
 class ConfirmTopicDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_revision: int = Field(ge=0)
 
 
 class TopicDecisionCandidateRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
@@ -617,6 +667,8 @@ class TopicDecisionCandidateSet(BaseModel):
 
 
 class SelectTopicDecisionCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     job_id: str = Field(min_length=36, max_length=36)
     candidate_id: str = Field(min_length=36, max_length=36)
     selected_fields: list[TopicDecisionField] = Field(min_length=1, max_length=12)
@@ -634,7 +686,7 @@ class SelectTopicDecisionCandidateRequest(BaseModel):
 
 
 class RejectTopicDecisionCandidateRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     job_id: str = Field(min_length=36, max_length=36)
     candidate_id: str = Field(min_length=36, max_length=36)
@@ -650,7 +702,7 @@ class RejectTopicDecisionCandidateRequest(BaseModel):
 
 
 class BookBlueprintContent(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=120)
     genre: Genre
@@ -751,7 +803,7 @@ class BookBlueprint(BaseModel):
 
 
 class DirectorStartupRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     idea: str = Field(min_length=1, max_length=3000)
     reality_anchor: str = Field(default="", max_length=1500)
@@ -769,12 +821,16 @@ class DirectorStartupRequest(BaseModel):
 
 
 class SelectDirectorCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     job_id: str = Field(min_length=36, max_length=36)
     candidate_id: str = Field(min_length=36, max_length=36)
     expected_blueprint_revision: int | None = Field(default=None, ge=0)
 
 
 class UpdateBookBlueprintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: BookBlueprintContent
     changed_fields: list[BookBlueprintField] = Field(default_factory=list, max_length=13)
     lock_updates: dict[BookBlueprintField, bool] = Field(default_factory=dict)
@@ -790,6 +846,8 @@ class UpdateBookBlueprintRequest(BaseModel):
 
 
 class DirectorRegenerationImpactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     target_field: BookBlueprintField
 
 
@@ -802,7 +860,7 @@ class DirectorRegenerationImpact(BaseModel):
 
 
 class DirectorFieldRegenerationRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     target_field: BookBlueprintField
     expected_revision: int = Field(ge=0)
@@ -843,6 +901,8 @@ class DirectorFieldDraft(BaseModel):
 
 
 class ApplyDirectorProposalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     job_id: str = Field(min_length=36, max_length=36)
     expected_revision: int = Field(ge=0)
 
@@ -857,7 +917,7 @@ class DirectorSceneBeat(BaseModel):
 
 
 class VolumePlanContent(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     volume_number: int = Field(ge=1, le=100)
     title: str = Field(min_length=1, max_length=120)
@@ -880,7 +940,7 @@ class VolumePlan(VolumePlanContent):
 
 
 class RollingChapterPlanContent(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     chapter_number: int = Field(ge=1, le=10_000)
     title: str = Field(min_length=1, max_length=120)
@@ -944,7 +1004,7 @@ class DirectorExpansionProposal(DirectorExpansionDraft):
 
 
 class DirectorExpansionRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
@@ -954,12 +1014,16 @@ class DirectorExpansionRequest(BaseModel):
 
 
 class UpdateVolumePlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: VolumePlanContent
     locked: bool
     expected_revision: int = Field(ge=0)
 
 
 class UpdateRollingChapterPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: RollingChapterPlanContent
     locked: bool
     expected_revision: int = Field(ge=0)
@@ -993,7 +1057,7 @@ class DirectorPreReview(BaseModel):
 
 
 class DirectorChapterPipelineRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
@@ -1005,7 +1069,7 @@ class DirectorChapterPipelineRequest(BaseModel):
 
 
 class CreateRecoveryPointRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     label: str = Field(min_length=1, max_length=80)
 
@@ -1091,6 +1155,8 @@ class ManuscriptScene(BaseModel):
 
 
 class ManuscriptImportChapter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_id: str = Field(min_length=1, max_length=80)
     title: str = Field(min_length=1, max_length=120)
     content: str = Field(max_length=2_000_000)
@@ -1106,6 +1172,8 @@ class ManuscriptImportChapter(BaseModel):
 
 
 class ManuscriptImportVolume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_id: str = Field(min_length=1, max_length=80)
     title: str = Field(min_length=1, max_length=120)
     chapters: list[ManuscriptImportChapter] = Field(min_length=1, max_length=10_000)
@@ -1126,7 +1194,7 @@ class ManuscriptImportPreview(BaseModel):
 
 
 class ConfirmManuscriptImportRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     title: str = Field(min_length=1, max_length=120)
     genre: Genre
@@ -1678,6 +1746,7 @@ class ResumeCard(BaseModel):
     active_entities: list[ResumeCardItem] = Field(default_factory=list)
     pending_reviews: int = 0
     warning_count: int = 0
+    next_action: AuthorNextAction | None = None
 
 
 class AiStatus(BaseModel):
@@ -1899,7 +1968,7 @@ class ReferencePatternCard(ReferenceSynthesisProposal):
 
 
 class CraftPatternAnalysisPreviewRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     selected_segment_ids: list[str] = Field(min_length=1, max_length=64)
     author_focus: str = Field(default="", max_length=1000)
@@ -1932,7 +2001,7 @@ class SubmitCraftPatternAnalysisRequest(CraftPatternAnalysisPreviewRequest):
 
 
 class CraftPatternFusionPreviewRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     selected_asset_version_ids: list[str] = Field(min_length=2, max_length=30)
     author_focus: str = Field(default="", max_length=1000)
@@ -2297,6 +2366,8 @@ class CraftPatternAssetPage(BaseModel):
 
 
 class UpdateCraftPatternLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     state: CraftPatternLifecycleState
     expected_lifecycle_revision: int = Field(ge=0)
 
@@ -2545,6 +2616,7 @@ class Workspace(BaseModel):
     chapters: list[Chapter]
     topic_decision: TopicDecision | None = None
     next_action: ProjectNextAction = ProjectNextAction.CONTINUE_WRITING
+    author_next_action: AuthorNextAction | None = None
     manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
     manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
@@ -2569,6 +2641,7 @@ class WorkspaceSummary(BaseModel):
     chapters: list[ChapterSummary]
     topic_decision: TopicDecision | None = None
     next_action: ProjectNextAction = ProjectNextAction.CONTINUE_WRITING
+    author_next_action: AuthorNextAction | None = None
     manuscript_volumes: list[ManuscriptVolume] = Field(default_factory=list)
     manuscript_scenes: list[ManuscriptScene] = Field(default_factory=list)
     book_blueprint: BookBlueprint | None = None
@@ -2808,8 +2881,33 @@ class CreateChapterRequest(BaseModel):
 
 
 class TransitionChapterRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
     target_status: ChapterStatus
     expected_revision: int = Field(ge=0)
+    expected_content_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    source_writing_outcome_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+
+    @model_validator(mode="after")
+    def require_approval_content_guard(self) -> TransitionChapterRequest:
+        if (
+            self.target_status == ChapterStatus.APPROVED
+            and self.expected_content_sha256 is None
+        ):
+            raise ValueError("批准章节必须携带正文指纹")
+        if (
+            self.target_status != ChapterStatus.APPROVED
+            and self.source_writing_outcome_id is not None
+        ):
+            raise ValueError("只有批准章节才能指定写作结果")
+        return self
 
 
 class StartGenerationRequest(BaseModel):

@@ -80,7 +80,7 @@ class ContextRepository:
                         ),
                         packet.profile_fingerprint_sha256,
                         json.dumps(
-                            packet.dependency_snapshot.model_dump(mode="json"),
+                            packet.dependency_snapshot.canonical_payload(),
                             ensure_ascii=False,
                             sort_keys=True,
                             separators=(",", ":"),
@@ -189,7 +189,7 @@ class ContextRepository:
             "purpose": packet.purpose.value,
             "subject": packet.subject.model_dump(mode="json"),
             "profile_fingerprint_sha256": packet.profile_fingerprint_sha256,
-            "dependency_snapshot": packet.dependency_snapshot.model_dump(mode="json"),
+            "dependency_snapshot": packet.dependency_snapshot.canonical_payload(),
             "dependency_fingerprint_sha256": packet.dependency_fingerprint_sha256,
             "blocking_reasons": packet.blocking_reasons,
             "compiler_version": packet.compiler_version,

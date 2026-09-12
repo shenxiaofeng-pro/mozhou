@@ -764,7 +764,7 @@ def test_archive_round_trip_preserves_candidate_lineage_and_canonical_version(
     )
     archives = ProjectArchiveService(database)
     archive = archives.export_project(project_id)
-    assert archive["format_version"] == 17
+    assert archive["format_version"] == 18
     restored_project_id = archives.import_project(canonical_json(archive))
 
     with database.connect() as connection:

@@ -30,6 +30,7 @@ import {
 interface ChapterProductionDialogProps {
   project: Project
   chapter: Chapter
+  initialFocus?: 'outline' | 'candidate'
   onClose: () => void
   onChapterChanged: (chapter: Chapter) => void
   onOpenTaskCenter: () => void
@@ -243,6 +244,7 @@ async function withProductionError<T>(action: () => Promise<T>): Promise<T> {
 export function ChapterProductionDialog({
   project,
   chapter,
+  initialFocus,
   onClose,
   onChapterChanged,
   onOpenTaskCenter,
@@ -902,6 +904,7 @@ export function ChapterProductionDialog({
               outline={outlineDraft}
               preflight={preflight}
               candidates={candidates}
+              initialFocus={initialFocus}
               isGenerating={Boolean(activeJobStates.has(activeJob?.state ?? '') || pending || busyAction)}
               conflict={hasConflict ? {
                 latestChapterRevision: chapter.revision,

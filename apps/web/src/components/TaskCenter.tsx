@@ -74,6 +74,7 @@ function jobLabel(job: Pick<Job, 'kind' | 'workflow'>): string {
   if (job.workflow === 'chapter_production_draft') return '本章正文候选'
   if (job.workflow === 'chapter_production_rewrite') return '候选局部改写'
   if (job.workflow === 'chapter_production_review') return '候选七维审校'
+  if (job.workflow === 'canon_reconciliation_v1') return '定稿事实与偏好整理'
   if (job.workflow === 'craft_pattern_analysis_v2') return '单书写作模式拆解'
   if (job.workflow === 'craft_pattern_fusion_v2') return '多书模式融合'
   return kindLabels[job.kind]

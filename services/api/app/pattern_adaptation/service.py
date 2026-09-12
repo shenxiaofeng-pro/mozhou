@@ -1497,11 +1497,14 @@ class PatternAdaptationService:
         profile = self.patterns.get_profile(project_id, proposal.profile_version_id)
         try:
             active_profile = self.patterns.get_active_profile(project_id)
-        except WritingPatternNotFoundError:
-            active_profile = None
+        except WritingPatternNotFoundError as error:
+            raise PatternOriginalityGateError(
+                "writing_pattern_profile_inactive"
+            ) from error
         if (
-            active_profile is not None
-            and active_profile.profile_fingerprint_sha256 != adoption.profile_fingerprint_sha256
+            active_profile.id != proposal.profile_version_id
+            or active_profile.profile_fingerprint_sha256
+            != adoption.profile_fingerprint_sha256
         ):
             raise PatternOriginalityGateError("writing_pattern_profile_changed")
         candidate = next(item for item in proposal.candidates if item.id == adoption.candidate_id)

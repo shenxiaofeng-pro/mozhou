@@ -1,0 +1,148 @@
+{
+  "fixture_version": 1,
+  "raw_reference_marker": "RAW_REFERENCE_PROSE_MUST_STAY_OUTSIDE_WRITING_CONTEXT",
+  "source_beats": [
+    "先给出一个可衡量的期限",
+    "主角用低成本行动验证判断",
+    "立即兑现一次小型状态变化",
+    "再用新代价拉出下一章问题"
+  ],
+  "cases": [
+    {
+      "id": "historical-rebirth",
+      "title": "南平盐引",
+      "genre": "historical_rebirth",
+      "template_id": "historical-rebirth",
+      "story_year": 1980,
+      "story_location": "福建南平",
+      "topic_seed": "赵峥重回一九八零年南平，从保住第一张盐引开始改变父亲的命运。",
+      "abstract_rule": "开场给出可核验的政策时限，主角先做小规模验证，兑现资源收益后立即增加制度代价。",
+      "adaptation_risk": "只借鉴期限、验证、兑现和加价的功能节奏，不保留来源人名、政策与场景顺序。",
+      "blueprint": {
+        "target_audience": "喜欢现实细节和强因果的男频读者",
+        "core_selling_points": ["盐引制度破局", "父子遗憾重写"],
+        "core_desire": "保住家人并建立可持续的地方供应网",
+        "divergence_point": "提前核对第一张临时盐引",
+        "long_term_promise": "每卷用可查证的制度与资源改变一段现实命运",
+        "ending_direction": "完成父子和解并留下透明的地方流通系统",
+        "protagonist_arc": "从弥补私人遗憾走向承担公共责任",
+        "resource_growth": "从一张临时盐引增长为信用、仓储与运输网",
+        "relationship_design": "父亲是价值锚，掌柜是条件合作者，县令代表制度压力"
+      },
+      "outline": {
+        "title": "第一章 临时盐引",
+        "reader_promise": "赵峥用未来记忆抢出第一个制度窗口",
+        "opening_hook": "盐引查验比记忆中提前了三天",
+        "state_change": "赵峥取得只覆盖三百斤货的临时盐引",
+        "emotional_payoff": "父亲第一次同意让他主导查验",
+        "ending_cliffhanger": "税册出现父亲的旧名",
+        "scene_beats": ["查验期限提前", "赵峥比对税册", "三百斤盐引到手", "父亲旧名出现"]
+      },
+      "ai_body": "赵峥在仓库门口反复回想过去，慢慢解释自己为什么要查盐引，又慢慢罗列每一种可能。他记得1983年的盐业流通政策会调整，这个秘密尚未告诉县令。他继续解释很久，最后才拿到三百斤盐引。",
+      "final_body": "赵峥记得1983年的盐业流通政策会调整，这个秘密尚未告诉县令。赵峥得到三百斤盐引，随后来到南平仓库。",
+      "expected_canon_kinds": ["future_knowledge", "story_thread", "resource_state", "location_state"]
+    },
+    {
+      "id": "urban-rebirth",
+      "title": "九八纸业",
+      "genre": "urban_rebirth",
+      "template_id": "urban-rebirth",
+      "story_year": 1998,
+      "story_location": "福建南平",
+      "topic_seed": "林川回到一九九八年南平，从抢回父亲纸厂的第一张订单开始。",
+      "abstract_rule": "把现实资源压缩成明确天数，让主角用一次小订单验证判断，再用现金流代价推高冲突。",
+      "adaptation_risk": "不复用来源行业、公司、人物组合与事件顺序。",
+      "blueprint": {
+        "target_audience": "喜欢九十年代创业与家庭情感的男频读者",
+        "core_selling_points": ["现金流破局", "小城产业升级"],
+        "core_desire": "挽回家庭遗憾并建立可持续事业",
+        "divergence_point": "提前七天截住纸厂试单",
+        "long_term_promise": "每卷完成一次产业跃迁与家人关系兑现",
+        "ending_direction": "完成代际和解并留下本地产业系统",
+        "protagonist_arc": "从只想补偿家人走向承担企业责任",
+        "resource_growth": "从三万元现金增长为订单、信用与供应链",
+        "relationship_design": "父亲是价值锚，合伙人负责执行，采购主管制造现金流压力"
+      },
+      "outline": {
+        "title": "第一章 七天试单",
+        "reader_promise": "林川用现金流方案换到第一次行动机会",
+        "opening_hook": "工资现金只够支撑七天",
+        "state_change": "林川争取到七天纸厂试单",
+        "emotional_payoff": "父亲第一次让他参加采购会",
+        "ending_cliffhanger": "订单背面出现旧厂徽",
+        "scene_beats": ["七天工资倒计时", "林川核对试单", "现金流方案通过", "旧厂徽暴露"]
+      },
+      "ai_body": "林川站在纸厂门口慢慢思考，他反复解释七天工资的每一个数字，又长篇解释自己为什么必须拿下试单。他得知旧厂订单被截走，决定带着父亲离开南平，并准备三万元现金。",
+      "final_body": "林川得知旧厂订单被截走，决定带着父亲离开南平。林川获得三万元现金。",
+      "expected_canon_kinds": ["character_knowledge", "character_state", "location_state", "resource_state"]
+    },
+    {
+      "id": "eastern-fantasy",
+      "title": "云泽问道",
+      "genre": "eastern_fantasy",
+      "template_id": "eastern-fantasy",
+      "story_year": 728,
+      "story_location": "九州云泽",
+      "topic_seed": "陆沉在灵脉枯竭前用有代价的境界突破保住云泽宗门。",
+      "abstract_rule": "每次升级必须同时改变境界、可用资源和身体代价，章末再让代价触发新的宗门冲突。",
+      "adaptation_risk": "不沿用来源的境界名、法宝名、宗门关系和突破场景顺序。",
+      "blueprint": {
+        "target_audience": "喜欢境界成长与明确资源代价的男频读者",
+        "core_selling_points": ["每次破境都有可追踪代价", "灵脉危机推动宗门洗牌"],
+        "core_desire": "在不牺牲同伴的前提下保住灵脉",
+        "divergence_point": "陆沉选择耗尽三枚灵石提前筑基",
+        "long_term_promise": "每卷揭开一层境界规则并兑现前期代价",
+        "ending_direction": "重建不以夺取弱者寿元运转的灵脉体系",
+        "protagonist_arc": "从只求自保的外门弟子成为规则改革者",
+        "resource_growth": "从三枚灵石增长到灵脉权、术法组合与寿元债",
+        "relationship_design": "师姐是同盟与道德镜子，师兄因资源压力摇摆，长老代表旧规则"
+      },
+      "outline": {
+        "title": "第一章 三枚灵石",
+        "reader_promise": "陆沉用明确资源和寿元代价完成首次破境",
+        "opening_hook": "测灵碑宣告灵脉只剩一夜",
+        "state_change": "陆沉耗尽三枚灵石突破筑基",
+        "emotional_payoff": "师姐放下戒心与他结盟",
+        "ending_cliffhanger": "突破代价指向灵脉中的封印",
+        "scene_beats": ["测灵碑显示一夜期限", "陆沉耗尽三枚灵石", "筑基成功但损失寿元", "灵脉封印异动"]
+      },
+      "ai_body": "陆沉在测灵碑前慢慢思索，他用很长的篇幅解释灵石、境界和寿元之间的每一种可能。他耗尽三枚灵石，终于突破筑基境界，随后又反复解释这次突破的意义。",
+      "final_body": "陆沉耗尽三枚灵石，终于突破筑基境界。陆沉进入云泽宗门，与师姐结盟。",
+      "expected_canon_kinds": ["resource_state", "progression", "location_state", "relationship"]
+    },
+    {
+      "id": "western-fantasy",
+      "title": "灰塔血契",
+      "genre": "western_fantasy",
+      "template_id": "western-fantasy",
+      "story_year": 1243,
+      "story_location": "阿尔登北境",
+      "topic_seed": "半精灵艾琳用会失去记忆的血契魔法阻止北境阵营战争。",
+      "abstract_rule": "魔法解决当下危机时必须立即支付不可逆代价，代价同时改变阵营关系与种族身份风险。",
+      "adaptation_risk": "不沿用来源的魔法专名、种族组合、势力图和牺牲顺序。",
+      "blueprint": {
+        "target_audience": "喜欢高代价魔法、种族与阵营博弈的男频读者",
+        "core_selling_points": ["血契魔法消耗记忆", "种族身份改写阵营"],
+        "core_desire": "保住自己的记忆并终止教会对混血者的控制",
+        "divergence_point": "艾琳在灰塔提前启动第一道血契禁咒",
+        "long_term_promise": "每卷追踪魔法代价、阵营债务和种族身份的联动变化",
+        "ending_direction": "摆脱血契并建立各种族可共同约束魔法的议会",
+        "protagonist_arc": "从隐藏身份的逃亡者成为公开谈判的阵营领袖",
+        "resource_growth": "从两块魔晶与一道禁咒增长为契约网、骑士同盟与记忆债",
+        "relationship_design": "银盾骑士是条件同盟，教会使者是身份威胁，矮人公会控制魔晶供应"
+      },
+      "outline": {
+        "title": "第一章 血契的第一段记忆",
+        "reader_promise": "艾琳用一次明确牺牲换来阵营变化",
+        "opening_hook": "教会使者在日落前抵达灰塔",
+        "state_change": "艾琳失去一段记忆并得到骑士团暂时同盟",
+        "emotional_payoff": "银盾骑士第一次为半精灵公开作证",
+        "ending_cliffhanger": "教会使者认出艾琳的血脉",
+        "scene_beats": ["日落前的教会追捕", "艾琳启动血契禁咒", "童年记忆永久消失", "半精灵血脉暴露"]
+      },
+      "ai_body": "艾琳在白塔阶梯上慢慢思考，她用很长的篇幅解释禁咒、金币和阵营的所有可能。她进入白塔，发现禁咒需要献出金币，随后与银盾骑士结盟，又反复解释了很久。",
+      "final_body": "艾琳进入白塔，发现禁咒需要献出金币，随后与银盾骑士结盟。",
+      "expected_canon_kinds": ["location_state", "character_knowledge", "resource_state", "relationship"]
+    }
+  ]
+}

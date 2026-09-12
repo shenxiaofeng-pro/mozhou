@@ -1,3 +1,5 @@
+import pytest
+
 from app.models import (
     AppliedReferenceDimension,
     BlueprintDimensionState,
@@ -82,8 +84,7 @@ def test_reworded_same_scene_chain_is_high_risk_without_source_prose() -> None:
     assert assessment.source_work_count == 2
     assert assessment.legal_notice == LEGAL_NOTICE
     assert any(
-        finding.signal == SceneOriginalitySignal.ORDERED_SEQUENCE
-        for finding in assessment.findings
+        finding.signal == SceneOriginalitySignal.ORDERED_SEQUENCE for finding in assessment.findings
     )
     serialized = assessment.model_dump_json()
     assert "作品 A 原文" not in serialized
@@ -125,3 +126,94 @@ def test_candidate_graph_contains_only_candidate_labels() -> None:
 
     assert [node.label for node in assessment.candidate_graph.nodes] == candidate_beats
     assert [edge.relation for edge in assessment.candidate_graph.edges] == ["resource_gain"]
+
+
+def test_common_fantasy_motif_is_low_risk_even_when_order_matches() -> None:
+    """A genre convention is not a distinctive plot graph by itself."""
+
+    generic_chain = [
+        "主角受到欺辱",
+        "主角意外获得力量",
+        "主角修炼升级",
+        "主角反击敌人",
+    ]
+
+    assessment = assess_scene_plot_graph(
+        _blueprint(generic_chain, generic_chain),
+        [_source("work-a", "segment-a", "来源原文不得进入检测结果。")],
+    )
+
+    assert assessment.risk_level == OriginalityRiskLevel.LOW
+    assert assessment.score < 38
+    assert all(
+        finding.signal != SceneOriginalitySignal.ORDERED_SEQUENCE for finding in assessment.findings
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_beats", "candidate_beats", "expected_terms", "expected_relations"),
+    [
+        (
+            [
+                "外门弟子耗用三枚灵石冲击筑基境",
+                "破境失败会折损十年寿元并灼伤经脉",
+                "宗门夺走灵脉后迫使师兄背叛",
+                "主角燃尽本命剑封住妖丹",
+            ],
+            [
+                "杂役耗尽三块灵石突破筑基",
+                "晋升代价是损失十载寿命并伤及经络",
+                "门派封锁灵脉，逼同门倒戈",
+                "主人公牺牲本命剑封印妖丹",
+            ],
+            {"境界提升", "修炼资源", "能力代价", "阵营组织", "资源封锁"},
+            {"ability_cost", "resource_lock"},
+        ),
+        (
+            [
+                "半精灵加入银徽教会并学习血契禁咒",
+                "每次施法都会献出一段记忆",
+                "矮人公会封锁魔晶供应",
+                "龙裔身份公开后盟友背叛",
+            ],
+            [
+                "混血精灵归附神殿，掌握血契魔法",
+                "每回施术都失去一段记忆",
+                "矮人行会断供魔晶",
+                "龙族血脉被揭露后同伴倒戈",
+            ],
+            {"魔法施放", "能力代价", "阵营组织", "种族身份", "资源封锁"},
+            {"ability_cost", "resource_lock", "identity_reveal"},
+        ),
+    ],
+    ids=["eastern-fantasy-progression-cost", "western-fantasy-magic-faction-race"],
+)
+def test_distinctive_fantasy_combinations_block_after_rewording(
+    source_beats: list[str],
+    candidate_beats: list[str],
+    expected_terms: set[str],
+    expected_relations: set[str],
+) -> None:
+    sources = [
+        _source("work-a", "segment-a", "作品 A 私有原文标记。"),
+        _source("work-b", "segment-b", "作品 B 私有原文标记。"),
+    ]
+
+    assessment = assess_scene_plot_graph(
+        _blueprint(source_beats, candidate_beats),
+        sources,
+    )
+
+    assert assessment.risk_level == OriginalityRiskLevel.HIGH
+    assert expected_relations <= {edge.relation for edge in assessment.candidate_graph.edges}
+    assert expected_terms <= {
+        term for node in assessment.candidate_graph.nodes for term in node.semantic_terms
+    }
+    assert {
+        SceneOriginalitySignal.ORDERED_SEQUENCE,
+        SceneOriginalitySignal.CAUSAL_GRAPH,
+    } <= {finding.signal for finding in assessment.findings}
+    assert all(finding.source_segment_ids for finding in assessment.findings)
+    serialized = assessment.model_dump_json()
+    assert "作品 A 私有原文标记" not in serialized
+    assert "作品 B 私有原文标记" not in serialized

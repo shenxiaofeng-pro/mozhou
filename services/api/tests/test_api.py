@@ -1,3 +1,4 @@
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -351,7 +352,7 @@ def test_generation_candidate_requires_explicit_apply(tmp_path: Path) -> None:
     assert applied.json()["content"] == generated.json()["candidate_content"]
 
 
-def test_fact_backfill_requires_author_confirmation(tmp_path: Path) -> None:
+def test_legacy_fact_backfill_api_is_read_only_after_canon_upgrade(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
         created = client.post(
             "/api/projects",
@@ -389,28 +390,25 @@ def test_fact_backfill_requires_author_confirmation(tmp_path: Path) -> None:
         for target in ("drafted", "reviewing", "approved"):
             chapter = client.post(
                 f"/api/chapters/{chapter['id']}/transition",
-                json={"target_status": target, "expected_revision": chapter["revision"]},
+                json={
+                    "target_status": target,
+                    "expected_revision": chapter["revision"],
+                    **(
+                        {"expected_content_sha256": sha256(chapter["content"].encode()).hexdigest()}
+                        if target == "approved"
+                        else {}
+                    ),
+                },
             ).json()
         candidate = client.post(f"/api/chapters/{chapter['id']}/fact-change-sets")
-        before_apply = client.get(f"/api/projects/{project_id}").json()
-        applied = client.post(
-            f"/api/fact-change-sets/{candidate.json()['id']}/apply",
-            json={
-                "selected_change_ids": [item["id"] for item in candidate.json()["changes"]],
-                "expected_revision": 0,
-            },
-        )
-        after_apply = client.get(f"/api/projects/{project_id}").json()
+        after_attempt = client.get(f"/api/projects/{project_id}").json()
 
     assert original.status_code == 201
     assert original.json()["layer"] == "original"
-    assert candidate.status_code == 201
-    assert before_apply["story_facts"] == []
-    assert [event["layer"] for event in before_apply["timeline_events"]] == ["original"]
-    assert applied.status_code == 200
-    assert applied.json()["state"] == "applied"
-    assert len(after_apply["story_facts"]) == 2
-    assert {event["layer"] for event in after_apply["timeline_events"]} == {"original", "novel"}
+    assert candidate.status_code == 410
+    assert "只读" in candidate.json()["detail"]
+    assert after_attempt["story_facts"] == []
+    assert [event["layer"] for event in after_attempt["timeline_events"]] == ["original"]
 
 
 def test_future_knowledge_validates_year_and_review_state(tmp_path: Path) -> None:

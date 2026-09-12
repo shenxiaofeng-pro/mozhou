@@ -7,7 +7,21 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.context import ContextPacket, CreativeContextBlockedError, CreativeContextService
+from app.chapter_production.models import (
+    AdoptCandidateRequest,
+    AdoptionMode,
+    ChapterOutline,
+    ModelTrace,
+)
+from app.context import (
+    ContextPacket,
+    CreativeContextBlockedError,
+    CreativeContextCompileRequest,
+    CreativeContextPurpose,
+    CreativeContextService,
+    CreativeContextSubject,
+    CreativeContextSubjectKind,
+)
 from app.database import Database
 from app.jobs import JobKind, JobRepository
 from app.main import create_app
@@ -55,6 +69,15 @@ ARCHIVE_TABLES = {
     "chapter_candidate_reviews",
     "chapter_candidate_merge_sources",
     "chapter_writing_outcomes",
+    "chapter_approvals",
+    "canon_reconciliations",
+    "canon_delta_candidates",
+    "canon_records",
+    "author_preference_candidates",
+    "author_preferences",
+    "author_preference_sources",
+    "canon_decision_batches",
+    "rolling_plan_replenishments",
     "craft_pattern_assets",
     "project_craft_pattern_assets",
     "craft_pattern_job_outputs",
@@ -114,6 +137,380 @@ def canonical_json(value: object) -> bytes:
     ).encode()
 
 
+def _m34_decided_archive(
+    client: TestClient,
+    *,
+    edit_first_candidate: bool = False,
+    simulate_legacy_analysis_hash: bool = False,
+) -> tuple[dict[str, object], dict[str, str]]:
+    workspace = client.post(
+        "/api/projects",
+        json={
+            "title": "定稿 Canon 归档",
+            "genre": "eastern_fantasy",
+            "rebirth_year": 728,
+            "rebirth_location": "九州云泽",
+        },
+    ).json()
+    project_id = str(workspace["project"]["id"])
+    chapter = workspace["chapters"][0]
+    body = "沈砚重生回到728年。沈砚获得灵石，突破炼气境。"
+    chapter = client.patch(
+        f"/api/chapters/{chapter['id']}",
+        json={"content": body, "expected_revision": chapter["revision"]},
+    ).json()
+    chapter = client.patch(
+        f"/api/chapters/{chapter['id']}/brief",
+        json={
+            "opening_hook": "重生后第一眼看见旧敌",
+            "state_change": "沈砚突破炼气境",
+            "ending_cliffhanger": "宗门秘密浮出水面",
+            "expected_revision": chapter["revision"],
+        },
+    ).json()
+    for target in ("drafted", "reviewing"):
+        chapter = client.post(
+            f"/api/chapters/{chapter['id']}/transition",
+            json={"target_status": target, "expected_revision": chapter["revision"]},
+        ).json()
+    approved = client.post(
+        f"/api/chapters/{chapter['id']}/transition",
+        json={
+            "target_status": "approved",
+            "expected_revision": chapter["revision"],
+            "expected_content_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert client.app.state.job_runtime.run_once()
+    latest_url = (
+        f"/api/projects/{project_id}/chapters/{chapter['id']}"
+        "/canon-reconciliation/latest"
+    )
+    snapshot = client.get(latest_url).json()
+    first, *rest = snapshot["canon_candidates"]
+    first_decision = {
+        "candidate_id": first["id"],
+        "expected_revision": first["revision"],
+        "action": "edit" if edit_first_candidate else "accept",
+    }
+    if edit_first_candidate:
+        first_decision.update(
+            {
+                "edited_subject_key": f"{first['subject_key']}·作者校准",
+                "edited_summary": f"{first['summary']}（作者校准）",
+                "edited_payload": first["payload"],
+            }
+        )
+    decision = client.post(
+        f"/api/projects/{project_id}/canon-reconciliations/"
+        f"{snapshot['reconciliation']['id']}/decisions",
+        json={
+            "reconciliation_id": snapshot["reconciliation"]["id"],
+            "expected_reconciliation_revision": snapshot["reconciliation"]["revision"],
+            "idempotency_key": "archive-canon-decision-0001",
+            "canon_decisions": [
+                first_decision,
+                *[
+                    {
+                        "candidate_id": candidate["id"],
+                        "expected_revision": candidate["revision"],
+                        "action": "reject",
+                        "rejection_reason": "不进入长期设定",
+                    }
+                    for candidate in rest
+                ],
+            ],
+            "preference_decisions": [],
+        },
+    )
+    assert decision.status_code == 200, decision.text
+    if simulate_legacy_analysis_hash:
+        with client.app.state.repository.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE canon_reconciliations SET analysis_sha256 = ?
+                WHERE id = ?
+                """,
+                ("0" * 64, snapshot["reconciliation"]["id"]),
+            )
+    archive = client.get(f"/api/projects/{project_id}/export").json()
+    ids = {
+        "project": project_id,
+        "chapter": str(chapter["id"]),
+        "approval": str(archive["tables"]["chapter_approvals"][0]["id"]),
+        "version": str(archive["tables"]["chapter_approvals"][0]["chapter_version_id"]),
+        "reconciliation": str(archive["tables"]["canon_reconciliations"][0]["id"]),
+        "candidate": str(archive["tables"]["canon_delta_candidates"][0]["id"]),
+        "record": str(archive["tables"]["canon_records"][0]["id"]),
+        "batch": str(archive["tables"]["canon_decision_batches"][0]["id"]),
+        "replenishment": str(archive["tables"]["rolling_plan_replenishments"][0]["id"]),
+    }
+    return archive, ids
+
+
+def _m34_pending_archive(client: TestClient) -> tuple[dict[str, object], dict[str, int]]:
+    workspace = client.post(
+        "/api/projects",
+        json={
+            "title": "待执行 Canon 归档",
+            "genre": "eastern_fantasy",
+            "rebirth_year": 728,
+            "rebirth_location": "九州云泽",
+        },
+    ).json()
+    project_id = str(workspace["project"]["id"])
+    chapter = workspace["chapters"][0]
+    body = "沈砚重生回到728年。沈砚获得灵石，突破炼气境。"
+    chapter = client.patch(
+        f"/api/chapters/{chapter['id']}",
+        json={"content": body, "expected_revision": chapter["revision"]},
+    ).json()
+    chapter = client.patch(
+        f"/api/chapters/{chapter['id']}/brief",
+        json={
+            "opening_hook": "重生后第一眼看见旧敌",
+            "state_change": "沈砚突破炼气境",
+            "ending_cliffhanger": "宗门秘密浮出水面",
+            "expected_revision": chapter["revision"],
+        },
+    ).json()
+    for target in ("drafted", "reviewing"):
+        chapter = client.post(
+            f"/api/chapters/{chapter['id']}/transition",
+            json={"target_status": target, "expected_revision": chapter["revision"]},
+        ).json()
+    approved = client.post(
+        f"/api/chapters/{chapter['id']}/transition",
+        json={
+            "target_status": "approved",
+            "expected_revision": chapter["revision"],
+            "expected_content_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    archive = client.get(f"/api/projects/{project_id}/export").json()
+    reconciliation = archive["tables"]["canon_reconciliations"][0]
+    return archive, {"revision": int(reconciliation["revision"])}
+
+
+def _m34_trace(
+    client: TestClient,
+    *,
+    project_id: str,
+    chapter_id: str,
+    purpose: CreativeContextPurpose,
+) -> ModelTrace:
+    workspace = client.app.state.repository.get_workspace(project_id)
+    chapter = next(item for item in workspace.chapters if item.id == chapter_id)
+    packet = client.app.state.creative_context_service.compile(
+        workspace,
+        CreativeContextCompileRequest(
+            purpose=purpose,
+            subject=CreativeContextSubject(
+                kind=CreativeContextSubjectKind.CHAPTER,
+                id=chapter_id,
+                revision=chapter.revision,
+            ),
+        ),
+    )
+    return ModelTrace(
+        purpose=purpose,
+        context_packet_id=packet.id,
+        context_packet_sha256=packet.packet_sha256,
+        context_dependency_fingerprint_sha256=(
+            packet.dependency_fingerprint_sha256
+        ),
+        context_compiler_version=packet.compiler_version,
+        profile_fingerprint_sha256=packet.profile_fingerprint_sha256,
+        provider="test",
+        model="fixture",
+        prompt_version="archive-preference-v1",
+    )
+
+
+def _m34_preference_archive(
+    client: TestClient,
+) -> tuple[dict[str, object], dict[str, str]]:
+    workspace = client.post(
+        "/api/projects",
+        json={
+            "title": "作者偏好归档",
+            "genre": "urban_rebirth",
+            "rebirth_year": 1998,
+            "rebirth_location": "福建南平",
+        },
+    ).json()
+    project_id = str(workspace["project"]["id"])
+    chapter = workspace["chapters"][0]
+    chapter_id = str(chapter["id"])
+    productions = client.app.state.chapter_production_repository
+    production = productions.create_production(
+        project_id=project_id,
+        chapter_id=chapter_id,
+        expected_chapter_revision=chapter["revision"],
+        expected_chapter_content_sha256=hashlib.sha256(
+            str(chapter["content"]).encode()
+        ).hexdigest(),
+    )
+    outline = productions.add_outline_candidate(
+        production_id=production.id,
+        outline=ChapterOutline(
+            title="第一章 返城",
+            reader_promise="主角改变第一次选择",
+            opening_hook="老车票上的日期提前了",
+            state_change="主角决定提前回城",
+            emotional_payoff="赶在事故前见到父亲",
+            ending_cliffhanger="厂门口出现不该在的人",
+            scene_beats=["发现日期", "改变行程", "抵达厂门"],
+        ),
+        label="作者确认章纲",
+        trace=_m34_trace(
+            client,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            purpose=CreativeContextPurpose.BRIEF,
+        ),
+    )
+    productions.record_preflight(
+        production_id=production.id,
+        outline_candidate_id=outline.id,
+        expected_outline_revision=outline.current_version.revision,
+        expected_outline_content_sha256=outline.current_version.content_sha256,
+        checks={
+            "reader_promise": True,
+            "opening_hook": True,
+            "state_change": True,
+            "emotional_payoff": True,
+            "ending_cliffhanger": True,
+        },
+        missing_fields=[],
+    )
+    ai_body = (
+        "沈砚在车站反复回想过去的每一个细节，他慢慢地思考，"
+        "又慢慢地走向出口。他解释了自己为什么必须回城，"
+        "也解释了所有可能的风险和原因。"
+    )
+    candidate = productions.create_draft_candidate(
+        production_id=production.id,
+        outline_candidate_id=outline.id,
+        expected_outline_revision=outline.current_version.revision,
+        expected_outline_content_sha256=outline.current_version.content_sha256,
+        content=ai_body,
+        label="AI 正文候选",
+        trace=_m34_trace(
+            client,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            purpose=CreativeContextPurpose.DRAFT,
+        ),
+    )
+    outcome = productions.adopt_candidate(
+        production_id=production.id,
+        candidate_id=candidate.id,
+        request=AdoptCandidateRequest(
+            expected_candidate_revision=candidate.current_version.revision,
+            expected_candidate_content_sha256=candidate.current_version.content_sha256,
+            expected_chapter_revision=chapter["revision"],
+            expected_chapter_content_sha256=hashlib.sha256(
+                str(chapter["content"]).encode()
+            ).hexdigest(),
+            mode=AdoptionMode.WHOLE,
+            idempotency_key="archive-whole-preference",
+        ),
+    )
+    final_body = "沈砚收起车票，直奔南平老厂。"
+    chapter = client.patch(
+        f"/api/chapters/{chapter_id}",
+        json={
+            "content": final_body,
+            "expected_revision": outcome.final_chapter_revision,
+        },
+    ).json()
+    chapter = client.patch(
+        f"/api/chapters/{chapter_id}/brief",
+        json={
+            "opening_hook": "收起车票直奔老厂",
+            "state_change": "沈砚决定不再解释",
+            "ending_cliffhanger": "老厂提前关门",
+            "expected_revision": chapter["revision"],
+        },
+    ).json()
+    chapter = client.post(
+        f"/api/chapters/{chapter_id}/transition",
+        json={"target_status": "reviewing", "expected_revision": chapter["revision"]},
+    ).json()
+    approved = client.post(
+        f"/api/chapters/{chapter_id}/transition",
+        json={
+            "target_status": "approved",
+            "expected_revision": chapter["revision"],
+            "expected_content_sha256": hashlib.sha256(final_body.encode()).hexdigest(),
+            "source_writing_outcome_id": outcome.id,
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert client.app.state.job_runtime.run_once()
+    snapshot = client.get(
+        f"/api/projects/{project_id}/chapters/{chapter_id}"
+        "/canon-reconciliation/latest"
+    ).json()
+    first_preference, *remaining_preferences = snapshot["preference_candidates"]
+    decision = client.post(
+        f"/api/projects/{project_id}/canon-reconciliations/"
+        f"{snapshot['reconciliation']['id']}/decisions",
+        json={
+            "reconciliation_id": snapshot["reconciliation"]["id"],
+            "expected_reconciliation_revision": snapshot["reconciliation"]["revision"],
+            "idempotency_key": "archive-confirm-preference",
+            "canon_decisions": [
+                {
+                    "candidate_id": item["id"],
+                    "expected_revision": item["revision"],
+                    "action": "reject",
+                    "rejection_reason": "不进入长期设定",
+                }
+                for item in snapshot["canon_candidates"]
+            ],
+            "preference_decisions": [
+                {
+                    "candidate_id": first_preference["id"],
+                    "expected_revision": first_preference["revision"],
+                    "action": "edit",
+                    "edited_scope_kind": first_preference["scope_kind"],
+                    "edited_scope_value": first_preference["scope_value"],
+                    "edited_dimension": first_preference["dimension"],
+                    "edited_compact_rule": (
+                        f"{first_preference['compact_rule']}（作者校准）"
+                    ),
+                    "edited_confidence": first_preference["confidence"],
+                },
+                *[
+                    {
+                        "candidate_id": item["id"],
+                        "expected_revision": item["revision"],
+                        "action": "reject",
+                        "rejection_reason": "不作为长期偏好",
+                    }
+                    for item in remaining_preferences
+                ],
+            ],
+        },
+    )
+    assert decision.status_code == 200, decision.text
+    archive = client.get(f"/api/projects/{project_id}/export").json()
+    return archive, {
+        "project": project_id,
+        "chapter": chapter_id,
+        "outcome": outcome.id,
+        "candidate_version": candidate.current_version.id,
+        "preference_candidate": archive["tables"]["author_preference_candidates"][0][
+            "id"
+        ],
+        "preference": archive["tables"]["author_preferences"][0]["id"],
+    }
+
+
 def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "mozhou.db")) as client:
         workspace = client.post(
@@ -123,6 +520,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
                 "genre": "urban_rebirth",
                 "rebirth_year": 1998,
                 "rebirth_location": "福建南平",
+                "template_id": "urban-rebirth",
             },
         ).json()
         project_id = workspace["project"]["id"]
@@ -151,7 +549,7 @@ def test_exports_complete_project_archive_with_checksum(tmp_path: Path) -> None:
     assert default_archive["tables"]["reference_works"] == []
     assert default_archive["tables"]["reference_segments"] == []
     assert archive["format"] == "mozhou-project"
-    assert archive["format_version"] == 17
+    assert archive["format_version"] == 18
     assert archive["source_project_id"] == project_id
     assert archive["source_project_title"] == "回到九八年的南平"
     assert set(archive["tables"]) == ARCHIVE_TABLES
@@ -280,7 +678,7 @@ def test_round_trip_preserves_confirmed_topic_versions_and_rejected_candidates(
                 (restored_project_id,),
             ).fetchall()
 
-    assert archive["format_version"] == 17
+    assert archive["format_version"] == 18
     assert len(archive["tables"]["topic_decisions"]) == 1
     assert len(archive["tables"]["topic_decision_versions"]) == 1
     assert len(archive["tables"]["topic_decision_candidate_sets"]) == 1
@@ -680,7 +1078,7 @@ def test_archive_round_trip_preserves_book_director_plans(tmp_path: Path) -> Non
             headers={"Content-Type": "application/json"},
         )
 
-    assert archive["format_version"] == 17
+    assert archive["format_version"] == 18
     assert archive["tables"]["book_blueprints"][0]["revision"] == 2
     assert restored_response.status_code == 201
     restored = restored_response.json()
@@ -903,8 +1301,23 @@ def test_m32_archive_rebinds_context_and_plan_lineage_and_stales_open_candidate(
     assert packet.dependency_snapshot.topic.id != original_topic_version_id
     assert packet.dependency_snapshot.base_blueprint is not None
     assert packet.dependency_snapshot.base_blueprint.id == restored_blueprint_id
+    assert packet.dependency_snapshot.schema_version == 2
+    assert packet.dependency_snapshot.canon_state is not None
+    assert packet.dependency_snapshot.canon_state.id == (
+        f"canon-state:{restored_project_id}"
+    )
+    assert packet.dependency_snapshot.canon_state.id != (
+        original_packet["dependency_snapshot"]["canon_state"]["id"]
+    )
+    assert packet.dependency_snapshot.author_preference_state is not None
+    assert packet.dependency_snapshot.author_preference_state.id == (
+        f"author-preference-state:{restored_project_id}"
+    )
+    assert packet.dependency_snapshot.author_preference_state.id != (
+        original_packet["dependency_snapshot"]["author_preference_state"]["id"]
+    )
     assert packet.dependency_fingerprint_sha256 == hashlib.sha256(
-        canonical_json(packet.dependency_snapshot.model_dump(mode="json"))
+        canonical_json(packet.dependency_snapshot.canonical_payload())
     ).hexdigest()
     assert "restored_dependency_snapshot" in packet.blocking_reasons
     with pytest.raises(CreativeContextBlockedError, match="restored_dependency_snapshot"):
@@ -971,6 +1384,407 @@ def test_import_upgrades_v15_archive_with_empty_m32_tables(tmp_path: Path) -> No
                 "SELECT COUNT(*) FROM plan_rebase_candidates WHERE project_id = ?",
                 (restored_project_id,),
             ).fetchone()[0] == 0
+
+
+def test_import_upgrades_v17_archive_with_m32_dependency_and_empty_m34_tables(
+    tmp_path: Path,
+) -> None:
+    m34_tables = {
+        "chapter_approvals",
+        "canon_reconciliations",
+        "canon_delta_candidates",
+        "canon_records",
+        "author_preference_candidates",
+        "author_preferences",
+        "author_preference_sources",
+        "canon_decision_batches",
+        "rolling_plan_replenishments",
+    }
+    database_path = tmp_path / "v17-m34-archive.db"
+    with TestClient(create_app(database_path)) as client:
+        workspace = client.post(
+            "/api/projects",
+            json={
+                "title": "旧归档 Canon 兼容",
+                "genre": "urban_rebirth",
+                "rebirth_year": 1998,
+                "rebirth_location": "福建南平",
+                "template_id": "urban-rebirth",
+            },
+        ).json()
+        project_id = str(workspace["project"]["id"])
+        topic_decision = workspace["topic_decision"]
+        confirmed = client.post(
+            f"/api/projects/{project_id}/topic-decision/confirm",
+            json={"expected_revision": topic_decision["revision"]},
+        )
+        assert confirmed.status_code == 200
+        blueprint_id = str(uuid4())
+        blueprint_content = {
+            "title": "旧版创作蓝图",
+            "genre": "urban_rebirth",
+            "rebirth_year": 1998,
+            "rebirth_location": "福建南平",
+            "target_audience": "喜欢产业升级的读者",
+            "core_selling_points": ["订单破局"],
+            "core_desire": "保住家庭与工厂",
+            "divergence_point": "提前截住违约订单",
+            "long_term_promise": "持续完成产业和关系跃迁",
+            "ending_direction": "建立本地产业网络",
+            "protagonist_arc": "从补偿家人走向公共责任",
+            "resource_growth": "从信息差成长为信用网络",
+            "relationship_design": "家人锚定价值，伙伴负责执行",
+        }
+        timestamp = "2026-09-12T00:00:00+00:00"
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO book_blueprints (
+                    id, project_id, idea, content_json, locks_json,
+                    field_versions_json, stale_fields_json, plan_stale,
+                    source_candidate_id, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, NULL, 0, ?, ?)
+                """,
+                (
+                    blueprint_id,
+                    project_id,
+                    "用订单救下家庭和工厂",
+                    json.dumps(blueprint_content, ensure_ascii=False),
+                    json.dumps({key: False for key in blueprint_content}),
+                    json.dumps({key: 1 for key in blueprint_content}),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        client.app.state.plan_rebase_service.bind_current_planning(project_id)
+        archive = client.get(
+            f"/api/projects/{project_id}/export"
+        ).json()
+        dependency_rows = archive["tables"]["creative_plan_dependencies"]
+        assert len(dependency_rows) == 1
+        dependency_snapshot = json.loads(
+            dependency_rows[0]["dependency_snapshot_json"]
+        )
+        assert dependency_snapshot.pop("canon_state") is None
+        assert dependency_snapshot.pop("author_preference_state") is None
+        dependency_rows[0]["dependency_snapshot_json"] = canonical_json(
+            dependency_snapshot
+        ).decode()
+        dependency_rows[0]["dependency_fingerprint_sha256"] = hashlib.sha256(
+            canonical_json(dependency_snapshot)
+        ).hexdigest()
+        for table_name in m34_tables:
+            archive["tables"].pop(table_name)
+        archive["format_version"] = 17
+        unsigned = dict(archive)
+        unsigned.pop("checksum_sha256")
+        archive["checksum_sha256"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
+    restored_project_id = restored.json()["project"]["id"]
+    with sqlite3.connect(database_path) as connection:
+        restored_dependency = connection.execute(
+            """
+            SELECT dependency_snapshot_json, dependency_fingerprint_sha256
+            FROM creative_plan_dependencies WHERE project_id = ?
+            """,
+            (restored_project_id,),
+        ).fetchone()
+        assert restored_dependency is not None
+        restored_snapshot = json.loads(restored_dependency[0])
+        assert restored_dependency[1] == hashlib.sha256(
+            canonical_json(restored_snapshot)
+        ).hexdigest()
+        for table_name in m34_tables:
+            assert connection.execute(
+                f"SELECT COUNT(*) FROM {table_name} WHERE "
+                + (
+                    "preference_id IN (SELECT id FROM author_preferences WHERE project_id = ?)"
+                    if table_name == "author_preference_sources"
+                    else "project_id = ?"
+                ),
+                (restored_project_id,),
+            ).fetchone()[0] == 0
+
+
+def test_m34_archive_round_trip_rebinds_canon_graph_and_embedded_ids(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "m34-round-trip.db"
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        archive, old_ids = _m34_decided_archive(client)
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
+    restored_project_id = restored.json()["project"]["id"]
+    with Database(database_path).connect() as connection:
+        approval = dict(
+            connection.execute(
+                "SELECT * FROM chapter_approvals WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        reconciliation = dict(
+            connection.execute(
+                "SELECT * FROM canon_reconciliations WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        candidate = dict(
+            connection.execute(
+                """
+                SELECT * FROM canon_delta_candidates
+                WHERE project_id = ? AND state = 'accepted'
+                """,
+                (restored_project_id,),
+            ).fetchone()
+        )
+        record = dict(
+            connection.execute(
+                "SELECT * FROM canon_records WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        batch = dict(
+            connection.execute(
+                "SELECT * FROM canon_decision_batches WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        replenishment = dict(
+            connection.execute(
+                "SELECT * FROM rolling_plan_replenishments WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    assert restored_project_id != old_ids["project"]
+    for table_id, row in (
+        ("approval", approval),
+        ("reconciliation", reconciliation),
+        ("candidate", candidate),
+        ("record", record),
+        ("batch", batch),
+        ("replenishment", replenishment),
+    ):
+        assert row["id"] != old_ids[table_id]
+    assert approval["chapter_id"] != old_ids["chapter"]
+    assert approval["chapter_version_id"] != old_ids["version"]
+    assert reconciliation["approval_id"] == approval["id"]
+    assert candidate["reconciliation_id"] == reconciliation["id"]
+    assert candidate["accepted_record_id"] == record["id"]
+    assert record["source_candidate_id"] == candidate["id"]
+    evidence = json.loads(candidate["evidence_json"])
+    payload = json.loads(candidate["payload_json"])
+    assert evidence["approval_version_id"] == approval["chapter_version_id"]
+    assert evidence["chapter_id"] == approval["chapter_id"]
+    assert candidate["payload_sha256"] == hashlib.sha256(
+        canonical_json(payload)
+    ).hexdigest()
+    assert candidate["evidence_sha256"] == hashlib.sha256(
+        canonical_json(evidence)
+    ).hexdigest()
+    response = json.loads(batch["response_json"])
+    assert response["batch_id"] == batch["id"]
+    assert response["reconciliation_id"] == reconciliation["id"]
+    assert response["accepted_canon_record_ids"] == [record["id"]]
+    assert response["rolling_plan_replenishment_id"] is None
+    assert replenishment["source_decision_batch_id"] == batch["id"]
+    assert replenishment["source_chapter_id"] == approval["chapter_id"]
+
+
+def test_m34_archive_round_trip_accepts_author_edited_canon_candidate(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "m34-edited-canon-round-trip.db"
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        archive, _old_ids = _m34_decided_archive(
+            client,
+            edit_first_candidate=True,
+            simulate_legacy_analysis_hash=True,
+        )
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
+
+
+def test_m34_archive_round_trip_rebinds_confirmed_preference_sources(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "m34-preference-round-trip.db"
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        archive, old_ids = _m34_preference_archive(client)
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
+    restored_project_id = restored.json()["project"]["id"]
+    with Database(database_path).connect() as connection:
+        preference_candidate = dict(
+            connection.execute(
+                """
+                SELECT * FROM author_preference_candidates
+                WHERE project_id = ? AND state = 'confirmed'
+                """,
+                (restored_project_id,),
+            ).fetchone()
+        )
+        preference = dict(
+            connection.execute(
+                "SELECT * FROM author_preferences WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        source = dict(
+            connection.execute(
+                """
+                SELECT s.*
+                FROM author_preference_sources s
+                JOIN author_preferences p ON p.id = s.preference_id
+                WHERE p.project_id = ?
+                """,
+                (restored_project_id,),
+            ).fetchone()
+        )
+        approval = dict(
+            connection.execute(
+                "SELECT * FROM chapter_approvals WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        decision = dict(
+            connection.execute(
+                "SELECT * FROM canon_decision_batches WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    assert preference_candidate["id"] != old_ids["preference_candidate"]
+    assert preference["id"] != old_ids["preference"]
+    assert preference_candidate["confirmed_preference_id"] == preference["id"]
+    assert preference_candidate["scope_kind"] == "project"
+    assert preference_candidate["scope_value"] == restored_project_id
+    assert preference["scope_value"] == restored_project_id
+    assert source["preference_id"] == preference["id"]
+    assert source["candidate_id"] == preference_candidate["id"]
+    assert source["approval_id"] == approval["id"]
+    assert source["source_writing_outcome_id"] != old_ids["outcome"]
+    assert source["source_candidate_version_id"] != old_ids["candidate_version"]
+    expected_fingerprint = {
+        "schema_version": 1,
+        "scope_kind": preference["scope_kind"],
+        "scope_value": preference["scope_value"],
+        "dimension": preference["dimension"],
+        "compact_rule": preference["compact_rule"],
+    }
+    assert preference["fingerprint_sha256"] == hashlib.sha256(
+        canonical_json(expected_fingerprint)
+    ).hexdigest()
+    response = json.loads(decision["response_json"])
+    assert response["confirmed_preference_ids"] == [preference["id"]]
+
+
+def test_m34_archive_restore_interrupts_pending_canon_work(tmp_path: Path) -> None:
+    database_path = tmp_path / "m34-pending-restore.db"
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        archive, source = _m34_pending_archive(client)
+        assert archive["tables"]["jobs"][-1]["state"] == "queued"
+        assert archive["tables"]["canon_reconciliations"][0]["state"] == "pending"
+
+        restored = client.post(
+            "/api/project-imports",
+            content=canonical_json(archive),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert restored.status_code == 201, restored.text
+    restored_project_id = restored.json()["project"]["id"]
+    with Database(database_path).connect() as connection:
+        job = dict(
+            connection.execute(
+                """
+                SELECT * FROM jobs
+                WHERE project_id = ? AND workflow = 'canon_reconciliation_v1'
+                """,
+                (restored_project_id,),
+            ).fetchone()
+        )
+        reconciliation = dict(
+            connection.execute(
+                "SELECT * FROM canon_reconciliations WHERE project_id = ?",
+                (restored_project_id,),
+            ).fetchone()
+        )
+        candidate_count = connection.execute(
+            "SELECT COUNT(*) FROM canon_delta_candidates WHERE project_id = ?",
+            (restored_project_id,),
+        ).fetchone()[0]
+
+    assert job["state"] == "interrupted"
+    assert job["error_code"] == "restored_requires_resubmission"
+    assert reconciliation["state"] == "stale"
+    assert reconciliation["revision"] == source["revision"] + 1
+    assert reconciliation["error_message"] == "restored_requires_resubmission"
+    assert reconciliation["completed_at"] is not None
+    assert candidate_count == 0
+
+
+def test_m34_archive_rejects_tampered_hashes_and_project_links(tmp_path: Path) -> None:
+    database_path = tmp_path / "m34-tamper.db"
+    with TestClient(create_app(database_path, defer_job_runtime=True)) as client:
+        archive, _old_ids = _m34_decided_archive(client)
+
+        tampered_archives: list[dict[str, object]] = []
+        for hash_column in ("payload_sha256", "evidence_sha256"):
+            tampered = json.loads(json.dumps(archive))
+            tampered["tables"]["canon_delta_candidates"][0][hash_column] = "0" * 64
+            unsigned = dict(tampered)
+            unsigned.pop("checksum_sha256")
+            tampered["checksum_sha256"] = hashlib.sha256(
+                canonical_json(unsigned)
+            ).hexdigest()
+            tampered_archives.append(tampered)
+
+        wrong_project = json.loads(json.dumps(archive))
+        wrong_project["tables"]["canon_delta_candidates"][0]["project_id"] = str(
+            uuid4()
+        )
+        unsigned = dict(wrong_project)
+        unsigned.pop("checksum_sha256")
+        wrong_project["checksum_sha256"] = hashlib.sha256(
+            canonical_json(unsigned)
+        ).hexdigest()
+        tampered_archives.append(wrong_project)
+
+        responses = [
+            client.post(
+                "/api/project-imports",
+                content=canonical_json(tampered),
+                headers={"Content-Type": "application/json"},
+            )
+            for tampered in tampered_archives
+        ]
+
+    assert [response.status_code for response in responses] == [400, 400, 400]
 
 
 def test_archive_round_trip_preserves_review_versions_and_partial_changes(

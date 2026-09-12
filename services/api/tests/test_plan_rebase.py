@@ -751,7 +751,7 @@ def test_concurrent_plan_change_rejects_adoption_without_partial_updates(
     before = director.get_snapshot(project_id)
     rolling = before.rolling_chapter_plans[0]
     concurrent_content = RollingChapterPlanContent.model_validate(
-        rolling.model_dump()
+        rolling.model_dump(include=set(RollingChapterPlanContent.model_fields))
     ).model_copy(update={"opening_hook": "作者并发修改的开篇钩子"})
     director.update_rolling_plan(
         project_id,
@@ -800,7 +800,9 @@ def test_candidate_edit_preserves_locked_volume_and_rolling_plans(tmp_path: Path
         project_id,
         volume.id,
         UpdateVolumePlanRequest(
-            content=VolumePlanContent.model_validate(volume.model_dump()),
+            content=VolumePlanContent.model_validate(
+                volume.model_dump(include=set(VolumePlanContent.model_fields))
+            ),
             locked=True,
             expected_revision=volume.revision,
         ),
@@ -810,7 +812,11 @@ def test_candidate_edit_preserves_locked_volume_and_rolling_plans(tmp_path: Path
         project_id,
         rolling.id,
         UpdateRollingChapterPlanRequest(
-            content=RollingChapterPlanContent.model_validate(rolling.model_dump()),
+            content=RollingChapterPlanContent.model_validate(
+                rolling.model_dump(
+                    include=set(RollingChapterPlanContent.model_fields)
+                )
+            ),
             locked=True,
             expected_revision=rolling.revision,
         ),

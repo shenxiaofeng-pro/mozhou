@@ -34,6 +34,20 @@ BetaEventType = Literal[
     "recovery_restore",
     "report_export",
 ]
+BetaAdjustmentType = Literal[
+    "accepted_as_is",
+    "light_edit",
+    "substantial_edit",
+    "rewrite",
+    "partial_adoption",
+]
+BETA_ADJUSTMENT_TYPES: tuple[BetaAdjustmentType, ...] = (
+    "accepted_as_is",
+    "light_edit",
+    "substantial_edit",
+    "rewrite",
+    "partial_adoption",
+)
 
 
 class BetaTemplate(BaseModel):
@@ -49,7 +63,7 @@ class BetaTemplate(BaseModel):
 
 
 class CreateBetaFeedbackRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     category: BetaFeedbackCategory
     context: BetaFeedbackContext
@@ -89,6 +103,10 @@ class BetaMetrics(BaseModel):
     ai_applied_count: int = Field(ge=0)
     ai_adoption_rate: float | None
     mean_manual_modification_ratio: float | None
+    mean_ai_text_retention_rate: float | None
+    manual_adjustment_type_counts: dict[BetaAdjustmentType, int]
+    longest_consecutive_written_chapters: int = Field(ge=0)
+    ten_chapter_sequence_completed: bool
     review_finding_count: int = Field(ge=0)
     review_accepted_count: int = Field(ge=0)
     review_acceptance_rate: float | None
@@ -101,14 +119,22 @@ class BetaMetrics(BaseModel):
     originality_blocked_count: int = Field(ge=0)
 
 
+class BetaSubjectiveRating(BaseModel):
+    category: BetaFeedbackCategory
+    context: BetaFeedbackContext
+    response_count: int = Field(gt=0)
+    mean_rating: float = Field(ge=1, le=5)
+
+
 class BetaEvaluationReport(BaseModel):
     format: Literal["mozhou-closed-beta-report"] = "mozhou-closed-beta-report"
-    format_version: Literal[1] = 1
+    format_version: Literal[2] = 2
     generated_at: str
     project_id: str
     template_ids: list[str]
     milestones: list[BetaMilestone]
     metrics: BetaMetrics
+    subjective_ratings: list[BetaSubjectiveRating]
     feedback: list[BetaFeedback]
     privacy_notice: str
 
@@ -255,7 +281,14 @@ class BetaEvaluationService:
                 "SELECT 1 FROM projects WHERE id = ?", (project_id,)
             ).fetchone() is None:
                 raise NotFoundError(project_id)
-            counts = self._counts(connection, project_id)
+            written_chapter_numbers = self._written_chapter_numbers(
+                connection, project_id
+            )
+            counts = self._counts(
+                connection,
+                project_id,
+                written_chapter_count=len(written_chapter_numbers),
+            )
             feedback = [
                 BetaFeedback.model_validate(dict(row))
                 for row in connection.execute(
@@ -263,7 +296,12 @@ class BetaEvaluationService:
                     (project_id,),
                 ).fetchall()
             ]
-            modification_ratios = self._manual_modification_ratios(connection, project_id)
+            ai_adoptions = self._latest_ai_adoptions(connection, project_id)
+            modification_ratios = self._manual_modification_ratios(ai_adoptions)
+            adjustment_types = self._manual_adjustment_types(ai_adoptions)
+            longest_written_sequence = self._longest_written_sequence(
+                written_chapter_numbers
+            )
             approval_seconds = self._approval_seconds(connection, project_id)
 
         metrics = BetaMetrics(
@@ -278,6 +316,17 @@ class BetaEvaluationService:
                 if modification_ratios
                 else None
             ),
+            mean_ai_text_retention_rate=(
+                round(1 - sum(modification_ratios) / len(modification_ratios), 4)
+                if modification_ratios
+                else None
+            ),
+            manual_adjustment_type_counts={
+                adjustment_type: adjustment_types.count(adjustment_type)
+                for adjustment_type in BETA_ADJUSTMENT_TYPES
+            },
+            longest_consecutive_written_chapters=longest_written_sequence,
+            ten_chapter_sequence_completed=longest_written_sequence >= 10,
             review_finding_count=counts["review_findings"],
             review_accepted_count=counts["review_accepted"],
             review_acceptance_rate=self._rate(
@@ -293,7 +342,7 @@ class BetaEvaluationService:
             open_critical_findings=counts["critical_findings"],
             originality_blocked_count=counts["originality_blocked"],
         )
-        milestones = self._milestones(counts)
+        milestones = self._milestones(counts, longest_written_sequence)
         matching_templates = [
             template.id
             for template in BETA_TEMPLATES
@@ -305,6 +354,7 @@ class BetaEvaluationService:
             template_ids=matching_templates,
             milestones=milestones,
             metrics=metrics,
+            subjective_ratings=self._subjective_ratings(feedback),
             feedback=feedback,
             privacy_notice=(
                 "报告不含作品名、正文、章纲、资料原文、Prompt、文件路径或密钥；"
@@ -325,8 +375,16 @@ class BetaEvaluationService:
         row = connection.execute(query, parameters).fetchone()
         return int(row[0]) if row is not None else 0
 
-    def _counts(self, connection: Connection, project_id: str) -> BetaCounts:
-        scalar = lambda query: self._scalar(connection, query, (project_id,))
+    def _counts(
+        self,
+        connection: Connection,
+        project_id: str,
+        *,
+        written_chapter_count: int,
+    ) -> BetaCounts:
+        def scalar(query: str) -> int:
+            return self._scalar(connection, query, (project_id,))
+
         genre_row = connection.execute(
             "SELECT genre FROM projects WHERE id = ?", (project_id,)
         ).fetchone()
@@ -336,21 +394,43 @@ class BetaEvaluationService:
                 "SELECT COUNT(*) FROM chapters "
                 "WHERE project_id = ? AND deleted_at IS NULL"
             ),
-            "written_chapters": scalar(
-                "SELECT COUNT(*) FROM chapters WHERE project_id = ? "
-                "AND deleted_at IS NULL AND LENGTH(TRIM(content)) > 0"
-            ),
+            "written_chapters": written_chapter_count,
             "approved_chapters": scalar(
                 "SELECT COUNT(*) FROM chapters WHERE project_id = ? "
                 "AND deleted_at IS NULL AND status = 'approved'"
             ),
-            "ai_candidates": scalar(
-                "SELECT COUNT(*) FROM chapter_versions v JOIN chapters c ON c.id = v.chapter_id "
-                "WHERE c.project_id = ? AND v.source = 'generation_candidate'"
+            "ai_candidates": (
+                scalar(
+                    "SELECT COUNT(*) FROM chapter_draft_candidate_versions version "
+                    "JOIN chapter_draft_candidates candidate ON candidate.id = version.candidate_id "
+                    "JOIN chapter_productions production ON production.id = candidate.production_id "
+                    "WHERE production.project_id = ? AND version.source_job_id IS NOT NULL"
+                )
+                + scalar(
+                    "SELECT COUNT(*) FROM chapter_versions version "
+                    "JOIN chapters chapter ON chapter.id = version.chapter_id "
+                    "WHERE chapter.project_id = ? AND version.source = 'generation_candidate' "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM chapter_draft_candidate_versions candidate_version "
+                    "WHERE candidate_version.source_job_id = version.source_id"
+                    ")"
+                )
             ),
-            "ai_applied": scalar(
-                "SELECT COUNT(*) FROM chapter_versions v JOIN chapters c ON c.id = v.chapter_id "
-                "WHERE c.project_id = ? AND v.source = 'generation_apply'"
+            "ai_applied": (
+                scalar(
+                    "SELECT COUNT(*) FROM chapter_writing_outcomes outcome "
+                    "JOIN chapter_productions production ON production.id = outcome.production_id "
+                    "WHERE production.project_id = ? AND outcome.decision = 'adopted'"
+                )
+                + scalar(
+                    "SELECT COUNT(*) FROM chapter_versions version "
+                    "JOIN chapters chapter ON chapter.id = version.chapter_id "
+                    "WHERE chapter.project_id = ? AND version.source = 'generation_apply' "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM chapter_writing_outcomes outcome "
+                    "WHERE outcome.chapter_version_id = version.id"
+                    ")"
+                )
             ),
             "review_findings": scalar(
                 "SELECT COUNT(*) FROM review_findings WHERE project_id = ?"
@@ -379,9 +459,15 @@ class BetaEvaluationService:
                 "AND originality_status = 'blocked'"
             ),
             "blueprints": scalar("SELECT COUNT(*) FROM book_blueprints WHERE project_id = ?"),
-            "fact_applied": scalar(
-                "SELECT COUNT(*) FROM fact_change_sets f JOIN chapters c ON c.id = f.chapter_id "
-                "WHERE c.project_id = ? AND f.state = 'applied'"
+            "fact_applied": (
+                scalar(
+                    "SELECT COUNT(*) FROM canon_delta_candidates "
+                    "WHERE project_id = ? AND state = 'accepted'"
+                )
+                + scalar(
+                    "SELECT COUNT(*) FROM fact_change_sets f JOIN chapters c ON c.id = f.chapter_id "
+                    "WHERE c.project_id = ? AND f.state = 'applied'"
+                )
             ),
             "reference_applied": scalar(
                 "SELECT COUNT(*) FROM reference_pattern_applications "
@@ -398,31 +484,155 @@ class BetaEvaluationService:
         }
 
     @staticmethod
-    def _manual_modification_ratios(
+    def _latest_ai_adoptions(
         connection: Connection,
         project_id: str,
-    ) -> list[float]:
+    ) -> list[tuple[str, str, str]]:
         rows = connection.execute(
             """
-            SELECT c.content AS current_content, v.content AS applied_content
-            FROM chapters c
-            JOIN chapter_versions v ON v.chapter_id = c.id
-            WHERE c.project_id = ? AND v.source = 'generation_apply'
-              AND v.version_number = (
-                SELECT MAX(v2.version_number) FROM chapter_versions v2
-                WHERE v2.chapter_id = c.id AND v2.source = 'generation_apply'
-              )
+            WITH selected_project(id) AS (VALUES (?)),
+            ai_adoptions AS (
+                SELECT production.chapter_id,
+                       version.id AS chapter_version_id,
+                       version.version_number,
+                       version.created_at,
+                       version.content AS applied_content,
+                       outcome.adoption_mode
+                FROM chapter_writing_outcomes outcome
+                JOIN chapter_productions production
+                  ON production.id = outcome.production_id
+                JOIN chapter_versions version
+                  ON version.id = outcome.chapter_version_id
+                WHERE production.project_id = (SELECT id FROM selected_project)
+                  AND outcome.decision = 'adopted'
+
+                UNION ALL
+
+                SELECT version.chapter_id,
+                       version.id AS chapter_version_id,
+                       version.version_number,
+                       version.created_at,
+                       version.content AS applied_content,
+                       'whole' AS adoption_mode
+                FROM chapter_versions version
+                JOIN chapters chapter ON chapter.id = version.chapter_id
+                WHERE chapter.project_id = (SELECT id FROM selected_project)
+                  AND version.source = 'generation_apply'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM chapter_writing_outcomes outcome
+                      WHERE outcome.chapter_version_id = version.id
+                  )
+            ),
+            ranked AS (
+                SELECT ai_adoptions.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY chapter_id
+                           ORDER BY version_number DESC, created_at DESC, chapter_version_id DESC
+                       ) AS adoption_rank
+                FROM ai_adoptions
+            )
+            SELECT chapter.content AS current_content,
+                   ranked.applied_content,
+                   ranked.adoption_mode
+            FROM ranked
+            JOIN chapters chapter ON chapter.id = ranked.chapter_id
+            WHERE ranked.adoption_rank = 1 AND chapter.deleted_at IS NULL
+            ORDER BY chapter.chapter_number, chapter.id
             """,
             (project_id,),
         ).fetchall()
         return [
+            (
+                str(row["current_content"]),
+                str(row["applied_content"]),
+                str(row["adoption_mode"]),
+            )
+            for row in rows
+        ]
+
+    @staticmethod
+    def _manual_modification_ratios(
+        ai_adoptions: list[tuple[str, str, str]],
+    ) -> list[float]:
+        return [
             1 - SequenceMatcher(
                 None,
-                str(row["applied_content"]),
-                str(row["current_content"]),
+                applied_content,
+                current_content,
                 autojunk=False,
             ).ratio()
-            for row in rows
+            for current_content, applied_content, _adoption_mode in ai_adoptions
+        ]
+
+    @staticmethod
+    def _manual_adjustment_types(
+        ai_adoptions: list[tuple[str, str, str]],
+    ) -> list[BetaAdjustmentType]:
+        adjustment_types: list[BetaAdjustmentType] = []
+        for current_content, applied_content, adoption_mode in ai_adoptions:
+            if adoption_mode == "partial":
+                adjustment_types.append("partial_adoption")
+                continue
+            retention = SequenceMatcher(
+                None,
+                applied_content,
+                current_content,
+                autojunk=False,
+            ).ratio()
+            if retention >= 0.98:
+                adjustment_types.append("accepted_as_is")
+            elif retention >= 0.80:
+                adjustment_types.append("light_edit")
+            elif retention >= 0.40:
+                adjustment_types.append("substantial_edit")
+            else:
+                adjustment_types.append("rewrite")
+        return adjustment_types
+
+    @staticmethod
+    def _written_chapter_numbers(
+        connection: Connection,
+        project_id: str,
+    ) -> list[int]:
+        return [
+            int(row["chapter_number"])
+            for row in connection.execute(
+                """
+                SELECT chapter_number, content FROM chapters
+                WHERE project_id = ? AND deleted_at IS NULL
+                ORDER BY chapter_number
+                """,
+                (project_id,),
+            ).fetchall()
+            if isinstance(row["content"], str) and row["content"].strip()
+        ]
+
+    @staticmethod
+    def _longest_written_sequence(numbers: list[int]) -> int:
+        longest = 0
+        current = 0
+        previous: int | None = None
+        for number in numbers:
+            current = current + 1 if previous is not None and number == previous + 1 else 1
+            longest = max(longest, current)
+            previous = number
+        return longest
+
+    @staticmethod
+    def _subjective_ratings(
+        feedback: list[BetaFeedback],
+    ) -> list[BetaSubjectiveRating]:
+        grouped: dict[tuple[BetaFeedbackCategory, BetaFeedbackContext], list[int]] = {}
+        for item in feedback:
+            grouped.setdefault((item.category, item.context), []).append(item.rating)
+        return [
+            BetaSubjectiveRating(
+                category=category,
+                context=context,
+                response_count=len(ratings),
+                mean_rating=round(sum(ratings) / len(ratings), 2),
+            )
+            for (category, context), ratings in sorted(grouped.items())
         ]
 
     @staticmethod
@@ -446,11 +656,14 @@ class BetaEvaluationService:
         return durations
 
     @staticmethod
-    def _milestones(counts: BetaCounts) -> list[BetaMilestone]:
+    def _milestones(
+        counts: BetaCounts,
+        longest_written_sequence: int,
+    ) -> list[BetaMilestone]:
         definitions = [
             ("project", "建立或导入作品", 1, 1),
             ("plan", "形成整书蓝图与滚动计划", counts["blueprints"], 1),
-            ("ten_chapters", "连续完成至少十章正文", counts["written_chapters"], 10),
+            ("ten_chapters", "连续完成至少十章正文", longest_written_sequence, 10),
             ("ai_candidate", "生成 AI 单章候选稿", counts["ai_candidates"], 1),
             ("ai_apply", "作者确认采用过候选稿", counts["ai_applied"], 1),
             ("review", "完成证据化审校", counts["review_findings"], 1),

@@ -138,6 +138,44 @@ export type ProjectNextAction =
   | 'review_downstream_plans'
   | 'continue_writing'
 
+export type AuthorNextActionKind =
+  | 'confirm_topic'
+  | 'review_topic_changes'
+  | 'plan_book'
+  | 'review_downstream_plans'
+  | 'plan_chapter'
+  | 'generate_chapter_candidate'
+  | 'continue_chapter_draft'
+  | 'review_chapter'
+  | 'review_canon_reconciliation'
+  | 'review_rolling_plan'
+  | 'create_next_chapter'
+  | 'project_complete'
+
+export type AuthorWorkspaceView = 'topic-decision' | 'writing'
+
+export type AuthorWorkflowStage =
+  | 'topic'
+  | 'book'
+  | 'plan'
+  | 'candidate'
+  | 'review'
+  | 'feedback'
+  | 'complete'
+
+export interface AuthorNextAction {
+  kind: AuthorNextActionKind
+  target_view: AuthorWorkspaceView
+  target_stage: AuthorWorkflowStage
+  chapter_id: string | null
+  chapter_number: number | null
+  last_approved_chapter_id: string | null
+  reconciliation_id: string | null
+  rolling_plan_id: string | null
+  rolling_plan_replenishment_id: string | null
+  blocked: boolean
+}
+
 export type TopicDecisionCandidateState = 'candidate' | 'selected' | 'rejected'
 
 export type DirectorWorkflow =
@@ -396,6 +434,13 @@ export interface BetaMetrics {
   ai_applied_count: number
   ai_adoption_rate: number | null
   mean_manual_modification_ratio: number | null
+  mean_ai_text_retention_rate: number | null
+  manual_adjustment_type_counts: Record<
+    'accepted_as_is' | 'light_edit' | 'substantial_edit' | 'rewrite' | 'partial_adoption',
+    number
+  >
+  longest_consecutive_written_chapters: number
+  ten_chapter_sequence_completed: boolean
   review_finding_count: number
   review_accepted_count: number
   review_acceptance_rate: number | null
@@ -408,14 +453,22 @@ export interface BetaMetrics {
   originality_blocked_count: number
 }
 
+export interface BetaSubjectiveRating {
+  category: BetaFeedbackCategory
+  context: BetaFeedbackContext
+  response_count: number
+  mean_rating: number
+}
+
 export interface BetaEvaluationReport {
   format: 'mozhou-closed-beta-report'
-  format_version: 1
+  format_version: 2
   generated_at: string
   project_id: string
   template_ids: string[]
   milestones: BetaMilestone[]
   metrics: BetaMetrics
+  subjective_ratings: BetaSubjectiveRating[]
   feedback: BetaFeedback[]
   privacy_notice: string
 }
@@ -684,7 +737,25 @@ export interface SubmitSandboxAiRoundInput {
 
 export interface ProjectArchive {
   format: 'mozhou-project'
-  format_version: 1 | 2 | 3 | 4 | 5 | 6
+  format_version:
+    | 1
+    | 2
+    | 3
+    | 4
+    | 5
+    | 6
+    | 7
+    | 8
+    | 9
+    | 10
+    | 11
+    | 12
+    | 13
+    | 14
+    | 15
+    | 16
+    | 17
+    | 18
   exported_at: string
   source_project_id: string
   source_project_title: string
@@ -1467,6 +1538,7 @@ export interface ResumeCard {
   active_entities: ResumeCardItem[]
   pending_reviews: number
   warning_count: number
+  next_action?: AuthorNextAction | null
 }
 
 export interface AiStatus {
@@ -1662,6 +1734,7 @@ export type CreativeContextPurpose =
   | 'draft'
   | 'candidate_review'
   | 'canon_reconciliation'
+  | 'preference'
 
 export type CreativeContextSubjectKind = 'project' | 'book_blueprint' | 'chapter' | 'review_window'
 
@@ -1679,11 +1752,13 @@ export interface ContextDependencyRef {
 }
 
 export interface ContextDependencySnapshot {
-  schema_version: 1
+  schema_version: 1 | 2
   topic: ContextDependencyRef | null
   writing_pattern_profile: ContextDependencyRef | null
   writing_pattern_source_availability: 'source_verified' | 'abstract_only' | null
   base_blueprint: ContextDependencyRef | null
+  canon_state?: ContextDependencyRef | null
+  author_preference_state?: ContextDependencyRef | null
   subject_sha256: string
 }
 
@@ -1741,6 +1816,8 @@ export interface ContextItem {
     | 'approved_blueprint'
     | 'book_blueprint'
     | 'rolling_chapter_plan'
+    | 'canon_record'
+    | 'author_preference'
   tier: ContextTier
   label: string
   content: string
@@ -1936,6 +2013,7 @@ export interface Workspace {
   chapters: Chapter[]
   topic_decision: TopicDecision | null
   next_action: ProjectNextAction
+  author_next_action?: AuthorNextAction | null
   manuscript_volumes?: ManuscriptVolume[]
   manuscript_scenes?: ManuscriptScene[]
   book_blueprint: BookBlueprint | null
@@ -2884,6 +2962,10 @@ export interface CreateChapterInput {
 export interface TransitionChapterInput {
   target_status: ChapterStatus
   expected_revision: number
+  /** Required when approving so the final text and revision are compared atomically. */
+  expected_content_sha256?: string
+  /** Optional explicit whole-candidate outcome used for author-preference learning. */
+  source_writing_outcome_id?: string | null
 }
 
 export type ChapterProductionState =
@@ -3557,4 +3639,279 @@ export interface ComicProductionPackage {
   compliance_checklist: string[]
   source_snapshot_sha256: string
   package_sha256: string
+}
+
+export type CanonKind =
+  | 'character_state'
+  | 'relationship'
+  | 'resource_state'
+  | 'location_state'
+  | 'character_knowledge'
+  | 'future_knowledge'
+  | 'story_thread'
+  | 'progression'
+  | 'timeline_event'
+
+export type CanonReconciliationState = 'pending' | 'ready' | 'decided' | 'stale' | 'failed'
+export type CanonCandidateState = 'candidate' | 'accepted' | 'rejected' | 'stale'
+export type PreferenceCandidateState = 'candidate' | 'confirmed' | 'rejected' | 'stale'
+export type CanonDecisionAction = 'accept' | 'edit' | 'reject'
+export type PreferenceScopeKind = 'project' | 'genre' | 'chapter'
+export type AuthorPreferenceDimension =
+  | 'pacing'
+  | 'paragraphing'
+  | 'dialogue_density'
+  | 'narrative_distance'
+  | 'tension'
+  | 'sentence_style'
+
+export interface CharacterStateCanonPayload {
+  character_name: string
+  state: string
+  change: string
+}
+
+export interface RelationshipCanonPayload {
+  source_name: string
+  target_name: string
+  relation_type: string
+  summary: string
+}
+
+export interface ResourceStateCanonPayload {
+  owner_name: string
+  resource_name: string
+  delta: string
+  state: string
+}
+
+export interface LocationStateCanonPayload {
+  subject_name: string
+  location: string
+  movement: string
+}
+
+export interface CharacterKnowledgeCanonPayload {
+  character_name: string
+  knowledge: string
+}
+
+export interface FutureKnowledgeCanonPayload {
+  holder_name: string
+  knowledge: string
+  confidence: 'certain' | 'likely' | 'uncertain'
+  event_year: number | null
+}
+
+export interface StoryThreadCanonPayload {
+  title: string
+  status: 'open' | 'resolved' | 'abandoned'
+  summary: string
+}
+
+export interface ProgressionCanonPayload {
+  character_name: string
+  system: string
+  rank: string
+  change: string
+}
+
+export interface TimelineEventCanonPayload {
+  layer: 'original' | 'novel'
+  event_year: number | null
+  title: string
+  summary: string
+}
+
+export type CanonPayload =
+  | CharacterStateCanonPayload
+  | RelationshipCanonPayload
+  | ResourceStateCanonPayload
+  | LocationStateCanonPayload
+  | CharacterKnowledgeCanonPayload
+  | FutureKnowledgeCanonPayload
+  | StoryThreadCanonPayload
+  | ProgressionCanonPayload
+  | TimelineEventCanonPayload
+
+export interface CanonEvidence {
+  approval_version_id: string
+  chapter_id: string
+  chapter_revision: number
+  chapter_content_sha256: string
+  start_char: number
+  end_char: number
+  excerpt: string
+  excerpt_sha256: string
+}
+
+export interface CanonConflict {
+  kind: 'duplicate' | 'supersedes' | 'inconsistent'
+  summary: string
+  existing_record_id: string | null
+}
+
+export interface ChapterApproval {
+  id: string
+  project_id: string
+  chapter_id: string
+  chapter_revision: number
+  chapter_content_sha256: string
+  chapter_version_id: string
+  source_writing_outcome_id: string | null
+  created_at: string
+}
+
+export interface CanonReconciliation {
+  id: string
+  approval_id: string
+  project_id: string
+  chapter_id: string
+  job_id: string
+  state: CanonReconciliationState
+  revision: number
+  context_packet_id: string | null
+  context_packet_sha256: string | null
+  context_dependency_fingerprint_sha256: string | null
+  preference_skip_reason: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+export interface CanonDeltaCandidate {
+  id: string
+  reconciliation_id: string
+  project_id: string
+  ordinal: number
+  kind: CanonKind
+  subject_key: string
+  summary: string
+  payload: CanonPayload
+  payload_sha256: string
+  evidence: CanonEvidence
+  evidence_sha256: string
+  conflicts: CanonConflict[]
+  state: CanonCandidateState
+  revision: number
+  rejection_reason: string | null
+  accepted_record_id: string | null
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface AuthorPreferenceCandidate {
+  id: string
+  reconciliation_id: string
+  project_id: string
+  ordinal: number
+  scope_kind: PreferenceScopeKind
+  scope_value: string
+  dimension: AuthorPreferenceDimension
+  compact_rule: string
+  rule_sha256: string
+  confidence: number
+  comparison_metrics: Record<string, number | string | boolean>
+  source_writing_outcome_id: string
+  source_candidate_version_id: string
+  candidate_content_sha256: string
+  final_content_sha256: string
+  state: PreferenceCandidateState
+  revision: number
+  rejection_reason: string | null
+  confirmed_preference_id: string | null
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface AuthorPreference {
+  id: string
+  project_id: string
+  scope_kind: PreferenceScopeKind
+  scope_value: string
+  dimension: AuthorPreferenceDimension
+  compact_rule: string
+  rule_sha256: string
+  fingerprint_sha256: string
+  confidence: number
+  occurrence_count: number
+  state: 'active' | 'deleted'
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RollingPlanReplenishment {
+  id: string
+  project_id: string
+  reconciliation_id: string
+  source_decision_batch_id: string | null
+  source_chapter_id: string
+  source_canon_record_ids: string[]
+  state: 'candidate' | 'adopted' | 'rejected' | 'stale' | 'not_needed'
+  revision: number
+  volume_plan_id: string | null
+  base_blueprint_id: string | null
+  base_blueprint_revision: number | null
+  base_blueprint_content_sha256: string | null
+  protected_chapter_numbers: number[]
+  plans: RollingChapterPlanContent[]
+  plans_sha256: string
+  blocked_reason: string | null
+  adoption_idempotency_key: string | null
+  created_at: string
+  updated_at: string
+  decided_at: string | null
+}
+
+export interface CanonReconciliationSnapshot {
+  approval: ChapterApproval
+  reconciliation: CanonReconciliation
+  canon_candidates: CanonDeltaCandidate[]
+  preference_candidates: AuthorPreferenceCandidate[]
+  rolling_plan_replenishment: RollingPlanReplenishment | null
+}
+
+export interface CanonCandidateDecisionInput {
+  candidate_id: string
+  expected_revision: number
+  action: CanonDecisionAction
+  edited_subject_key?: string
+  edited_summary?: string
+  edited_payload?: CanonPayload
+  rejection_reason?: string
+}
+
+export interface PreferenceCandidateDecisionInput {
+  candidate_id: string
+  expected_revision: number
+  action: CanonDecisionAction
+  edited_scope_kind?: PreferenceScopeKind
+  edited_scope_value?: string
+  edited_dimension?: AuthorPreferenceDimension
+  edited_compact_rule?: string
+  edited_confidence?: number
+  rejection_reason?: string
+}
+
+export interface CanonDecisionBatchInput {
+  reconciliation_id: string
+  expected_reconciliation_revision: number
+  idempotency_key: string
+  canon_decisions: CanonCandidateDecisionInput[]
+  preference_decisions: PreferenceCandidateDecisionInput[]
+}
+
+export interface CanonDecisionBatchResult {
+  batch_id: string
+  reconciliation_id: string
+  reconciliation_revision: number
+  replayed: boolean
+  accepted_canon_record_ids: string[]
+  confirmed_preference_ids: string[]
+  rejected_candidate_ids: string[]
+  rolling_plan_replenishment_id: string | null
 }

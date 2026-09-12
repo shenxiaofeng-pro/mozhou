@@ -173,12 +173,16 @@ class ReviewRepository:
     ) -> Chapter:
         timestamp = _now_iso()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             chapter = connection.execute(
                 "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
             ).fetchone()
             if chapter is None:
                 raise ReviewNotFoundError(chapter_id)
-            if int(chapter["revision"]) != request.expected_revision:
+            if (
+                int(chapter["revision"]) != request.expected_revision
+                or chapter["status"] == ChapterStatus.APPROVED.value
+            ):
                 raise StaleReviewRevisionError(str(chapter["revision"]))
             target = connection.execute(
                 """
@@ -190,11 +194,11 @@ class ReviewRepository:
             if target is None:
                 raise ReviewNotFoundError(version_id)
             new_revision = request.expected_revision + 1
-            connection.execute(
+            result = connection.execute(
                 """
                 UPDATE chapters
                 SET content = ?, status = ?, revision = ?, updated_at = ?
-                WHERE id = ? AND revision = ?
+                WHERE id = ? AND revision = ? AND status != ?
                 """,
                 (
                     target["content"],
@@ -203,8 +207,11 @@ class ReviewRepository:
                     timestamp,
                     chapter_id,
                     request.expected_revision,
+                    ChapterStatus.APPROVED.value,
                 ),
             )
+            if result.rowcount != 1:
+                raise StaleReviewRevisionError(str(chapter["revision"]))
             self.append_chapter_version(
                 connection,
                 chapter_id=chapter_id,
@@ -504,6 +511,7 @@ class ReviewRepository:
                 or int(chapter["revision"]) != int(change_set["base_chapter_revision"])
                 or _content_sha256(str(chapter["content"]))
                 != change_set["base_content_sha256"]
+                or chapter["status"] == ChapterStatus.APPROVED.value
             ):
                 raise StaleReviewRevisionError(str(chapter["revision"]))
             changes = connection.execute(
@@ -532,7 +540,7 @@ class ReviewRepository:
                 """
                 UPDATE chapters
                 SET content = ?, status = ?, revision = ?, updated_at = ?
-                WHERE id = ? AND revision = ?
+                WHERE id = ? AND revision = ? AND status != ?
                 """,
                 (
                     content,
@@ -541,6 +549,7 @@ class ReviewRepository:
                     timestamp,
                     chapter["id"],
                     request.expected_chapter_revision,
+                    ChapterStatus.APPROVED.value,
                 ),
             )
             if result.rowcount != 1:

@@ -11,6 +11,9 @@ from app.models import BookBlueprintField, ReviewDimension
 _LEGACY_CONTEXT_COMPILER_VERSIONS = frozenset(
     {"rule-compiler-v1", "rule-compiler-v2", "rule-compiler-v3"}
 )
+_CREATIVE_CONTEXT_COMPILER_VERSIONS = frozenset(
+    {"creative-context-v1", "creative-context-v2"}
+)
 
 
 def _canonical_json(value: object) -> str:
@@ -39,6 +42,7 @@ class CreativeContextPurpose(StrEnum):
     DRAFT = "draft"
     CANDIDATE_REVIEW = "candidate_review"
     CANON_RECONCILIATION = "canon_reconciliation"
+    PREFERENCE = "preference"
 
 
 class CreativeContextSubjectKind(StrEnum):
@@ -65,14 +69,35 @@ class ContextDependencyRef(BaseModel):
 
 
 class ContextDependencySnapshot(BaseModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     topic: ContextDependencyRef | None = None
     writing_pattern_profile: ContextDependencyRef | None = None
     writing_pattern_source_availability: Literal[
         "source_verified", "abstract_only"
     ] | None = None
     base_blueprint: ContextDependencyRef | None = None
+    canon_state: ContextDependencyRef | None = None
+    author_preference_state: ContextDependencyRef | None = None
     subject_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_versioned_dependencies(self) -> ContextDependencySnapshot:
+        if self.schema_version == 1 and (
+            self.canon_state is not None or self.author_preference_state is not None
+        ):
+            raise ValueError("旧版上下文依赖不能包含 Canon 或作者偏好状态")
+        if self.schema_version == 2 and (
+            self.canon_state is None or self.author_preference_state is None
+        ):
+            raise ValueError("新版上下文依赖缺少 Canon 或作者偏好状态")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        payload = self.model_dump(mode="json")
+        if self.schema_version == 1:
+            payload.pop("canon_state", None)
+            payload.pop("author_preference_state", None)
+        return payload
 
 
 class ContextTier(StrEnum):
@@ -103,6 +128,8 @@ class ContextItemKind(StrEnum):
     APPROVED_BLUEPRINT = "approved_blueprint"
     BOOK_BLUEPRINT = "book_blueprint"
     ROLLING_CHAPTER_PLAN = "rolling_chapter_plan"
+    CANON_RECORD = "canon_record"
+    AUTHOR_PREFERENCE = "author_preference"
 
 
 class ContextDirectiveAction(StrEnum):
@@ -251,7 +278,7 @@ class ContextPacket(BaseModel):
         ):
             raise ValueError("写作模式指纹与依赖快照不匹配")
         if self.dependency_fingerprint_sha256 != _canonical_sha256(
-            self.dependency_snapshot.model_dump(mode="json")
+            self.dependency_snapshot.canonical_payload()
         ):
             raise ValueError("上下文依赖指纹不匹配")
         expected_rendered_context = self._expected_rendered_context()
@@ -271,7 +298,7 @@ class ContextPacket(BaseModel):
         return self
 
     def _expected_source_fingerprint(self) -> str | None:
-        if self.compiler_version == "creative-context-v1" or (
+        if self.compiler_version in _CREATIVE_CONTEXT_COMPILER_VERSIONS or (
             self.compiler_version in _LEGACY_CONTEXT_COMPILER_VERSIONS
             and "restored_dependency_snapshot" in self.blocking_reasons
         ):
@@ -280,7 +307,7 @@ class ContextPacket(BaseModel):
                     "compiler_version": self.compiler_version,
                     "purpose": self.purpose.value,
                     "subject": self.subject.model_dump(mode="json"),
-                    "dependencies": self.dependency_snapshot.model_dump(mode="json"),
+                    "dependencies": self.dependency_snapshot.canonical_payload(),
                     "items": [item.model_dump(mode="json") for item in self.items],
                 }
             )
@@ -292,7 +319,7 @@ class ContextPacket(BaseModel):
         raise ValueError("不支持的上下文编译器版本")
 
     def _expected_packet_fingerprint(self) -> str:
-        if self.compiler_version == "creative-context-v1" or (
+        if self.compiler_version in _CREATIVE_CONTEXT_COMPILER_VERSIONS or (
             self.compiler_version in _LEGACY_CONTEXT_COMPILER_VERSIONS
             and "restored_dependency_snapshot" in self.blocking_reasons
         ):
@@ -332,7 +359,7 @@ class ContextPacket(BaseModel):
         raise ValueError("不支持的上下文编译器版本")
 
     def _expected_rendered_context(self) -> str:
-        if self.compiler_version == "creative-context-v1":
+        if self.compiler_version in _CREATIVE_CONTEXT_COMPILER_VERSIONS:
             return self._render_creative_context_v1()
         if self.compiler_version in _LEGACY_CONTEXT_COMPILER_VERSIONS:
             return self._render_legacy_rule_compiler()
@@ -422,7 +449,7 @@ class ContextPacket(BaseModel):
 
 
 class CreativeContextCompileRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     purpose: CreativeContextPurpose
     subject: CreativeContextSubject
@@ -444,7 +471,7 @@ class CreativeContextCompileRequest(BaseModel):
 
 
 class CompileContextRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     author_intent: str = Field(default="", max_length=1000)
@@ -472,7 +499,7 @@ class ContextDirective(BaseModel):
 
 
 class ContextDirectiveRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     source_kind: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_]*$")
     source_id: str = Field(min_length=1, max_length=200)

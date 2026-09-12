@@ -272,7 +272,11 @@ class PlanRebaseRepository:
                         id=plan.id,
                         expected_revision=plan.revision,
                         locked=plan.locked,
-                        content=VolumePlanContent.model_validate(plan.model_dump()),
+                        content=VolumePlanContent.model_validate(
+                            plan.model_dump(
+                                include=set(VolumePlanContent.model_fields)
+                            )
+                        ),
                     )
                     for plan in volume_plans
                 ],
@@ -282,7 +286,9 @@ class PlanRebaseRepository:
                         expected_revision=plan.revision,
                         locked=plan.locked,
                         content=RollingChapterPlanContent.model_validate(
-                            plan.model_dump()
+                            plan.model_dump(
+                                include=set(RollingChapterPlanContent.model_fields)
+                            )
                         ),
                     )
                     for plan in rolling_plans
@@ -845,7 +851,9 @@ class PlanRebaseRepository:
         for volume_draft in candidate.volume_plans:
             row = rows[volume_draft.id]
             previous = DirectorRepository.parse_volume_plan(row)
-            previous_content = VolumePlanContent.model_validate(previous.model_dump())
+            previous_content = VolumePlanContent.model_validate(
+                previous.model_dump(include=set(VolumePlanContent.model_fields))
+            )
             if volume_draft.content.volume_number != previous.volume_number:
                 raise PlanRebaseConflictError("rebase_candidate_changed")
             if previous.locked and volume_draft.content.model_dump(
@@ -884,7 +892,9 @@ class PlanRebaseRepository:
             row = rows[rolling_draft.id]
             previous = DirectorRepository.parse_rolling_plan(row)
             previous_content = RollingChapterPlanContent.model_validate(
-                previous.model_dump()
+                previous.model_dump(
+                    include=set(RollingChapterPlanContent.model_fields)
+                )
             )
             if rolling_draft.content.chapter_number != previous.chapter_number:
                 raise PlanRebaseConflictError("rebase_candidate_changed")

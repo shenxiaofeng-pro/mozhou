@@ -261,7 +261,7 @@ class ContextCompiler:
             ),
             dependency_snapshot=dependency_snapshot,
             dependency_fingerprint_sha256=_sha256(
-                _canonical_json(dependency_snapshot.model_dump(mode="json"))
+                _canonical_json(dependency_snapshot.canonical_payload())
             ),
             compiler_version=self.compiler_version,
             token_budget=token_budget,

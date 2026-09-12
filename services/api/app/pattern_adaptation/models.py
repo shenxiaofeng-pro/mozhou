@@ -255,6 +255,8 @@ class AdoptPatternAdaptationResult(BaseModel):
 
 
 class RunPatternOriginalityGuardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_blueprint_revision: int = Field(ge=0)
     expected_blueprint_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_profile_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

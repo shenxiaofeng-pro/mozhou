@@ -36,7 +36,10 @@ from app.writing_patterns.repository import (
     WritingPatternRepository,
 )
 
-CREATIVE_CONTEXT_COMPILER_VERSION = "creative-context-v1"
+CREATIVE_CONTEXT_COMPILER_VERSION = "creative-context-v2"
+_FEEDBACK_STATE_TABLES = frozenset(
+    {"canon_records", "author_preferences", "author_preference_candidates"}
+)
 
 
 class CreativeContextBlockedError(ValueError):
@@ -146,6 +149,7 @@ class CreativeContextService:
             CreativeContextPurpose.DRAFT,
             CreativeContextPurpose.CANDIDATE_REVIEW,
             CreativeContextPurpose.CANON_RECONCILIATION,
+            CreativeContextPurpose.PREFERENCE,
         }:
             packet = self._compile_chapter(
                 workspace,
@@ -224,9 +228,17 @@ class CreativeContextService:
             directives=self.contexts.list_directives(chapter.id),
         )
         items = [self._safe_item(item, protected_titles) for item in base.items]
+        items.extend(
+            self._feedback_items(
+                workspace,
+                chapter_id=chapter.id,
+                protected_titles=protected_titles,
+            )
+        )
         if request.purpose in {
             CreativeContextPurpose.CANDIDATE_REVIEW,
             CreativeContextPurpose.CANON_RECONCILIATION,
+            CreativeContextPurpose.PREFERENCE,
         }:
             items = [
                 item
@@ -246,7 +258,12 @@ class CreativeContextService:
                     label=(
                         "审校正文窗口"
                         if request.purpose == CreativeContextPurpose.CANDIDATE_REVIEW
-                        else "正文事实回流窗口"
+                        else (
+                            "正文事实回流窗口"
+                            if request.purpose
+                            == CreativeContextPurpose.CANON_RECONCILIATION
+                            else "作者调整对照窗口"
+                        )
                     ),
                     value={
                         "window_size": request.window_size,
@@ -271,7 +288,7 @@ class CreativeContextService:
                     },
                     priority=10_000,
                     required=True,
-                    selection_reason="审校与事实回流必须基于冻结的精确正文窗口",
+                    selection_reason="审校、事实回流与偏好提炼必须基于冻结的精确正文窗口",
                     protected_titles=protected_titles,
                 )
             )
@@ -521,6 +538,13 @@ class CreativeContextService:
                     protected_titles=protected_titles,
                 )
             )
+        items.extend(
+            self._feedback_items(
+                workspace,
+                chapter_id=None,
+                protected_titles=protected_titles,
+            )
+        )
         blocking: list[str] = []
         required_profile_tokens = 0
         if profile is not None:
@@ -612,6 +636,202 @@ class CreativeContextService:
             }
         )
 
+    def _feedback_items(
+        self,
+        workspace: Workspace,
+        *,
+        chapter_id: str | None,
+        protected_titles: tuple[str, ...],
+    ) -> list[ContextItem]:
+        """Return only confirmed, compact feedback; candidates and evidence stay isolated."""
+
+        with self.projects.database.connect() as connection:
+            canon_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(canon_records)")
+            }
+            preference_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(author_preferences)")
+            }
+            canon_rows = (
+                connection.execute(
+                    """
+                    SELECT kind, subject_key, payload_json, revision
+                    FROM canon_records
+                    WHERE project_id = ? AND state = 'active'
+                    ORDER BY kind, subject_key, id
+                    LIMIT 100
+                    """,
+                    (workspace.project.id,),
+                ).fetchall()
+                if {
+                    "project_id",
+                    "kind",
+                    "subject_key",
+                    "payload_json",
+                    "revision",
+                    "state",
+                }.issubset(canon_columns)
+                else []
+            )
+            preference_rows = (
+                connection.execute(
+                    """
+                    SELECT * FROM author_preferences
+                    WHERE project_id = ? AND state IN ('active', 'confirmed')
+                    ORDER BY dimension, id
+                    LIMIT 100
+                    """,
+                    (workspace.project.id,),
+                ).fetchall()
+                if {"project_id", "dimension", "compact_rule", "state"}.issubset(
+                    preference_columns
+                )
+                else []
+            )
+
+        items: list[ContextItem] = []
+        canon: list[dict[str, object]] = []
+        for row in canon_rows:
+            try:
+                payload: object = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            canon.append(
+                {
+                    "kind": str(row["kind"]),
+                    "subject": str(row["subject_key"]),
+                    "state": payload,
+                    "revision": int(row["revision"]),
+                }
+            )
+        if canon:
+            items.append(
+                self._make_item(
+                    item_id="canon:reconciled-state",
+                    kind=ContextItemKind.CANON_RECORD,
+                    tier=ContextTier.CANON,
+                    label="作者确认的定稿事实",
+                    value={"records": canon},
+                    priority=9_400,
+                    required=False,
+                    selection_reason="只回流作者确认过的结构化定稿事实，不包含候选或证据原文",
+                    protected_titles=protected_titles,
+                )
+            )
+
+        preferences: list[dict[str, object]] = []
+        for row in preference_rows:
+            row_keys = set(row.keys())
+            scope_kind = str(
+                row["scope_kind"]
+                if "scope_kind" in row_keys
+                else row["scope_type"]
+                if "scope_type" in row_keys
+                else "project"
+            )
+            scope_value = (
+                str(row["scope_value"])
+                if "scope_value" in row_keys and row["scope_value"] is not None
+                else None
+            )
+            if scope_kind == "genre" and scope_value != workspace.project.genre.value:
+                continue
+            if scope_kind == "chapter" and scope_value != chapter_id:
+                continue
+            if scope_kind not in {"project", "genre", "chapter"}:
+                continue
+            preferences.append(
+                {
+                    "scope": scope_kind,
+                    "dimension": str(row["dimension"]),
+                    "rule": str(row["compact_rule"]),
+                    "confidence": (
+                        float(row["confidence"])
+                        if "confidence" in row_keys
+                        else None
+                    ),
+                    "occurrence_count": (
+                        int(row["occurrence_count"])
+                        if "occurrence_count" in row_keys
+                        else 1
+                    ),
+                }
+            )
+        if preferences:
+            items.append(
+                self._make_item(
+                    item_id="current:confirmed-author-preferences",
+                    kind=ContextItemKind.AUTHOR_PREFERENCE,
+                    tier=ContextTier.CURRENT_STATE,
+                    label="作者已确认的写作偏好",
+                    value={"rules": preferences[:50]},
+                    priority=9_300,
+                    required=False,
+                    selection_reason="只使用作者显式确认的抽象规则，不传递历史正文差异",
+                    protected_titles=protected_titles,
+                )
+            )
+        return items
+
+    def _aggregate_dependency(
+        self,
+        project_id: str,
+        prefix: str,
+        tables: tuple[str, ...],
+    ) -> ContextDependencyRef:
+        """Fingerprint feedback state without copying bodies, evidence, or model payloads."""
+
+        allowed = {
+            "id",
+            "kind",
+            "subject_key",
+            "payload_sha256",
+            "rule_sha256",
+            "fingerprint_sha256",
+            "scope_kind",
+            "scope_type",
+            "scope_value",
+            "dimension",
+            "state",
+            "decision",
+            "revision",
+            "occurrence_count",
+        }
+        state: dict[str, list[dict[str, object]]] = {}
+        revision = 0
+        with self.projects.database.connect() as connection:
+            for table in tables:
+                if table not in _FEEDBACK_STATE_TABLES:
+                    raise ValueError("unsupported feedback state table")
+                columns = {
+                    str(row[1])
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if "project_id" not in columns:
+                    state[table] = []
+                    continue
+                rows = connection.execute(
+                    f"SELECT * FROM {table} WHERE project_id = ? ORDER BY id",
+                    (project_id,),
+                ).fetchall()
+                values: list[dict[str, object]] = []
+                for row in rows:
+                    value = {
+                        key: row[key]
+                        for key in sorted(allowed.intersection(row.keys()))
+                    }
+                    values.append(value)
+                    if "revision" in row and row["revision"] is not None:
+                        revision += int(row["revision"])
+                revision += len(values)
+                state[table] = values
+        return ContextDependencyRef(
+            id=f"{prefix}:{project_id}",
+            revision=revision,
+            content_sha256=canonical_sha256(state),
+        )
+
     def _profile_item(
         self,
         profile: WritingPatternProfileVersion,
@@ -627,6 +847,7 @@ class CreativeContextService:
             CreativeContextPurpose.DRAFT: WritingPatternStage.CHAPTER_DRAFT,
             CreativeContextPurpose.CANDIDATE_REVIEW: WritingPatternStage.REVIEW,
             CreativeContextPurpose.CANON_RECONCILIATION: WritingPatternStage.REVIEW,
+            CreativeContextPurpose.PREFERENCE: WritingPatternStage.REVIEW,
         }[purpose]
         availability = self._profile_safety_basis(profile)
         rules = []
@@ -948,13 +1169,23 @@ class CreativeContextService:
         if subject.content_sha256 is None:
             raise ValueError("creative_context_subject_changed")
         return ContextDependencySnapshot(
-            schema_version=1,
+            schema_version=2,
             topic=topic_ref,
             writing_pattern_profile=profile_ref,
             writing_pattern_source_availability=(
                 self._profile_safety_basis(profile).value if profile is not None else None
             ),
             base_blueprint=blueprint_ref,
+            canon_state=self._aggregate_dependency(
+                workspace.project.id,
+                "canon-state",
+                ("canon_records",),
+            ),
+            author_preference_state=self._aggregate_dependency(
+                workspace.project.id,
+                "author-preference-state",
+                ("author_preferences", "author_preference_candidates"),
+            ),
             subject_sha256=subject.content_sha256,
         )
 
@@ -1003,6 +1234,7 @@ class CreativeContextService:
             if request.purpose in {
                 CreativeContextPurpose.CANDIDATE_REVIEW,
                 CreativeContextPurpose.CANON_RECONCILIATION,
+                CreativeContextPurpose.PREFERENCE,
             }:
                 digest = canonical_sha256(
                     {
@@ -1061,6 +1293,7 @@ class CreativeContextService:
         if packet.purpose not in {
             CreativeContextPurpose.CANDIDATE_REVIEW,
             CreativeContextPurpose.CANON_RECONCILIATION,
+            CreativeContextPurpose.PREFERENCE,
         }:
             return 3
         expected_id = f"current:{packet.purpose.value}-window"
@@ -1084,6 +1317,7 @@ class CreativeContextService:
             CreativeContextPurpose.DRAFT: CreativeContextSubjectKind.CHAPTER,
             CreativeContextPurpose.CANDIDATE_REVIEW: CreativeContextSubjectKind.CHAPTER,
             CreativeContextPurpose.CANON_RECONCILIATION: CreativeContextSubjectKind.CHAPTER,
+            CreativeContextPurpose.PREFERENCE: CreativeContextSubjectKind.CHAPTER,
         }[request.purpose]
         if request.subject.kind != expected:
             raise ValueError("purpose_subject_mismatch")

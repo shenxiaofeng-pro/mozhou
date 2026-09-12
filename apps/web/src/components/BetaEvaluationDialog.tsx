@@ -38,6 +38,11 @@ function formatCost(microusd: number) {
   return `$${(microusd / 1_000_000).toFixed(3)}`
 }
 
+function formatAdjustmentTypes(report: BetaEvaluationReport) {
+  const counts = report.metrics.manual_adjustment_type_counts
+  return `原样 ${counts.accepted_as_is} · 轻改 ${counts.light_edit} · 大改 ${counts.substantial_edit} · 重写 ${counts.rewrite} · 局部采用 ${counts.partial_adoption}`
+}
+
 export function BetaEvaluationDialog({ project, onClose }: BetaEvaluationDialogProps) {
   const [report, setReport] = useState<BetaEvaluationReport | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -156,14 +161,34 @@ export function BetaEvaluationDialog({ project, onClose }: BetaEvaluationDialogP
               </div>
               <dl>
                 <div><dt>已写章节</dt><dd>{report.metrics.written_chapter_count}</dd></div>
+                <div><dt>最长连续完成</dt><dd>{report.metrics.longest_consecutive_written_chapters} 章</dd></div>
                 <div><dt>定稿章节</dt><dd>{report.metrics.approved_chapter_count}</dd></div>
                 <div><dt>候选采用率</dt><dd>{formatRate(report.metrics.ai_adoption_rate)}</dd></div>
+                <div><dt>AI 正文保留率</dt><dd>{formatRate(report.metrics.mean_ai_text_retention_rate)}</dd></div>
                 <div><dt>人工修改比例</dt><dd>{formatRate(report.metrics.mean_manual_modification_ratio)}</dd></div>
+                <div><dt>人工调整分布</dt><dd>{formatAdjustmentTypes(report)}</dd></div>
                 <div><dt>审校接受率</dt><dd>{formatRate(report.metrics.review_acceptance_rate)}</dd></div>
                 <div><dt>失败恢复率</dt><dd>{formatRate(report.metrics.retry_recovery_rate)}</dd></div>
                 <div><dt>模型成本估算</dt><dd>{formatCost(report.metrics.estimated_cost_microusd)}</dd></div>
                 <div><dt>开放严重问题</dt><dd>{report.metrics.open_critical_findings}</dd></div>
               </dl>
+            </section>
+
+            <section className="beta-metrics" aria-labelledby="beta-ratings-title">
+              <div>
+                <p>SUBJECTIVE RATINGS / 单独口径</p>
+                <h3 id="beta-ratings-title">作者主观评分</h3>
+              </div>
+              {report.subjective_ratings.length > 0 ? (
+                <dl>
+                  {report.subjective_ratings.map((rating) => (
+                    <div key={`${rating.category}-${rating.context}`}>
+                      <dt>{categoryLabels[rating.category]} · {contextLabels[rating.context]}</dt>
+                      <dd>{rating.mean_rating.toFixed(1)} / 5（{rating.response_count} 次）</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : <p>尚无主观评分；系统指标不会自动代替作者评价。</p>}
             </section>
 
             <form className="beta-feedback-form" onSubmit={(event) => { void submitFeedback(event) }}>

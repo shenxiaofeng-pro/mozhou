@@ -4,9 +4,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from sqlite3 import Connection, IntegrityError, Row
-from typing import cast
+from typing import Literal, cast
 from uuid import uuid4
 
+from app.author_navigation import (
+    ReconciliationCheckpoint,
+    RollingPlanCheckpoint,
+    build_author_next_action,
+)
 from app.continuity import enrich_serial_control
 from app.creative_safety import CreativeSafetyGate, CreativeSafetyProvenance
 from app.database import Database
@@ -490,6 +495,48 @@ class ProjectRepository:
                 """,
                 (project_id, project_id),
             ).fetchall()
+            has_reconciliation_schema = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'canon_reconciliations'
+                """
+            ).fetchone()
+            if has_reconciliation_schema is not None:
+                reconciliation_row = connection.execute(
+                    """
+                    SELECT reconciliation.id, reconciliation.chapter_id,
+                           reconciliation.state
+                    FROM canon_reconciliations reconciliation
+                    JOIN chapters chapter ON chapter.id = reconciliation.chapter_id
+                    WHERE reconciliation.project_id = ?
+                      AND reconciliation.state IN ('pending', 'ready', 'failed')
+                      AND chapter.deleted_at IS NULL
+                    ORDER BY
+                      CASE reconciliation.state WHEN 'ready' THEN 0 ELSE 1 END,
+                      chapter.chapter_number,
+                      reconciliation.created_at,
+                      reconciliation.id
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+                rolling_replenishment_row = connection.execute(
+                    """
+                    SELECT replenishment.id, replenishment.source_chapter_id
+                    FROM rolling_plan_replenishments replenishment
+                    JOIN chapters chapter ON chapter.id = replenishment.source_chapter_id
+                    WHERE replenishment.project_id = ?
+                      AND replenishment.state = 'candidate'
+                      AND chapter.deleted_at IS NULL
+                    ORDER BY chapter.chapter_number, replenishment.created_at,
+                             replenishment.id
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+            else:
+                reconciliation_row = None
+                rolling_replenishment_row = None
         changes_by_set: dict[str, list[FactChange]] = {}
         for row in change_rows:
             changes_by_set.setdefault(row["change_set_id"], []).append(self._fact_change(row))
@@ -500,13 +547,47 @@ class ProjectRepository:
             )
         from app.topic_decisions import parse_topic_decision, project_next_action
 
+        chapters = (
+            [self._chapter(row) for row in chapter_rows]
+            if include_chapter_content
+            else [self._chapter_summary(row) for row in chapter_rows]
+        )
+        rolling_plans = [
+            DirectorRepository.parse_rolling_plan(row) for row in rolling_plan_rows
+        ]
+        legacy_next_action = project_next_action(
+            topic_decision_row,
+            has_blueprint=book_blueprint_row is not None,
+            has_manuscript=any(
+                bool(str(row["content"]).strip())
+                if include_chapter_content
+                else bool(row["has_content"])
+                for row in chapter_rows
+            ),
+        )
+        reconciliation = (
+            ReconciliationCheckpoint(
+                id=str(reconciliation_row["id"]),
+                chapter_id=str(reconciliation_row["chapter_id"]),
+                state=cast(
+                    Literal["pending", "ready", "failed"],
+                    str(reconciliation_row["state"]),
+                ),
+            )
+            if reconciliation_row is not None
+            else None
+        )
+        rolling_replenishment = (
+            RollingPlanCheckpoint(
+                id=str(rolling_replenishment_row["id"]),
+                source_chapter_id=str(rolling_replenishment_row["source_chapter_id"]),
+            )
+            if rolling_replenishment_row is not None
+            else None
+        )
         workspace_payload: dict[str, object] = {
             "project": self._project(project_row),
-            "chapters": (
-                [self._chapter(row) for row in chapter_rows]
-                if include_chapter_content
-                else [self._chapter_summary(row) for row in chapter_rows]
-            ),
+            "chapters": chapters,
             "manuscript_volumes": [
                 ManuscriptVolume.model_validate(dict(row))
                 for row in manuscript_volume_rows
@@ -549,20 +630,16 @@ class ProjectRepository:
                 if topic_decision_row is not None
                 else None
             ),
-            "next_action": project_next_action(
-                topic_decision_row,
-                has_blueprint=book_blueprint_row is not None,
-                has_manuscript=any(
-                    bool(str(row["content"]).strip())
-                    if include_chapter_content
-                    else bool(row["has_content"])
-                    for row in chapter_rows
-                ),
+            "next_action": legacy_next_action,
+            "author_next_action": build_author_next_action(
+                legacy_action=legacy_next_action,
+                chapters=chapters,
+                rolling_plans=rolling_plans,
+                reconciliation=reconciliation,
+                rolling_replenishment=rolling_replenishment,
             ),
             "volume_plans": [DirectorRepository.parse_volume_plan(row) for row in volume_plan_rows],
-            "rolling_chapter_plans": [
-                DirectorRepository.parse_rolling_plan(row) for row in rolling_plan_rows
-            ],
+            "rolling_chapter_plans": rolling_plans,
         }
         if include_chapter_content:
             return enrich_serial_control(Workspace.model_validate(workspace_payload))
@@ -2903,6 +2980,34 @@ class ProjectRepository:
         chapter_id: str,
         request: TransitionChapterRequest,
     ) -> Chapter:
+        if request.target_status == ChapterStatus.APPROVED:
+            from app.canon_reconciliation.repository import (
+                CanonReconciliationConflictError,
+                CanonReconciliationNotFoundError,
+                CanonReconciliationRepository,
+                CanonReconciliationStaleError,
+                text_sha256,
+            )
+
+            current = self.get_chapter(chapter_id)
+            try:
+                CanonReconciliationRepository(self.database).approve_chapter_and_enqueue(
+                    project_id=current.project_id,
+                    chapter_id=current.id,
+                    expected_revision=request.expected_revision,
+                    expected_content_sha256=(
+                        request.expected_content_sha256 or text_sha256(current.content)
+                    ),
+                    source_writing_outcome_id=request.source_writing_outcome_id,
+                )
+            except CanonReconciliationNotFoundError as error:
+                raise NotFoundError(chapter_id) from error
+            except CanonReconciliationStaleError as error:
+                raise StaleRevisionError(str(error)) from error
+            except CanonReconciliationConflictError as error:
+                raise InvalidChapterStateError(str(error)) from error
+            return self.get_chapter(chapter_id)
+
         timestamp = now_iso()
         with self.database.connect() as connection:
             row = connection.execute(

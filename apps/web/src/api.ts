@@ -27,6 +27,11 @@ import type {
   ChapterProductionPreflightCheck,
   ChapterProductionSnapshot,
   ChapterWritingOutcome,
+  CanonDecisionBatchInput,
+  CanonDecisionBatchResult,
+  CanonReconciliationSnapshot,
+  AuthorPreference,
+  RollingPlanReplenishment,
   ChapterVersion,
   CheckChapterPreflightInput,
   CraftPatternAnalysisJobInput,
@@ -1320,6 +1325,54 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     })
+  },
+  getLatestCanonReconciliation(projectId: string, chapterId: string) {
+    return request<CanonReconciliationSnapshot | null>(
+      `/api/projects/${encodeURIComponent(projectId)}/chapters/${encodeURIComponent(chapterId)}/canon-reconciliation/latest`,
+    )
+  },
+  decideCanonReconciliation(
+    projectId: string,
+    reconciliationId: string,
+    input: CanonDecisionBatchInput,
+  ) {
+    return request<CanonDecisionBatchResult>(
+      `/api/projects/${encodeURIComponent(projectId)}/canon-reconciliations/${encodeURIComponent(reconciliationId)}/decisions`,
+      { method: 'POST', body: JSON.stringify(input) },
+    )
+  },
+  listAuthorPreferences(projectId: string) {
+    return request<AuthorPreference[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/author-preferences`,
+    )
+  },
+  deleteAuthorPreference(projectId: string, preferenceId: string, expectedRevision: number) {
+    return request<AuthorPreference>(
+      `/api/projects/${encodeURIComponent(projectId)}/author-preferences/${encodeURIComponent(preferenceId)}`,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ expected_revision: expectedRevision }),
+      },
+    )
+  },
+  adoptRollingPlanReplenishment(
+    projectId: string,
+    replenishmentId: string,
+    expectedRevision: number,
+    expectedPlansSha256: string,
+    idempotencyKey: string,
+  ) {
+    return request<RollingPlanReplenishment>(
+      `/api/projects/${encodeURIComponent(projectId)}/rolling-plan-replenishments/${encodeURIComponent(replenishmentId)}/adopt`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          expected_revision: expectedRevision,
+          expected_plans_sha256: expectedPlansSha256,
+          idempotency_key: idempotencyKey,
+        }),
+      },
+    )
   },
   startGeneration(chapterId: string, expectedRevision: number) {
     return request<GenerationRun>(`/api/chapters/${encodeURIComponent(chapterId)}/generation-runs`, {

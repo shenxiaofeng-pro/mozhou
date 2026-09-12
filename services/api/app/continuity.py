@@ -33,7 +33,10 @@ def enrich_serial_control[WorkspaceType: (Workspace, WorkspaceSummary)](
     return workspace.model_copy(
         update={
             "continuity_issues": issues,
-            "resume_card": build_resume_card(workspace, issues),
+            "resume_card": build_resume_card(
+                workspace,
+                issues,
+            ),
         }
     )
 
@@ -206,6 +209,7 @@ def build_resume_card(
         ][:6],
         pending_reviews=pending_reviews,
         warning_count=sum(issue.severity == ContinuitySeverity.WARNING for issue in resolved_issues),
+        next_action=workspace.author_next_action,
     )
 
 

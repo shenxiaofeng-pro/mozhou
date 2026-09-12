@@ -33,6 +33,7 @@ from app.migrations import (
     v28,
     v29,
     v30,
+    v31,
 )
 
 MigrationUpgrade = Callable[[Connection, str], None]
@@ -107,6 +108,11 @@ MIGRATIONS = (
         version=30,
         name="chapter_production_workbench",
         upgrade=v30.upgrade,
+    ),
+    Migration(
+        version=31,
+        name="canon_reconciliation_and_author_preferences",
+        upgrade=v31.upgrade,
     ),
 )
 

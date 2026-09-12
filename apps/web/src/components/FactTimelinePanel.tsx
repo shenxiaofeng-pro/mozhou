@@ -1,6 +1,5 @@
 import type {
   Chapter,
-  FactChangeSet,
   FactKind,
   TimelineEvent,
   Workspace,
@@ -64,9 +63,7 @@ export function FactTimelinePanel({
   const [eventYear, setEventYear] = useState(String(workspace.project.rebirth_year))
   const [eventTitle, setEventTitle] = useState('')
   const [eventSummary, setEventSummary] = useState('')
-  const [excludedChangeIds, setExcludedChangeIds] = useState<string[]>([])
   const [isAddingEvent, setIsAddingEvent] = useState(false)
-  const [isProcessingFacts, setIsProcessingFacts] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const rebirthStory = isRebirthGenre(workspace.project.genre)
   const originalEvents = workspace.timeline_events.filter((event) => event.layer === 'original')
@@ -78,15 +75,6 @@ export function FactTimelinePanel({
     return current.at(-1) ?? null
   }, [chapter.id, chapter.revision, workspace.fact_change_sets])
   const chapterFacts = workspace.story_facts.filter((fact) => fact.source_chapter_id === chapter.id)
-  const selectedChangeIds = changeSet?.state === 'candidate'
-    ? changeSet.changes
-        .filter((change) => !excludedChangeIds.includes(change.id))
-        .map((change) => change.id)
-    : []
-
-  async function reloadWorkspace() {
-    onWorkspaceChanged(await api.getProject(workspace.project.id))
-  }
 
   async function addOriginalEvent() {
     const year = Number(eventYear)
@@ -112,122 +100,32 @@ export function FactTimelinePanel({
     }
   }
 
-  async function extractCandidateFacts() {
-    setIsProcessingFacts(true)
-    setError(null)
-    try {
-      const created = await api.createFactChangeSet(chapter.id)
-      onWorkspaceChanged({
-        ...workspace,
-        fact_change_sets: [
-          ...workspace.fact_change_sets.filter((item) => item.id !== created.id),
-          created,
-        ],
-      })
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '候选事实提取失败')
-    } finally {
-      setIsProcessingFacts(false)
-    }
-  }
-
-  async function applyCandidateFacts(activeChangeSet: FactChangeSet) {
-    if (selectedChangeIds.length === 0) return
-    setIsProcessingFacts(true)
-    setError(null)
-    try {
-      await api.applyFactChangeSet(activeChangeSet.id, {
-        selected_change_ids: selectedChangeIds,
-        expected_revision: activeChangeSet.revision,
-      })
-      await reloadWorkspace()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '候选事实回灌失败')
-    } finally {
-      setIsProcessingFacts(false)
-    }
-  }
-
-  async function rejectCandidateFacts(activeChangeSet: FactChangeSet) {
-    setIsProcessingFacts(true)
-    setError(null)
-    try {
-      await api.rejectFactChangeSet(activeChangeSet.id, activeChangeSet.revision)
-      await reloadWorkspace()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '候选事实状态更新失败')
-    } finally {
-      setIsProcessingFacts(false)
-    }
-  }
-
-  function toggleChange(changeId: string, selected: boolean) {
-    setExcludedChangeIds((current) => selected
-      ? current.filter((item) => item !== changeId)
-      : [...current, changeId])
-  }
-
   return (
     <>
-      <section className="fact-review-card" aria-labelledby="fact-review-title">
-        <div className="pulse-heading">
-          <h3 id="fact-review-title">定稿事实回灌</h3>
-          <span>{changeSet ? changeSetStateLabels[changeSet.state] : `${chapterFacts.length} 条已生效`}</span>
-        </div>
-        {chapter.status !== 'approved' ? (
-          <p className="fact-review-intro">章节批准定稿后，可提取本章改变的事实和新伏笔。</p>
-        ) : changeSet === null ? (
-          <>
-            <p className="fact-review-intro">先生成候选清单，正式事实不会被自动修改。</p>
-            <button
-              type="button"
-              className="fact-extract-action"
-              onClick={extractCandidateFacts}
-              disabled={isProcessingFacts}
-            >
-              {isProcessingFacts ? '正在提取…' : '提取候选事实'}
-            </button>
-          </>
-        ) : changeSet.state === 'candidate' ? (
-          <>
-            <p className="fact-review-intro">勾选要进入正式设定的变化；未勾选项不会写入。</p>
-            <div className="fact-candidate-list">
-              {changeSet.changes.map((change) => (
-                <label key={change.id}>
-                  <input
-                    type="checkbox"
-                    checked={selectedChangeIds.includes(change.id)}
-                    onChange={(event) => toggleChange(change.id, event.target.checked)}
-                  />
-                  <span>
-                    <small>{factKindLabels[change.kind]}</small>
-                    <strong>{change.content}</strong>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <div className="fact-review-actions">
-              <button
-                type="button"
-                onClick={() => rejectCandidateFacts(changeSet)}
-                disabled={isProcessingFacts}
-              >跳过本次</button>
-              <button
-                type="button"
-                className="state-primary"
-                onClick={() => applyCandidateFacts(changeSet)}
-                disabled={isProcessingFacts || selectedChangeIds.length === 0}
-              >{isProcessingFacts ? '正在回灌…' : `确认回灌 ${selectedChangeIds.length} 条`}</button>
-            </div>
-          </>
-        ) : (
+      {changeSet ? (
+        <section className="fact-review-card" aria-labelledby="legacy-fact-review-title">
+          <div className="pulse-heading">
+            <h3 id="legacy-fact-review-title">旧版事实回流记录</h3>
+            <span>{changeSetStateLabels[changeSet.state]}</span>
+          </div>
+          <p className="fact-review-intro">旧版候选仅供追溯；新的定稿事实请在上方“定稿回流审签”中处理。</p>
+          <div className="fact-candidate-list" aria-label="旧版事实候选">
+            {changeSet.changes.map((change) => (
+              <div key={change.id} className="legacy-fact-candidate">
+                <small>{factKindLabels[change.kind]}</small>
+                <strong>{change.content}</strong>
+              </div>
+            ))}
+          </div>
           <p className="fact-review-result">
             {changeSet.state === 'applied'
-              ? `本次已有 ${chapterFacts.length} 条事实进入正式设定。`
-              : '本次候选已跳过，没有改变正式设定。'}
+              ? `旧版记录中有 ${chapterFacts.length} 条事实已生效。`
+              : changeSet.state === 'rejected'
+                ? '这批旧版候选已跳过。'
+                : '这批旧版候选尚未处理，当前版本保持只读。'}
           </p>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       <section className="dual-timeline-card" aria-labelledby="dual-timeline-title">
         <div className="pulse-heading">

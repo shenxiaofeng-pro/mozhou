@@ -19,7 +19,7 @@ from app.models import (
 )
 from app.reference_lab import ReferenceAnalysisInput
 
-THRESHOLD_VERSION = "scene-plot-graph-v1"
+THRESHOLD_VERSION = "scene-plot-graph-v2"
 LEGAL_NOTICE = "场景语义与情节图检测用于创作风控，不是抄袭认定或法律结论。"
 
 _SPLIT_RE = re.compile(r"[\n；;。.!！？?、→>]+")
@@ -37,6 +37,115 @@ _SEMANTIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("公开场合", ("当众", "公开场合", "众人面前", "会上", "现场")),
     ("亲缘", ("父亲", "母亲", "家人", "兄弟", "姐妹", "亲属")),
     ("权力者", ("厂长", "老板", "领导", "官员", "主管", "掌权者")),
+    (
+        "境界提升",
+        (
+            "突破",
+            "破境",
+            "晋升",
+            "进阶",
+            "升阶",
+            "冲击境界",
+            "冲击筑基",
+            "渡劫",
+            "凝丹",
+            "结婴",
+        ),
+    ),
+    (
+        "修炼资源",
+        ("灵石", "丹药", "灵液", "灵脉", "妖丹", "魔晶", "法力"),
+    ),
+    (
+        "资源消耗",
+        ("耗用", "耗尽", "用尽", "燃尽", "支付", "付出", "失去", "消耗资源", "献出"),
+    ),
+    (
+        "能力代价",
+        (
+            "代价",
+            "反噬",
+            "寿元",
+            "寿命",
+            "记忆",
+            "经脉",
+            "经络",
+            "献祭",
+            "牺牲",
+            "灼伤",
+            "伤及",
+        ),
+    ),
+    (
+        "魔法施放",
+        ("施法", "施术", "念咒", "禁咒", "魔法", "法术", "血契"),
+    ),
+    (
+        "阵营组织",
+        (
+            "宗门",
+            "门派",
+            "教会",
+            "神殿",
+            "公会",
+            "行会",
+            "王国",
+            "议会",
+            "骑士团",
+            "圣庭",
+        ),
+    ),
+    (
+        "资源封锁",
+        ("封锁", "断供", "断绝供应", "夺走", "扣押", "禁止取用"),
+    ),
+    (
+        "种族身份",
+        (
+            "半精灵",
+            "混血精灵",
+            "矮人",
+            "兽人",
+            "龙裔",
+            "龙族",
+            "血族",
+            "种族",
+            "血脉",
+        ),
+    ),
+    (
+        "身份暴露",
+        ("身份公开", "身份暴露", "血脉揭露", "血脉被揭露", "显露真身", "揭开身份"),
+    ),
+    ("封印", ("封印", "封住", "镇压", "禁锢")),
+)
+
+_DISTINCTIVE_TERMS = frozenset(
+    {
+        "调查",
+        "揭示",
+        "背叛",
+        "证物",
+        "公开场合",
+        "亲缘",
+        "权力者",
+        "修炼资源",
+        "资源消耗",
+        "能力代价",
+        "魔法施放",
+        "阵营组织",
+        "资源封锁",
+        "种族身份",
+        "身份暴露",
+        "封印",
+    }
+)
+
+_COMMON_MOTIF_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("受到欺辱", "被欺辱", "受辱", "被轻视", "落魄", "废柴"),
+    ("意外获得力量", "觉醒力量", "得到能力", "奇遇", "获得传承"),
+    ("修炼升级", "提升境界", "变强", "升级", "苦练"),
+    ("反击敌人", "击败对手", "逆袭", "复仇", "获得胜利"),
 )
 
 
@@ -65,19 +174,35 @@ def _semantic_terms(value: str) -> list[str]:
     return semantic[:24]
 
 
+def _common_motif_count(beats: list[str]) -> int:
+    normalized = _normalize("。".join(beats))
+    return sum(
+        any(_normalize(variant) in normalized for variant in variants)
+        for variants in _COMMON_MOTIF_GROUPS
+    )
+
+
 def _edge_relation(source: str, target: str) -> str:
-    del source
     target_terms = set(_semantic_terms(target))
     for term, relation in (
+        ("能力代价", "ability_cost"),
+        ("身份暴露", "identity_reveal"),
+        ("资源封锁", "resource_lock"),
         ("失去", "resource_loss"),
         ("取得", "resource_gain"),
         ("背叛", "allegiance_shift"),
         ("合作", "alliance_shift"),
         ("揭示", "disclosure"),
         ("对抗", "conflict_escalation"),
+        ("境界提升", "progression"),
+        ("魔法施放", "magic_cast"),
+        ("封印", "containment"),
     ):
         if term in target_terms:
             return relation
+    source_terms = set(_semantic_terms(source))
+    if "阵营组织" in source_terms and "阵营组织" in target_terms:
+        return "faction_transition"
     return "leads_to"
 
 
@@ -102,7 +227,9 @@ def _candidate_beats(blueprint: ReferenceBlueprintState) -> list[str]:
         beats = [item.strip() for item in scene.key_beats if item.strip()]
         if beats:
             return beats[:40]
-        combined = f"{scene.generated_variant.summary}。{scene.generated_variant.transferable_logic}"
+        combined = (
+            f"{scene.generated_variant.summary}。{scene.generated_variant.transferable_logic}"
+        )
         beats = [item.strip() for item in _SPLIT_RE.split(combined) if item.strip()]
         if beats:
             return beats[:40]
@@ -214,6 +341,22 @@ def assess_scene_plot_graph(
     candidate_relationship = blueprint.relationship.generated_variant
     relationship_score = round(_similarity(candidate_relationship, source_relationship) * 100)
 
+    source_semantic_terms = {term for beat in source_texts for term in _semantic_terms(beat)}
+    candidate_semantic_terms = {term for beat in candidate for term in _semantic_terms(beat)}
+    distinctive_matches = source_semantic_terms & candidate_semantic_terms & _DISTINCTIVE_TERMS
+    generic_motif_only = (
+        _common_motif_count(source_texts) >= 3
+        and _common_motif_count(candidate) >= 3
+        and len(distinctive_matches) < 2
+    )
+    if generic_motif_only:
+        # A common genre spine (humiliation -> power -> growth -> counterattack)
+        # is not a distinctive scene graph. Exact prose remains covered by the
+        # separate phrase-overlap guard.
+        semantic_score = min(semantic_score, 20)
+        sequence_score = min(sequence_score, 20)
+        causal_score = min(causal_score, 20)
+
     findings: list[SceneOriginalityFinding] = []
     matched_source_ids = sorted({sid for _, _, ids in matched for sid in ids})
     if semantic_score >= 35:
@@ -284,7 +427,12 @@ def assess_scene_plot_graph(
             + relationship_score * 0.15
         ),
     )
-    if semantic_score >= 75 and sequence_score >= 65 or score >= 70:
+    distinctive_combination = (
+        len(distinctive_matches) >= 3 and sequence_score >= 60 and causal_score >= 50
+    )
+    if (
+        not generic_motif_only and (semantic_score >= 75 and sequence_score >= 65 or score >= 70)
+    ) or distinctive_combination:
         risk = OriginalityRiskLevel.HIGH
     elif semantic_score >= 40 or sequence_score >= 40 or score >= 38:
         risk = OriginalityRiskLevel.MEDIUM

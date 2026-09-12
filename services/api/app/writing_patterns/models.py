@@ -52,7 +52,7 @@ class WritingPatternWorkFingerprint(BaseModel):
 
 
 class WritingPatternRecipeEntryInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     asset_version_id: str = Field(min_length=36, max_length=36)
     asset_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -111,7 +111,7 @@ class WritingPatternRecipeEntryInput(BaseModel):
 
 
 class WritingPatternConflictDecisionInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     conflict_key: str = Field(pattern=r"^[0-9a-f]{64}$")
     resolution: WritingPatternConflictResolution
@@ -265,7 +265,7 @@ class CompiledWritingPatternProfile(BaseModel):
 
 
 class PreviewWritingPatternRecipeRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=1000)
@@ -381,6 +381,8 @@ class WritingPatternRecipeSeries(BaseModel):
 
 
 class PreviewWritingPatternReuseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_recipe_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_topic_revision: int = Field(gt=0)
 
@@ -432,5 +434,7 @@ class WritingPatternProfileVersion(WritingPatternProfileSummary):
 
 
 class UpdateWritingPatternLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     state: WritingPatternLifecycleState
     expected_lifecycle_revision: int = Field(ge=0)

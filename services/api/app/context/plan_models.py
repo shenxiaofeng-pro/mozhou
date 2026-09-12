@@ -98,6 +98,8 @@ class PlanRebaseCandidate(BaseModel):
 
 
 class CreatePlanRebaseCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_dependency_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -112,7 +114,7 @@ class PlanRebaseRollingEdit(BaseModel):
 
 
 class UpdatePlanRebaseCandidateRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     book_blueprint_content: BookBlueprintContent | None = None
@@ -121,7 +123,7 @@ class UpdatePlanRebaseCandidateRequest(BaseModel):
 
 
 class AdoptPlanRebaseCandidateRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     expected_revision: int = Field(ge=0)
     expected_dependency_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

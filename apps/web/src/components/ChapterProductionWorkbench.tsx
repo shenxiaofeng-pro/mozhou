@@ -108,6 +108,7 @@ export interface ChapterProductionWorkbenchProps {
   outline: ChapterProductionOutline
   preflight: ChapterProductionPreflight
   candidates: ChapterProductionCandidate[]
+  initialFocus?: 'outline' | 'candidate'
   isGenerating?: boolean
   conflict?: ChapterProductionConflict | null
   onGenerate: () => void | Promise<void>
@@ -263,6 +264,7 @@ export function ChapterProductionWorkbench({
   outline,
   preflight,
   candidates,
+  initialFocus,
   isGenerating = false,
   conflict = null,
   onGenerate,
@@ -290,7 +292,10 @@ export function ChapterProductionWorkbench({
   const [chapterSelection, setChapterSelection] = useState<ChapterProductionTextRange | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const outlineHeadingRef = useRef<HTMLHeadingElement>(null)
   const candidateHeadingRef = useRef<HTMLHeadingElement>(null)
+  const generateButtonRef = useRef<HTMLButtonElement>(null)
+  const initialFocusHandledRef = useRef(false)
   const previousCandidateCount = useRef(candidates.length)
   const editSession = useRef<{ candidateId: string; snapshot: DraftSnapshot } | null>(null)
 
@@ -308,6 +313,17 @@ export function ChapterProductionWorkbench({
     ? conflict
     : null
   const canEditCandidate = activeCandidate?.state === 'candidate'
+
+  useEffect(() => {
+    if (!initialFocus || initialFocusHandledRef.current) return
+    const target = initialFocus === 'outline'
+      ? outlineHeadingRef.current
+      : candidateHeadingRef.current ?? generateButtonRef.current
+    if (!target) return
+    initialFocusHandledRef.current = true
+    target.focus()
+    if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' })
+  }, [candidates.length, initialFocus])
 
   useEffect(() => {
     if (previousCandidateCount.current === 0 && candidates.length > 0) {
@@ -663,7 +679,7 @@ export function ChapterProductionWorkbench({
           <header>
             <div>
               <p className="section-kicker">本章意图</p>
-              <h3 id="chapter-outline-title">章纲</h3>
+              <h3 id="chapter-outline-title" ref={outlineHeadingRef} tabIndex={-1}>章纲</h3>
             </div>
             <span>由作者决定</span>
           </header>
@@ -723,6 +739,7 @@ export function ChapterProductionWorkbench({
           <p id="chapter-production-generation-note">生成结果只进入候选区，不会写入正式正文。</p>
         </div>
         <button
+          ref={generateButtonRef}
           type="button"
           className="chapter-production-primary"
           disabled={generationBlocked || busy}

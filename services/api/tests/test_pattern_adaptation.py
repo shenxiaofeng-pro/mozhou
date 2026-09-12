@@ -431,6 +431,20 @@ def test_full_pattern_adaptation_job_adopt_and_guard_journey(tmp_path: Path) -> 
         assert current_gate.status_code == 200, current_gate.text
         assert current_gate.json()["report_is_current"] is True
         assert current_gate.json()["latest_report"]["id"] == report["id"]
+        assert report["status"] == "passed"
+        client.app.state.repository.require_creative_safety(project_id)
+        temporarily_archived = client.patch(
+            f"/api/projects/{project_id}/writing-pattern-profiles/{profile['id']}/lifecycle",
+            json={"state": "archived", "expected_lifecycle_revision": 0},
+        )
+        assert temporarily_archived.status_code == 200, temporarily_archived.text
+        with pytest.raises(OriginalityGateBlockedError):
+            client.app.state.repository.require_creative_safety(project_id)
+        restored_profile = client.patch(
+            f"/api/projects/{project_id}/writing-pattern-profiles/{profile['id']}/lifecycle",
+            json={"state": "active", "expected_lifecycle_revision": 1},
+        )
+        assert restored_profile.status_code == 200, restored_profile.text
 
         viewed = client.post(f"/api/pattern-originality-reports/{report['id']}/views")
         assert viewed.status_code == 200, viewed.text
@@ -467,7 +481,7 @@ def test_full_pattern_adaptation_job_adopt_and_guard_journey(tmp_path: Path) -> 
             params={"include_reference_assets": "true"},
         )
         assert archived.status_code == 200, archived.text
-        assert archived.json()["format_version"] == 17
+        assert archived.json()["format_version"] == 18
         restored = client.post(
             "/api/project-imports",
             content=json.dumps(archived.json(), ensure_ascii=False).encode(),
@@ -562,7 +576,7 @@ def test_full_pattern_adaptation_job_adopt_and_guard_journey(tmp_path: Path) -> 
 
         archived_profile = client.patch(
             f"/api/projects/{project_id}/writing-pattern-profiles/{profile['id']}/lifecycle",
-            json={"state": "archived", "expected_lifecycle_revision": 0},
+            json={"state": "archived", "expected_lifecycle_revision": 2},
         )
         assert archived_profile.status_code == 200, archived_profile.text
         with pytest.raises(OriginalityGateBlockedError):
@@ -571,7 +585,11 @@ def test_full_pattern_adaptation_job_adopt_and_guard_journey(tmp_path: Path) -> 
             f"/api/projects/{project_id}/pattern-originality-gate"
         )
         assert archived_profile_gate.status_code == 200, archived_profile_gate.text
-        assert archived_profile_gate.json()["state"] in {"review_required", "blocked"}
+        assert archived_profile_gate.json()["state"] == "stale"
+        assert (
+            archived_profile_gate.json()["reason"]
+            == "writing_pattern_profile_inactive"
+        )
 
         with database.connect() as connection:
             job_input = connection.execute(
