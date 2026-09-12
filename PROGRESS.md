@@ -922,6 +922,7 @@ AI 漫剧批次采用同一标准：M18–M23 全部完成、全量 `pnpm run ve
 - 第二轮 Windows 尝试在同一 runner 内使用四个 xdist worker，60 分钟时从 55% 提升到 77% 且已完成部分不再出现失败，但多个 worker 仍竞争同一虚拟磁盘，不能形成可靠门禁。最终设计改为 8 个相互独立的 Windows runner 串行分片，非后端门另由独立 Windows runner 执行，再以固定名称 `quality (windows-2022)` fail-closed 聚合，保持分支保护契约不变。
 - 分片按当前 51 个测试文件的 465 个 nodeid 以 LPT 固化为 59/58/58/59/59/58/57/57；测试发现递归覆盖 pytest 默认的 `test_*.py` 与 `*_test.py`，以测试目录相对路径做唯一键。20 项工程脚本会断言文件全集无遗漏、无重复、总权重 465，完整门还会执行真实 `pytest --collect-only` 逐文件核对静态权重；新增文件或用例会直接令门禁失败并要求重新配组。四组旧取模基线 92/113/134/126 已在本机并发全部通过，证明 465 项可独立运行；最终 8 组由远端 Windows 原生 runner 验收。`pytest-xdist` 与 `execnet` 已从项目和锁文件移除。
 - 独立 runner 首轮 run 34697723471 中 macOS、security、Windows common 及 Windows 1/8、2/8、3/8、5/8、6/8、7/8、8/8 全部通过；4/8 唯一失败是 M36 安全门将 `Path.relative_to()` 转为平台原生字符串后，用 Windows `\\` 路径访问 `/` 白名单键。现统一使用 `as_posix()`，专项 2/2 与 ruff 通过；该轮没有暴露第二个 Windows 专属失败。
+- 修复后的最终 run 34698855562 全绿：security 3m37s、macOS 全量门 5m55s、Windows common 8m30s、Windows 1–8 分片分别 6m47s/8m58s/5m21s/4m39s/13m36s/5m41s/10m56s/10m40s，固定名 `quality (windows-2022)` 聚合成功。最慢分片仅 13m36s，完整 465 项在 60 分钟上限内保有充分余量。
 - 依赖安全升级及 CI 重构后再次执行完整串行 `pnpm run verify` 全部成功；`actionlint 1.7.12`、仓库守卫和 `git diff --check` 均通过。
 - 真实浏览器使用独立临时数据库和东方玄幻项目完成三视口、URL/焦点/抽屉/导航验收；未配置模型、未访问作者真实作品、未产生费用。favicon 404 与 760px 空列均在验收中发现并修复，复测后 console/network 问题为 0。
 - 最终前端修复后再次用隔离东方玄幻项目实测：章纲阶段聚焦可见的 `chapter-outline-title`，候选台“生成本章候选”精确计数为 1，关闭后焦点归还阶段按钮；1040/760 像素的 document/body 宽度都等于视口，760 像素正文宽 728px。正文修改后立即浏览器返回并重载仍完整持久化，console warning/error 为 0。开发模式 StrictMode 发出的两次生产台创建请求由服务端唯一索引幂等收敛为 1 条 aggregate。
